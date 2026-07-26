@@ -1,8 +1,0 @@
-{
-  "pkg": "@daycore/ui",
-  "globalName": "DaycoreUI",
-  "projectId": "6edd0009-6acd-40e5-95a3-c95e1204cca5",
-  "shape": "package",
-  "buildCmd": "npm run build",
-  "cssEntry": "dist/styles.css"
-}
