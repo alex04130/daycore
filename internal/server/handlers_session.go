@@ -84,10 +84,10 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		AssistantName  *string `json:"assistantName"`
-		CurrentTheme   *string `json:"currentTheme"`
-		Language       *string `json:"language"`
-		PersonaPrompt  *string `json:"personaPrompt"`
+		AssistantName *string `json:"assistantName"`
+		CurrentTheme  *string `json:"currentTheme"`
+		Language      *string `json:"language"`
+		PersonaPrompt *string `json:"personaPrompt"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
 		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")

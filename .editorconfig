@@ -1,0 +1,36 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Go 用 tab（gofmt 的硬性约定）
+[*.go]
+indent_style = tab
+indent_size = 4
+
+[Makefile]
+indent_style = tab
+
+[*.{md,tmpl}]
+trim_trailing_whitespace = false   # Markdown 行尾双空格是换行语义
+
+# 生成/vendor 文件不参与格式约束
+[web/frontend/src/vendor/**]
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset
+
+[web/frontend/src/ds/_ds_bundle.css]
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset
+
+[{COPYING,COPYING.LESSER}]
+indent_size = unset
+trim_trailing_whitespace = false
+insert_final_newline = unset

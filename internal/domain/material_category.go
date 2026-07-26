@@ -12,9 +12,9 @@ type MaterialCategory struct {
 	ID         string `json:"id"`
 	NameZH     string `json:"-"`
 	NameEN     string `json:"-"`
-	Icon       string `json:"icon"`      // frontend icon hint
-	PromptHint string `json:"-"`         // one-line guidance for the inbox AI classifier
-	DefaultOn  bool   `json:"default"`   // enabled unless the user opted out
+	Icon       string `json:"icon"`    // frontend icon hint
+	PromptHint string `json:"-"`       // one-line guidance for the inbox AI classifier
+	DefaultOn  bool   `json:"default"` // enabled unless the user opted out
 }
 
 var materialCategories = []MaterialCategory{

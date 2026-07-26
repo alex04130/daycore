@@ -25,8 +25,8 @@ type Worker struct {
 	s        *Server
 	log      *slog.Logger
 	mu       sync.Mutex
-	jobs     map[string]cron.EntryID         // session_id:timezone_hash → entry
-	channels *channels.Registry              // nil when channels are not wired
+	jobs     map[string]cron.EntryID // session_id:timezone_hash → entry
+	channels *channels.Registry      // nil when channels are not wired
 }
 
 // NewWorker creates a background worker. Call Start() to begin.

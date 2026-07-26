@@ -1,6 +1,6 @@
 # Daycore v2 — 前端产品与对接规范（已合并版）
 
-> **状态（2026-07-08，路径更新 2026-07-14）**：设计交付已完成（原型包在仓库根 `claude-design/`），前端已按原型 **1:1 实现在 `web/frontend/`**（Vite + React 18，直接复用设计系统 `claude-design/_ds` bundle 的 vendor 副本 `web/frontend/src/ds/`）。本文件由原 handoff、增量 01（自定义主题）与 §7（长期记忆）合并而成，作为**产品意图 + 前端对接协议的唯一权威文档**；REST 契约以 `api/openapi.yaml` 为准。
+> **状态（2026-07-08，路径更新 2026-07-25）**：设计交付已完成，前端已按原型 **1:1 实现在 `web/frontend/`**（Vite + React 18）。设计系统 bundle 已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`，**这两处即仓库内的权威副本**；设计交付原件不在仓库内（在 Claude Design 网页版）。本文件由原 handoff、增量 01（自定义主题）与 §7（长期记忆）合并而成，作为**产品意图 + 前端对接协议的唯一权威文档**；REST 契约以 `api/openapi.yaml` 为准。
 
 **产品主线**：自主规划（Autonomous Planning）——系统汇总用户的所有资料（Canvas 作业与成绩、课程表、重复规则、长期记忆），一键生成当日/多日计划，用户再通过聊天微调。
 
@@ -141,7 +141,7 @@
 
 - 前端：`web/frontend/`（Vite + React 18）。开发：`npm run dev`（:5173，`/api` 代理到 :8080）；构建：`npm run build` → `dist/`。
 - 部署：Go 服务本身托管 `dist/`（`STATIC_DIR`，SPA fallback），单二进制即可上线；nginx 前置可选（`deploy/nginx.conf`）。**同源部署**，cookie 自动携带。
-- 设计系统：仓库根 `claude-design/_ds/daycore-design-system-*` 的 bundle 原样复用（`window.DaycoreUI`，26 组件；前端已 vendor 到 `web/frontend/src/ds/`）；tokens 见 §5。
+- 设计系统：`web/frontend/src/vendor/ds-bundle.js`（`window.DaycoreUI`，26 组件）+ `web/frontend/src/ds/`（样式）；tokens 见 §5。
 
 ## 2. 对接要点（务必遵守）
 
@@ -187,7 +187,7 @@
 ## 4. 浏览器插件（仓库根 `extension/`，已实现）
 Chrome MV3：登录的 Canvas 页抓课程/成绩/作业 due → 导出 JSON/CSV，或配置本地地址 + Import Token 一键直推 `POST /api/import/canvas`。前端负责 Token 展示与「装插件」引导。
 
-## 5. 设计 Tokens（玻璃拟态，来源仓库根 `claude-design/_ds/*/styles.css`，勿硬编码）
+## 5. 设计 Tokens（玻璃拟态，来源 `web/frontend/src/ds/styles.css`，勿硬编码）
 
 ### 5.1 四套内置主题（`data-theme`）
 
@@ -225,4 +225,4 @@ Chrome MV3：登录的 Canvas 页抓课程/成绩/作业 due → 导出 JSON/CSV
 
 ---
 
-> 后端契约以 `api/openapi.yaml` 为准。历史文档：设计交付原件在仓库根 `claude-design/`（`README.md` 与 `app/*.jsx` 原型源码，实现参考）；本文件取代已删除的 `FRONTEND_HANDOFF_UPDATE.md` 与 `web/` 下的旧契约副本。
+> 后端契约以 `api/openapi.yaml` 为准。本文件取代已删除的 `FRONTEND_HANDOFF_UPDATE.md` 与 `web/` 下的旧契约副本；设计交付原件（原型 `app/*.jsx` 与 `_ds/`）已于 2026-07-25 移出仓库，实现副本见 `web/frontend/src/ds/` 与 `src/vendor/`。

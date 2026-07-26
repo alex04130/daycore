@@ -100,11 +100,11 @@ type ToolCallDelta struct {
 
 // Capabilities advertises what a model supports (declared in the catalog config).
 type Capabilities struct {
-	Vision        bool
-	Tools         bool
-	Stream        bool
-	Thinking      bool
-	ContextWindow int
+	Vision         bool
+	Tools          bool
+	Stream         bool
+	Thinking       bool
+	ContextWindow  int
 	DeepseekSearch bool // enable native web_search server-side tool (DeepSeek Anthropic endpoint)
 }
 

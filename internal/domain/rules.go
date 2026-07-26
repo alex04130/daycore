@@ -29,7 +29,7 @@ type ScheduleRule struct {
 	SessionID   string    `json:"sessionId"`
 	Title       string    `json:"title"`
 	Type        BlockType `json:"type"`
-	Time        *string   `json:"time"`                 // HH:MM, or null when unscheduled
+	Time        *string   `json:"time"` // HH:MM, or null when unscheduled
 	DurationMin *int      `json:"duration_min,omitempty"`
 	Timezone    string    `json:"timezone"`
 	TimeMode    TimeMode  `json:"time_mode"`
@@ -41,7 +41,7 @@ type ScheduleRule struct {
 	StartDate   string    `json:"start_date,omitempty"` // YYYY-MM-DD; first eligible date
 	Until       *string   `json:"until,omitempty"`      // YYYY-MM-DD inclusive; nil = forever
 	Active      bool      `json:"active"`
-	Source      string    `json:"source"`               // "user" | "chat" | "ics" | "image" | "canvas"
+	Source      string    `json:"source"` // "user" | "chat" | "ics" | "image" | "canvas"
 	Note        *string   `json:"note,omitempty"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`

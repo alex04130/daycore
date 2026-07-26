@@ -110,8 +110,8 @@ go test ./internal/server/ -run TestAgent -v
 go test ./internal/ai/formats/openai/ -v
 go test ./internal/storage/sqlstore/ -run TestOperationLogs -v
 
-# 端到端测试（Playwright 驱动）
-node web/frontend/scripts/drive.mjs http://localhost:5173 <fixtures> <outdir>
+# i18n 双 locale key 对齐校验（make test 的前置步骤）
+node web/frontend/scripts/check-i18n.mjs
 ```
 
 ### 3.1 数据库
@@ -247,11 +247,8 @@ daycore/                               # 仓库根即实现面
 │   │   │   └── vendor/
 │   │   │       └── ds-bundle.js     #   设计系统 bundle（13082 行）
 │   │   ├── scripts/
-│   │   │   ├── drive.mjs            #   Playwright 全屏真实驱动测试
 │   │   │   └── check-i18n.mjs       #   i18n key 双向校验（优先 ESM import，失败回退静态解析）
 │   │   └── package.json
-│   ├── app/                         # 设计交付原型（参考，勿删）
-│   └── _ds/                         # 设计系统源码
 ├── deploy/
 │   ├── Dockerfile                   # Go 二进制构建 + dist 拷贝
 │   ├── docker-compose.yml           # app + postgres/mongodb 可选
@@ -835,7 +832,7 @@ func (s *Server) logOp(ctx context.Context, l *domain.OperationLog) string {
 
 ## 11. 项目规则
 
-- **实现域唯一**：仓库根即实现面，后端在 `internal/`、前端在 `web/frontend/`。`claude-design/` 是只读设计原件、`design-ui/` 是待导入的分离式前端占位，都不要往里写业务代码
+- **实现域唯一**：仓库根即实现面，后端在 `internal/`、前端在 `web/frontend/`。`design-ui/` 是待导入的分离式前端占位，在它接入前不要往里写业务代码
 - **无包袱直切**：Beta 阶段不做双轨/灰度/迁移脚本。前后端同 PR 合入，回滚靠 git revert
 - **AI 必须只在服务端调用**：所有 `ai.Chat / ai.ChatStream` 调用只发生在 `internal/server/` 的 handler 或 agent 循环中。前端绝不直接调 AI
 - **永远不信任客户端上送的上下文**：companion handler 不接收 `todayPlan / moodHistory / memoryContext / date / weekday / time`，全部由服务端从 store 组装

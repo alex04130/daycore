@@ -79,7 +79,7 @@ server {
 
 > 也可以完全不用 nginx：`HOST=`（留空监听所有网卡）+ `PORT=443` 前面挂 Caddy，或直接 `PORT=8080` 裸跑测试。Docker：`make docker && docker compose -f deploy/docker-compose.yml up app`。
 
-浏览器插件直推地址改成 `https://day.example.com`（插件设置里），Import Token 在应用设置页生成。
+浏览器插件直推：打开插件设置，把「Daycore 服务器地址」改成 `https://day.example.com`，粘贴应用设置页生成的 Import Token，点「保存」——**Chrome 会弹窗请求该域名的访问权限，必须允许**（MV3 下没有 host permission 的跨域 fetch 会被 CORS 拦掉）。点「测试连接」可立即验证地址与权限是否就绪。
 
 ### 本地测试版 vs 服务器部署版
 
@@ -151,7 +151,7 @@ SECURE_COOKIES=true DEEPSEEK_API_KEY=sk-… \
 
 Front it with nginx (swap `server_name`, add TLS; `proxy_buffering off` is required for SSE) as shown in the Chinese section above, or skip nginx entirely and expose the Go server directly. Docker: `make docker && docker compose -f deploy/docker-compose.yml up app`.
 
-Point the browser extension's push URL at `https://day.example.com` and paste the Import Token generated in the app's Settings.
+For the browser extension: open its Options, set the Daycore server URL to `https://day.example.com`, paste the Import Token from the app's Settings, and hit Save — **Chrome will prompt for access to that origin and you must allow it** (under MV3 a cross-origin fetch without a host permission is blocked by CORS). "Test connection" verifies the URL and the grant right away.
 
 ### Local vs server profiles
 
@@ -196,9 +196,7 @@ deploy/                     Dockerfile / docker-compose / nginx
 testdata/                   canvas-export.sample.json / sample.ics
 docs/                       实时项目文档（架构/认证/Agent/数据/AI/路由总表）
 extension/                  Chrome MV3 插件（抓 Canvas → POST /api/import/canvas）
-claude-design/              设计交付原件（设计系统 _ds/ + 原型 app/，只读参考）
 design-ui/                  前后端分离式前端的落地点（空占位，后端未跟进）
-daycore.agent.final/        论文与架构图产出物
 ```
 
 ### 扩展点（registry / 驱动模式）
@@ -214,7 +212,7 @@ daycore.agent.final/        论文与架构图产出物
 ```bash
 make run / test / vet / build / docker
 cd web/frontend && npm run dev / build
-node web/frontend/scripts/drive.mjs http://localhost:5173 <fixtures> <outdir>   # 全屏真实驱动（Playwright）
+node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐校验
 ```
 
 ### 端到端冒烟（curl）
@@ -226,3 +224,23 @@ node web/frontend/scripts/drive.mjs http://localhost:5173 <fixtures> <outdir>   
 - 主模式从「手动输入日程」变为「自主规划」（资料导入 → auto-plan → 聊天微调）。
 - 新增重复/长期日程、Canvas/ICS/截图导入、每用户长期记忆、自定义主题 + AI 配色、i18n（含提示词双语）、版本体系与单二进制静态托管部署。
 - 修复无鉴权数据端点（服务端签名 httpOnly cookie）、`incrementInteractionCount` 占位符 bug、日程加载 N+1、v1 MoodScreen `exerciseOffered` 异步 bug（前端已按正确方式实现）。
+
+---
+
+## 许可证 / License
+
+**GNU Lesser General Public License v3.0 or later**（LGPL-3.0-or-later）。
+完整条款见 [`COPYING.LESSER`](COPYING.LESSER)（LGPL 附加条款）与
+[`COPYING`](COPYING)（其所依据的 GPL-3.0 正文）。
+
+Licensed under the **GNU LGPL v3.0 or later**. See
+[`COPYING.LESSER`](COPYING.LESSER) plus [`COPYING`](COPYING) for the full terms.
+
+> 通过 HTTP 调用本服务的 API 不构成衍生作品 —— 独立前端、移动端或第三方客户端
+> 可以自行选择许可证，包括闭源。copyleft 义务作用于**分发本项目代码或其修改版**
+> 的情形（例如自行改造后端后再分发二进制或源码，需一并提供对应源码）。
+>
+> API calls over HTTP do not create a derivative work — a separate frontend,
+> mobile app, or third-party client may be licensed however you like, including
+> closed source. The copyleft obligations attach to **distributing this project's
+> code or a modified version of it**.

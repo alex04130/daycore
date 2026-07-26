@@ -22,12 +22,12 @@ import (
 // and field mappings are filled in automatically. Any other provider can be
 // added by supplying all fields — no code change, just config.
 type OAuthProviderConfig struct {
-	Name         string   `yaml:"name"`
-	ClientID     string   `yaml:"client_id"`
-	ClientSecret string   `yaml:"client_secret"`
-	AuthURL      string   `yaml:"auth_url"`
-	TokenURL     string   `yaml:"token_url"`
-	UserInfoURL  string   `yaml:"userinfo_url"`
+	Name               string   `yaml:"name"`
+	ClientID           string   `yaml:"client_id"`
+	ClientSecret       string   `yaml:"client_secret"`
+	AuthURL            string   `yaml:"auth_url"`
+	TokenURL           string   `yaml:"token_url"`
+	UserInfoURL        string   `yaml:"userinfo_url"`
 	Scopes             []string `yaml:"scopes"`
 	IDField            string   `yaml:"id_field"`
 	EmailField         string   `yaml:"email_field"`

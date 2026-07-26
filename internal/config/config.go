@@ -45,15 +45,15 @@ type Config struct {
 	// deployments (frontend on another domain) and requires SecureCookies; the
 	// recommended cross-origin path is header tokens, not cookies.
 	CookieSameSite string
-	PublicBaseURL string        // external URL, used to build OAuth redirect URIs
+	PublicBaseURL  string // external URL, used to build OAuth redirect URIs
 
 	// AI — model catalog + OAuth providers are loaded from these files by main.go.
-	ModelsConfigPath   string
-	OAuthConfigPath    string
+	ModelsConfigPath    string
+	OAuthConfigPath     string
 	DefaultChatModel    string // model id from the catalog used for text chat
 	DefaultVisionModel  string // model id (caps.vision=true) used to read images
 	DefaultPlannerModel string // model id used for autonomous planning; "" = default chat model
-	AIRequestTimeout   time.Duration
+	AIRequestTimeout    time.Duration
 
 	// Limits
 	RateLimitPerMin     int   // per-IP requests/min on AI endpoints (0 = disabled)
@@ -93,40 +93,40 @@ func Load() (*Config, error) {
 	_ = godotenv.Load() // best-effort; real env always wins
 
 	c := &Config{
-		Env:                getEnv("APP_ENV", "development"),
-		Host:               getEnv("HOST", ""),
-		Port:               getEnv("PORT", "8080"),
-		StaticDir:          getEnv("STATIC_DIR", "web/frontend/dist"),
-		AllowedOrigins:     splitCSV(getEnv("ALLOWED_ORIGINS", "")),
-		TrustProxyHeaders:  getBool("TRUST_PROXY_HEADERS", false),
-		DBType:             getEnv("DB_TYPE", "sqlite"),
-		DBDSN:              getEnv("DB_DSN", "file:daycore.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"),
-		JWTSecret:          getEnv("JWT_SECRET", ""),
-		CookieSecret:       getEnv("COOKIE_SECRET", ""),
-		Pepper:             getEnv("PASSWORD_PEPPER", ""),
-		JWTTTL:             getDuration("JWT_TTL", 168*time.Hour),
-		SecureCookies:      getBool("SECURE_COOKIES", false),
-		CookieSameSite:     strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "lax"))),
-		PublicBaseURL:      getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
-		ModelsConfigPath:   getEnv("MODELS_CONFIG", "config/models.yaml"),
-		OAuthConfigPath:    getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
-		DefaultChatModel:   getEnv("DEFAULT_CHAT_MODEL", "deepseek-chat"),
-		DefaultVisionModel: getEnv("DEFAULT_VISION_MODEL", ""),
-		DefaultPlannerModel: getEnv("DEFAULT_PLANNER_MODEL", ""),
-		AIRequestTimeout:   getDuration("AI_REQUEST_TIMEOUT", 120*time.Second),
-		RateLimitPerMin:     getInt("AI_RATE_LIMIT_PER_MIN", 30),
-		AuthRateLimitPerMin: getInt("AUTH_RATE_LIMIT_PER_MIN", 10),
-		AgentMaxRounds:      getInt("AGENT_MAX_ROUNDS", 6),
-		MaxImageBytes:      int64(getInt("MAX_IMAGE_BYTES", 8*1024*1024)),
+		Env:                     getEnv("APP_ENV", "development"),
+		Host:                    getEnv("HOST", ""),
+		Port:                    getEnv("PORT", "8080"),
+		StaticDir:               getEnv("STATIC_DIR", "web/frontend/dist"),
+		AllowedOrigins:          splitCSV(getEnv("ALLOWED_ORIGINS", "")),
+		TrustProxyHeaders:       getBool("TRUST_PROXY_HEADERS", false),
+		DBType:                  getEnv("DB_TYPE", "sqlite"),
+		DBDSN:                   getEnv("DB_DSN", "file:daycore.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"),
+		JWTSecret:               getEnv("JWT_SECRET", ""),
+		CookieSecret:            getEnv("COOKIE_SECRET", ""),
+		Pepper:                  getEnv("PASSWORD_PEPPER", ""),
+		JWTTTL:                  getDuration("JWT_TTL", 168*time.Hour),
+		SecureCookies:           getBool("SECURE_COOKIES", false),
+		CookieSameSite:          strings.ToLower(strings.TrimSpace(getEnv("COOKIE_SAMESITE", "lax"))),
+		PublicBaseURL:           getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
+		ModelsConfigPath:        getEnv("MODELS_CONFIG", "config/models.yaml"),
+		OAuthConfigPath:         getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
+		DefaultChatModel:        getEnv("DEFAULT_CHAT_MODEL", "deepseek-chat"),
+		DefaultVisionModel:      getEnv("DEFAULT_VISION_MODEL", ""),
+		DefaultPlannerModel:     getEnv("DEFAULT_PLANNER_MODEL", ""),
+		AIRequestTimeout:        getDuration("AI_REQUEST_TIMEOUT", 120*time.Second),
+		RateLimitPerMin:         getInt("AI_RATE_LIMIT_PER_MIN", 30),
+		AuthRateLimitPerMin:     getInt("AUTH_RATE_LIMIT_PER_MIN", 10),
+		AgentMaxRounds:          getInt("AGENT_MAX_ROUNDS", 6),
+		MaxImageBytes:           int64(getInt("MAX_IMAGE_BYTES", 8*1024*1024)),
 		AutoPlanMaxDays:         getInt("AUTO_PLAN_MAX_DAYS", 7),
 		AssignmentLookaheadDays: getInt("ASSIGNMENT_LOOKAHEAD_DAYS", 14),
-		AdminToken:         getEnv("ADMIN_TOKEN", ""),
-		OneBotWSURL:        getEnv("ONEBOT_WS_URL", ""),
-		OneBotToken:        getEnv("ONEBOT_TOKEN", ""),
-		WorkerDefaultTZ:    getEnv("WORKER_DEFAULT_TZ", "Asia/Shanghai"),
-		WeatherProvider:    getEnv("WEATHER_PROVIDER", "open-meteo"),
-		QWeatherKey:        getEnv("QWEATHER_API_KEY", ""),
-		OpenWeatherMapKey:  getEnv("OPENWEATHERMAP_API_KEY", ""),
+		AdminToken:              getEnv("ADMIN_TOKEN", ""),
+		OneBotWSURL:             getEnv("ONEBOT_WS_URL", ""),
+		OneBotToken:             getEnv("ONEBOT_TOKEN", ""),
+		WorkerDefaultTZ:         getEnv("WORKER_DEFAULT_TZ", "Asia/Shanghai"),
+		WeatherProvider:         getEnv("WEATHER_PROVIDER", "open-meteo"),
+		QWeatherKey:             getEnv("QWEATHER_API_KEY", ""),
+		OpenWeatherMapKey:       getEnv("OPENWEATHERMAP_API_KEY", ""),
 	}
 
 	// Dev-only fallbacks so the app boots out of the box; production must set real secrets.

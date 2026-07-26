@@ -51,5 +51,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 ## 仓库级布局
 
 - `api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。
-- 仓库根 `claude-design/` = 设计交付原件（只读参考）。
-- 仓库根 `src/` 等 = v1 Next.js 遗留，不动。
+- `docs/` = 实时项目文档，随代码同批更新。
+- `extension/` = Chrome MV3 插件（Canvas 抓取 → 导入）。
+- `design-ui/` = 前后端分离式前端的落地点，当前为空占位。
+- 设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`，仓库内不再保留设计交付原件（原件在 Claude Design 网页版）。

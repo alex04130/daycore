@@ -56,4 +56,3 @@ func attachBlocks(result map[string]any, fallbackDate string) {
 		}
 	}
 }
-

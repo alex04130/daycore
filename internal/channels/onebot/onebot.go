@@ -25,12 +25,12 @@ type Config struct {
 type Adapter struct {
 	cfg       Config
 	conn      *websocket.Conn
-	mu       sync.Mutex
-	inbound  chan<- channels.InboundMsg
-	stop     chan struct{}
+	mu        sync.Mutex
+	inbound   chan<- channels.InboundMsg
+	stop      chan struct{}
 	reconnect time.Duration
-	lastMsg  map[string]time.Time
-	msgCount map[string]int
+	lastMsg   map[string]time.Time
+	msgCount  map[string]int
 }
 
 func New(cfg Config) *Adapter {
@@ -38,7 +38,7 @@ func New(cfg Config) *Adapter {
 		cfg.Log = slog.Default()
 	}
 	return &Adapter{
-		cfg:       cfg,
+		cfg:      cfg,
 		lastMsg:  map[string]time.Time{},
 		msgCount: map[string]int{},
 	}

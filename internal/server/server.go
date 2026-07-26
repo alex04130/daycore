@@ -36,23 +36,23 @@ type Deps struct {
 
 // Server holds the dependencies and exposes an http.Handler.
 type Server struct {
-	cfg       *config.Config
-	store     domain.Store
-	catalog   *ai.Catalog
-	vision    *ai.Orchestrator
-	prompts   *ai.PromptService
-	hasher    *auth.Hasher
-	tokens    *auth.TokenIssuer
-	cookies   *auth.CookieSigner
-	oauth     *auth.OAuthManager
+	cfg         *config.Config
+	store       domain.Store
+	catalog     *ai.Catalog
+	vision      *ai.Orchestrator
+	prompts     *ai.PromptService
+	hasher      *auth.Hasher
+	tokens      *auth.TokenIssuer
+	cookies     *auth.CookieSigner
+	oauth       *auth.OAuthManager
 	log         *slog.Logger
 	limiter     *rateLimiter
 	authLimiter *rateLimiter
-	weather   domain.WeatherProvider
-	search    *search.Client
-	searcher  domain.Searcher
-	decisions *decisionRegistry
-	worker    *Worker // set by main.go after construction; nil when channels are off
+	weather     domain.WeatherProvider
+	search      *search.Client
+	searcher    domain.Searcher
+	decisions   *decisionRegistry
+	worker      *Worker // set by main.go after construction; nil when channels are off
 
 	// asyncWG tracks detached background goroutines (async companion turns,
 	// inbound channel handling) so graceful shutdown can wait for them.
@@ -96,7 +96,7 @@ func New(d Deps) *Server {
 		prompts: d.Prompts, hasher: d.Hasher, tokens: d.Tokens, cookies: d.Cookies,
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
-		weather: d.Weather, search: search.New(), searcher: d.Searcher,
+		weather:     d.Weather, search: search.New(), searcher: d.Searcher,
 		decisions: newDecisionRegistry(),
 	}
 }
@@ -195,12 +195,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/materials/{id}", s.handleMaterialUpdate)
 	mux.HandleFunc("DELETE /api/materials/{id}", s.handleMaterialDelete)
 
-		// wishes
-		mux.HandleFunc("GET /api/wishes", s.handleWishList)
-		mux.HandleFunc("POST /api/wishes", s.handleWishCreate)
-		mux.HandleFunc("GET /api/wishes/{id}", s.handleWishGet)
-		mux.HandleFunc("PATCH /api/wishes/{id}", s.handleWishUpdate)
-		mux.HandleFunc("DELETE /api/wishes/{id}", s.handleWishDelete)
+	// wishes
+	mux.HandleFunc("GET /api/wishes", s.handleWishList)
+	mux.HandleFunc("POST /api/wishes", s.handleWishCreate)
+	mux.HandleFunc("GET /api/wishes/{id}", s.handleWishGet)
+	mux.HandleFunc("PATCH /api/wishes/{id}", s.handleWishUpdate)
+	mux.HandleFunc("DELETE /api/wishes/{id}", s.handleWishDelete)
 
 	// ai
 	mux.HandleFunc("POST /api/ai/plan-text", s.handleAIPlanText)
@@ -238,12 +238,12 @@ func (s *Server) Handler() http.Handler {
 
 	// admin (prompts)
 	mux.HandleFunc("GET /api/channels", s.handleChannelList)
-		mux.HandleFunc("POST /api/channels/{channel}/bind", s.handleChannelBind)
-		mux.HandleFunc("POST /api/channels/{channel}/verify", s.handleChannelVerify)
-		mux.HandleFunc("DELETE /api/channels/{channel}/unbind", s.handleChannelUnbind)
+	mux.HandleFunc("POST /api/channels/{channel}/bind", s.handleChannelBind)
+	mux.HandleFunc("POST /api/channels/{channel}/verify", s.handleChannelVerify)
+	mux.HandleFunc("DELETE /api/channels/{channel}/unbind", s.handleChannelUnbind)
 
-		// admin (prompts)
-		mux.HandleFunc("GET /api/admin/prompts", s.handleAdminPromptList)
+	// admin (prompts)
+	mux.HandleFunc("GET /api/admin/prompts", s.handleAdminPromptList)
 	mux.HandleFunc("GET /api/admin/prompts/{key}", s.handleAdminPromptGet)
 	mux.HandleFunc("PUT /api/admin/prompts/{key}", s.handleAdminPromptSet)
 

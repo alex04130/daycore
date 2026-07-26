@@ -171,11 +171,11 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 		Date: dc.Date, Weekday: dc.Weekday, Time: dc.Time, Timezone: dc.Timezone,
 		RelativeDateMap: dc.RelativeDateMap,
 		From:            from, To: to,
-		Dates:       rangeDatesMarkdown(locale, fromT, toT),
-		FixedBlocks: marshalCompact(promptBlocks(fixedForPrompt)),
-		Assignments: assignmentsMarkdown(plannable, courses),
-		Courses:     coursesMarkdown(courses),
-		KeyFacts:    keyFacts,
+		Dates:        rangeDatesMarkdown(locale, fromT, toT),
+		FixedBlocks:  marshalCompact(promptBlocks(fixedForPrompt)),
+		Assignments:  assignmentsMarkdown(plannable, courses),
+		Courses:      coursesMarkdown(courses),
+		KeyFacts:     keyFacts,
 		Instructions: strings.TrimSpace(body.Instructions),
 	})
 	if err != nil {

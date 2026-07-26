@@ -19,10 +19,10 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Message       string `json:"message"`
-		Timezone      string `json:"timezone"`
-		AssistantName string `json:"assistantName"`
-		ThreadID      string `json:"threadId"`
+		Message             string `json:"message"`
+		Timezone            string `json:"timezone"`
+		AssistantName       string `json:"assistantName"`
+		ThreadID            string `json:"threadId"`
 		ConversationHistory []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`

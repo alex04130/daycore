@@ -7,8 +7,8 @@ type MemoryFact struct {
 	ID        string    `json:"id"`
 	SessionID string    `json:"sessionId"`
 	Fact      string    `json:"fact"`
-	Source    string    `json:"source"`               // "chat" | "user" | "import" | "auto"
-	Type      string    `json:"type,omitempty"`       // "" = fact, "open_loop" = unresolved item
+	Source    string    `json:"source"`         // "chat" | "user" | "import" | "auto"
+	Type      string    `json:"type,omitempty"` // "" = fact, "open_loop" = unresolved item
 	CreatedAt time.Time `json:"createdAt"`
 }
 

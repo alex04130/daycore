@@ -115,27 +115,27 @@ func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *Store) Close() error { return s.db.Close() }
 
 // Repository accessors.
-func (s *Store) Sessions() domain.SessionRepository    { return sessionRepo{s} }
-func (s *Store) DayPlans() domain.DayPlanRepository    { return dayPlanRepo{s} }
-func (s *Store) Moods() domain.MoodRepository          { return moodRepo{s} }
-func (s *Store) Companion() domain.CompanionRepository { return companionRepo{s} }
-func (s *Store) ThemeLog() domain.ThemeLogRepository   { return themeLogRepo{s} }
-func (s *Store) Chats() domain.ChatRepository           { return chatRepo{s} }
-func (s *Store) AILogs() domain.AICallLogRepository     { return aiLogRepo{s} }
-func (s *Store) OpLogs() domain.OperationLogRepository    { return opLogRepo{s} }
-func (s *Store) Users() domain.UserRepository          { return userRepo{s} }
-func (s *Store) Auth() domain.AuthRepository            { return authRepo{s} }
-func (s *Store) Prompts() domain.PromptRepository       { return promptRepo{s} }
-func (s *Store) Rules() domain.RuleRepository           { return ruleRepo{s} }
-func (s *Store) Courses() domain.CourseRepository       { return courseRepo{s} }
-func (s *Store) Assignments() domain.AssignmentRepository { return assignmentRepo{s} }
-func (s *Store) Themes() domain.ThemeRepository         { return themeRepo{s} }
+func (s *Store) Sessions() domain.SessionRepository               { return sessionRepo{s} }
+func (s *Store) DayPlans() domain.DayPlanRepository               { return dayPlanRepo{s} }
+func (s *Store) Moods() domain.MoodRepository                     { return moodRepo{s} }
+func (s *Store) Companion() domain.CompanionRepository            { return companionRepo{s} }
+func (s *Store) ThemeLog() domain.ThemeLogRepository              { return themeLogRepo{s} }
+func (s *Store) Chats() domain.ChatRepository                     { return chatRepo{s} }
+func (s *Store) AILogs() domain.AICallLogRepository               { return aiLogRepo{s} }
+func (s *Store) OpLogs() domain.OperationLogRepository            { return opLogRepo{s} }
+func (s *Store) Users() domain.UserRepository                     { return userRepo{s} }
+func (s *Store) Auth() domain.AuthRepository                      { return authRepo{s} }
+func (s *Store) Prompts() domain.PromptRepository                 { return promptRepo{s} }
+func (s *Store) Rules() domain.RuleRepository                     { return ruleRepo{s} }
+func (s *Store) Courses() domain.CourseRepository                 { return courseRepo{s} }
+func (s *Store) Assignments() domain.AssignmentRepository         { return assignmentRepo{s} }
+func (s *Store) Themes() domain.ThemeRepository                   { return themeRepo{s} }
 func (s *Store) Memory() domain.MemoryRepository                  { return memoryRepo{s} }
-func (s *Store) Materials() domain.MaterialRepository          { return materialRepo{s} }
+func (s *Store) Materials() domain.MaterialRepository             { return materialRepo{s} }
 func (s *Store) ChannelBindings() domain.ChannelBindingRepository { return channelBindingRepo{s} }
-func (s *Store) Wishes() domain.WishRepository                { return wishRepo{s} }
-func (s *Store) Feedback() domain.FeedbackLogRepository         { return feedbackRepo{s} }
-func (s *Store) TempContexts() domain.TempContextRepository      { return tempContextRepo{s} }
+func (s *Store) Wishes() domain.WishRepository                    { return wishRepo{s} }
+func (s *Store) Feedback() domain.FeedbackLogRepository           { return feedbackRepo{s} }
+func (s *Store) TempContexts() domain.TempContextRepository       { return tempContextRepo{s} }
 
 // ─── low-level helpers (placeholder rebinding) ──────────────────────────────
 

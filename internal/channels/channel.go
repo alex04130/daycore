@@ -11,9 +11,9 @@ import (
 
 // InboundMsg is a message received from any external channel.
 type InboundMsg struct {
-	Channel     string       // "onebot" | "wechat" | "feishu" | "telegram"
-	ExternalID  string       // platform-specific user id
-	DisplayName string       // user's display name on that platform
+	Channel     string // "onebot" | "wechat" | "feishu" | "telegram"
+	ExternalID  string // platform-specific user id
+	DisplayName string // user's display name on that platform
 	Text        string
 	Attachments []Attachment
 }
@@ -27,7 +27,7 @@ type Attachment struct {
 
 // Channel is implemented by every messaging platform adapter.
 type Channel interface {
-	Name() string                                              // e.g. "onebot"
+	Name() string // e.g. "onebot"
 	Send(ctx context.Context, externalID string, msg string) error
 	Start(ctx context.Context, inbound chan<- InboundMsg) error
 	Stop() error

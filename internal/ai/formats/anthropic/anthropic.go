@@ -123,8 +123,8 @@ func (p *provider) buildReq(req ai.ChatRequest, stream bool) msgReq {
 		blocks := make([]map[string]any, 0, len(systems))
 		for _, s := range systems {
 			blocks = append(blocks, map[string]any{
-				"type": "text",
-				"text": s,
+				"type":          "text",
+				"text":          s,
 				"cache_control": map[string]any{"type": "ephemeral"},
 			})
 		}

@@ -39,8 +39,10 @@ func (f *fakeProvider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-ch
 	return ai.StreamViaChat(ctx, f, req)
 }
 
-func (f *fakeProvider) Capabilities() ai.Capabilities { return ai.Capabilities{Tools: true, Stream: true} }
-func (f *fakeProvider) Model() string                 { return "fake" }
+func (f *fakeProvider) Capabilities() ai.Capabilities {
+	return ai.Capabilities{Tools: true, Stream: true}
+}
+func (f *fakeProvider) Model() string { return "fake" }
 
 func newAgentTestServer(t *testing.T) (*Server, string) {
 	t.Helper()

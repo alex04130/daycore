@@ -49,8 +49,8 @@ type TimeBlock struct {
 	UTCTime       *string   `json:"utc_time,omitempty"`
 	OffsetMin     *int      `json:"offset_min,omitempty"`
 	OffsetRef     string    `json:"offset_ref,omitempty"`
-	Completed     bool      `json:"completed"`     // no omitempty: revert of "mark as done" needs the false to be present
-	IsAchievement bool      `json:"isAchievement"` // no omitempty: same reason as Completed
+	Completed     bool      `json:"completed"`         // no omitempty: revert of "mark as done" needs the false to be present
+	IsAchievement bool      `json:"isAchievement"`     // no omitempty: same reason as Completed
 	RuleID        string    `json:"rule_id,omitempty"` // set when the block was expanded from a ScheduleRule
 	Origin        string    `json:"origin,omitempty"`  // "auto" | "manual" | "rule"; empty = legacy/manual
 	Hidden        bool      `json:"hidden,omitempty"`  // tombstone: user removed this rule occurrence for the day

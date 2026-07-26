@@ -270,8 +270,8 @@ func (postgresDialect) Migrations() []string {
 				created_at BIGINT NOT NULL,
 				updated_at BIGINT NOT NULL
 			)`,
-			`CREATE INDEX IF NOT EXISTS materials_session_cat ON materials(session_id, category)`,
-			`CREATE TABLE IF NOT EXISTS wishes (
+		`CREATE INDEX IF NOT EXISTS materials_session_cat ON materials(session_id, category)`,
+		`CREATE TABLE IF NOT EXISTS wishes (
 				id TEXT PRIMARY KEY,
 				session_id TEXT NOT NULL,
 				title TEXT,
@@ -281,8 +281,8 @@ func (postgresDialect) Migrations() []string {
 				created_at BIGINT NOT NULL,
 				updated_at BIGINT NOT NULL
 			)`,
-			`CREATE INDEX IF NOT EXISTS wishes_session ON wishes(session_id)`,
-			`CREATE TABLE IF NOT EXISTS temp_contexts (
+		`CREATE INDEX IF NOT EXISTS wishes_session ON wishes(session_id)`,
+		`CREATE TABLE IF NOT EXISTS temp_contexts (
 				id TEXT PRIMARY KEY,
 				session_id TEXT NOT NULL,
 				key TEXT NOT NULL,
@@ -290,8 +290,8 @@ func (postgresDialect) Migrations() []string {
 				ttl BIGINT,
 				created_at BIGINT NOT NULL
 			)`,
-			`CREATE INDEX IF NOT EXISTS temp_contexts_session_key ON temp_contexts(session_id, key)`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS temp_contexts_session_key_unique ON temp_contexts(session_id, key)`,
+		`CREATE INDEX IF NOT EXISTS temp_contexts_session_key ON temp_contexts(session_id, key)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS temp_contexts_session_key_unique ON temp_contexts(session_id, key)`,
 	}
 }
 

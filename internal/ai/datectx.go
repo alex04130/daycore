@@ -21,13 +21,13 @@ type dateStrs struct {
 func dateStringTable(locale string) dateStrs {
 	if strings.HasPrefix(locale, "zh") {
 		return dateStrs{
-			tomorrow:  "明天", dayAfter: "后天", dayAfter3: "大后天",
+			tomorrow: "明天", dayAfter: "后天", dayAfter3: "大后天",
 			thisWeek: "本周", nextWeek: "下周", weekdays: weekdaysCN,
 			shortFn: func(w string) string { return strings.TrimPrefix(w, "星期") },
 		}
 	}
 	return dateStrs{
-		tomorrow:  "Tomorrow", dayAfter: "The day after", dayAfter3: "3 days later",
+		tomorrow: "Tomorrow", dayAfter: "The day after", dayAfter3: "3 days later",
 		thisWeek: "This", nextWeek: "Next", weekdays: weekdaysEN,
 		shortFn: func(w string) string { return w },
 	}

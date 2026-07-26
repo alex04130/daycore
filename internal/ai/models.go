@@ -10,20 +10,20 @@ import (
 // modelEntry is one model row in config/models.yaml. The set of models is fully
 // data-driven — add/remove rows to change which models exist, no code changes.
 type modelEntry struct {
-	ID            string         `yaml:"id"`
-	Format        string         `yaml:"format"` // must match a RegisterFormat name
-	BaseURL       string         `yaml:"base_url"`
-	Model         string         `yaml:"model"`       // upstream name (defaults to id)
-	APIKeyEnv     string         `yaml:"api_key_env"` // env var holding the key
-	APIKey        string         `yaml:"api_key"`     // inline key (discouraged; env preferred)
-	Vision        bool           `yaml:"vision"`
-	Tools         bool           `yaml:"tools"`
-	Stream        bool           `yaml:"stream"`
+	ID             string         `yaml:"id"`
+	Format         string         `yaml:"format"` // must match a RegisterFormat name
+	BaseURL        string         `yaml:"base_url"`
+	Model          string         `yaml:"model"`       // upstream name (defaults to id)
+	APIKeyEnv      string         `yaml:"api_key_env"` // env var holding the key
+	APIKey         string         `yaml:"api_key"`     // inline key (discouraged; env preferred)
+	Vision         bool           `yaml:"vision"`
+	Tools          bool           `yaml:"tools"`
+	Stream         bool           `yaml:"stream"`
 	Thinking       bool           `yaml:"thinking"`
 	DeepseekSearch bool           `yaml:"deepseek_search"`
 	ContextWindow  int            `yaml:"context_window"`
-	MaxTokens     int            `yaml:"max_tokens"`
-	ExtraBody     map[string]any `yaml:"extra_body"`
+	MaxTokens      int            `yaml:"max_tokens"`
+	ExtraBody      map[string]any `yaml:"extra_body"`
 }
 
 type catalogFile struct {

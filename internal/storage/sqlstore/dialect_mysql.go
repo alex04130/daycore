@@ -254,7 +254,7 @@ func (mysqlDialect) Migrations() []string {
 				updated_at BIGINT NOT NULL,
 				KEY materials_session_cat (session_id, category)
 			)`,
-			`CREATE TABLE IF NOT EXISTS wishes (
+		`CREATE TABLE IF NOT EXISTS wishes (
 				id VARCHAR(191) PRIMARY KEY,
 				session_id VARCHAR(191) NOT NULL,
 				title TEXT,
@@ -265,7 +265,7 @@ func (mysqlDialect) Migrations() []string {
 				updated_at BIGINT NOT NULL,
 				KEY wishes_session (session_id)
 			)`,
-			`CREATE TABLE IF NOT EXISTS temp_contexts (
+		`CREATE TABLE IF NOT EXISTS temp_contexts (
 				id VARCHAR(191) PRIMARY KEY,
 				session_id VARCHAR(191) NOT NULL,
 				` + "`key`" + ` VARCHAR(191) NOT NULL,

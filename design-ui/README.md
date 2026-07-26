@@ -13,13 +13,15 @@ Daycore 当前有两个前端形态，本目录是后者：
 
 ## 来源
 
-设计交付原件在仓库根的 [`claude-design/`](../claude-design/)：
+设计交付原件（设计系统 `_ds/` + 页面原型 `app/`）**不在本仓库内** —— 从
+Claude Design 网页版获取。仓库内只保留实现副本：
 
-- `claude-design/_ds/` —— 设计系统（design tokens、组件样式）
-- `claude-design/app/` —— 页面原型
+- [`web/frontend/src/vendor/ds-bundle.js`](../web/frontend/src/vendor/ds-bundle.js)
+  —— 设计系统 JS bundle（`window.DaycoreUI`，26 组件；含本地补丁）
+- [`web/frontend/src/ds/`](../web/frontend/src/ds/) —— `styles.css` +
+  `_ds_bundle.css`，design tokens 的权威来源
 
-现役前端已把设计系统 vendor 进 `web/frontend/src/vendor/ds-bundle.js` 与
-`web/frontend/src/ds/`（含本地补丁），并非直接读取 `claude-design/`。
+导入新前端时可直接复用这两处，无需再从网页版取一遍设计系统。
 
 ## 接入前需要确认的事
 

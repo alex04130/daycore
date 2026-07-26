@@ -16,8 +16,8 @@ import (
 //   - floating: no anchor — "9:00" is 9:00 wherever you view it (default).
 //   - fixed:    anchored to an instant — an airport pickup stays the same moment.
 //   - local:    anchored too, but meant to track the user's *current* local zone
-//               (circadian items like sleep); anchor + display zone is the
-//               frontend's job, we just record the instant.
+//     (circadian items like sleep); anchor + display zone is the
+//     frontend's job, we just record the instant.
 func fillBlockUTC(b *domain.TimeBlock, planDate, fallbackTZ string) {
 	if b.TimeMode != domain.TimeFixed && b.TimeMode != domain.TimeLocal {
 		b.UTCTime = nil // floating / unset: wall-clock only
