@@ -1,0 +1,110 @@
+{
+  "$comment": "Read-time petrification contract, shared by the Go backend and every frontend. The line is min(now − horizon, midnight today) and phase is a pure function of (block span, now, line) — no table, no job, nothing to migrate. Both sides run these scenarios as a test table; a divergence is a test failure, not a production surprise.",
+  "version": 1,
+  "horizonHours": 5,
+  "source": "design-ui/core/daycore-core.js petrifyLine/blockRange/phaseOf + HANDOFF/01-core-contract.md §3",
+
+  "boundaries": {
+    "$comment": "Copied from the prototype's comparison operators. These decide the edges and are the first thing to check when two implementations disagree.",
+    "stone": "end <  line   (a block ending exactly ON the line is NOT stone)",
+    "recon": "end <= now    (a block ending exactly NOW is recon)",
+    "now": "start <= now  (a block starting exactly NOW is now)",
+    "future": "otherwise"
+  },
+
+  "scenarios": [
+    {
+      "name": "afternoon — midnight wins, so nothing from today ever freezes while you live it",
+      "now": "2026-07-26T15:00:00+08:00",
+      "tz": "Asia/Shanghai",
+      "expectedLine": "2026-07-26T00:00:00+08:00",
+      "cases": [
+        { "date": "2026-07-26", "time": "09:00", "dur": 60, "phase": "recon", "why": "over, but today never freezes during the day" },
+        { "date": "2026-07-26", "time": "14:30", "dur": 60, "phase": "now", "why": "start <= now < end" },
+        { "date": "2026-07-26", "time": "15:00", "dur": 30, "phase": "now", "why": "starts exactly now" },
+        { "date": "2026-07-26", "time": "16:00", "dur": 60, "phase": "future", "why": "hasn't started" },
+        { "date": "2026-07-25", "time": "22:00", "dur": 60, "phase": "stone", "why": "ended before midnight today" },
+        { "date": "2026-07-25", "time": "23:30", "dur": 30, "phase": "recon", "why": "ends exactly AT the line (midnight); stone requires end < line, so it just misses freezing" }
+      ]
+    },
+    {
+      "name": "1am — the rolling window wins: the evening you just had is still yours",
+      "now": "2026-07-26T01:00:00+08:00",
+      "tz": "Asia/Shanghai",
+      "expectedLine": "2026-07-25T20:00:00+08:00",
+      "cases": [
+        { "date": "2026-07-25", "time": "21:00", "dur": 60, "phase": "recon", "why": "the night-owl buffer — still editable at 1am" },
+        { "date": "2026-07-25", "time": "23:00", "dur": 60, "phase": "recon", "why": "same, right up to midnight" },
+        { "date": "2026-07-25", "time": "19:00", "dur": 30, "phase": "stone", "why": "ended before the rolling line" },
+        { "date": "2026-07-26", "time": "00:30", "dur": 60, "phase": "now", "why": "running across the date boundary" },
+        { "date": "2026-07-26", "time": "09:00", "dur": 60, "phase": "future", "why": "later today" }
+      ]
+    },
+    {
+      "name": "5am — the rolling window has caught up to midnight and yesterday is closed",
+      "now": "2026-07-26T05:00:00+08:00",
+      "tz": "Asia/Shanghai",
+      "expectedLine": "2026-07-26T00:00:00+08:00",
+      "cases": [
+        { "date": "2026-07-25", "time": "23:00", "dur": 30, "phase": "stone", "why": "yesterday is fully frozen from 5am on" },
+        { "date": "2026-07-26", "time": "01:00", "dur": 60, "phase": "recon", "why": "today, already over, still editable" },
+        { "date": "2026-07-26", "time": "04:30", "dur": 60, "phase": "now", "why": "running" }
+      ]
+    },
+    {
+      "name": "boundaries — the exact-equality cases the operators decide",
+      "now": "2026-07-26T12:00:00+08:00",
+      "tz": "Asia/Shanghai",
+      "expectedLine": "2026-07-26T00:00:00+08:00",
+      "cases": [
+        { "date": "2026-07-25", "time": "23:00", "dur": 60, "phase": "recon", "why": "ends exactly ON the line; stone needs end < line, so this is not stone" },
+        { "date": "2026-07-25", "time": "22:59", "dur": 60, "phase": "stone", "why": "one minute earlier, ends before the line" },
+        { "date": "2026-07-26", "time": "11:00", "dur": 60, "phase": "recon", "why": "ends exactly now; recon is end <= now" },
+        { "date": "2026-07-26", "time": "12:00", "dur": 60, "phase": "now", "why": "starts exactly now; now is start <= now" },
+        { "date": "2026-07-26", "time": "12:00", "dur": 0, "phase": "recon", "why": "zero-length at exactly now: end <= now wins over start <= now" }
+      ]
+    },
+    {
+      "name": "timezone — the same instant classifies differently for viewers in different zones",
+      "now": "2026-07-26T02:00:00+08:00",
+      "tz": "America/New_York",
+      "expectedLine": "2026-07-25T00:00:00-04:00",
+      "$comment": "The same instant is 2am on the 26th in Shanghai but 2pm on the 25th in New York — so the viewer's zone decides both which day is 'today' and which half of the min() wins. Here it is still mid-afternoon locally, so rolling (09:00) is later than midnight and midnight wins; a Shanghai viewer at the same instant is past midnight and gets the rolling line instead.",
+      "cases": [
+        { "date": "2026-07-25", "time": "10:00", "dur": 60, "phase": "recon", "why": "ended 11:00 local — today never freezes during the day" },
+        { "date": "2026-07-25", "time": "07:00", "dur": 60, "phase": "recon", "why": "still today in New York, so still editable" },
+        { "date": "2026-07-24", "time": "20:00", "dur": 60, "phase": "stone", "why": "the previous local day, ended before midnight the 25th" },
+        { "date": "2026-07-25", "time": "16:00", "dur": 60, "phase": "future", "why": "still afternoon in New York" }
+      ]
+    }
+  ],
+
+  "dst": {
+    "$comment": "Measured against Go's time.ParseInLocation, not reasoned about — the standard library documents the gap case as 'not guaranteed', so the observed behaviour IS the contract. A frontend that resolves these differently will disagree with the server about whether a block has frozen.",
+    "tz": "America/New_York",
+    "springForward": {
+      "date": "2026-03-08",
+      "note": "02:00→03:00; wall clocks in [02:00, 03:00) never happen. Go resolves them BACKWARDS, to one hour before the nominal reading.",
+      "cases": [
+        { "time": "01:30", "resolvesTo": "2026-03-08T01:30:00-05:00", "zone": "EST" },
+        { "time": "02:00", "resolvesTo": "2026-03-08T01:00:00-05:00", "zone": "EST" },
+        { "time": "02:30", "resolvesTo": "2026-03-08T01:30:00-05:00", "zone": "EST" },
+        { "time": "03:00", "resolvesTo": "2026-03-08T03:00:00-04:00", "zone": "EDT" }
+      ]
+    },
+    "fallBack": {
+      "date": "2026-11-01",
+      "note": "01:00→01:00; the hour repeats. Go picks the FIRST (pre-transition, EDT) occurrence.",
+      "cases": [
+        { "time": "00:30", "resolvesTo": "2026-11-01T00:30:00-04:00", "zone": "EDT" },
+        { "time": "01:00", "resolvesTo": "2026-11-01T01:00:00-04:00", "zone": "EDT" },
+        { "time": "01:30", "resolvesTo": "2026-11-01T01:30:00-04:00", "zone": "EDT" },
+        { "time": "02:00", "resolvesTo": "2026-11-01T02:00:00-05:00", "zone": "EST" }
+      ]
+    },
+    "startOfDay": [
+      { "date": "2026-03-08", "is": "2026-03-08T00:00:00-05:00", "why": "the transition is at 02:00, so midnight itself is unaffected" },
+      { "date": "2026-11-01", "is": "2026-11-01T00:00:00-04:00", "why": "same — midnight is before the 01:00 transition" }
+    ]
+  }
+}
