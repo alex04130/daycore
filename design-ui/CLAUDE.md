@@ -13,8 +13,10 @@
 
 ## 这是什么
 
-「替不擅长规划的人省心的 AI 日程管家」的**设计原型仓库**。同一套数据契约上并存 **五个范式级不同的前端**。
+「替不擅长规划的人省心的 AI 日程管家」的**设计原型仓库**。同一套数据契约上并存 **四个范式级不同的前端**（琉璃 / 纸屿 / 汀 / 琉璃初版）。
 所有 `.html` / `.jsx` / `.css` 是**用 HTML 写的设计参考**，不是生产代码 —— 目标是在真实工程里**重建出一样的效果**。
+
+> 第五端「径 · 远路」**只有文档没有实现** —— `HANDOFF/08-jing-yuanlu.md` 在，`jing/` 目录从未存在过（全 git 历史里都没有）。要做它得从文档从零写。
 
 ## 动手之前必读
 
@@ -28,19 +30,19 @@
 ## 目录
 
 ```
-index.html              门厅：五端入口 + 演示场景切换
-core/daycore-core.js    共享数据核心（mock API，五端唯一共享物）
+index.html              门厅：四端入口 + 演示场景切换
+core/daycore-core.js    共享数据核心（mock API，四端唯一共享物）
 liuli/                  琉璃 · 长卷（时间画布）+ admin.html 运营台
 zhiyu/                  纸屿 · 顺流（叙事流）
 ting/                   汀 · 此刻（单件流）
 liuli-classic/          琉璃初版 · 页面制（对照组，含 store-bridge.js 桥接层）
-jing/                   径 · 远路（地平线纵深时间）
-_ds/                    DaycoreUI 设计系统（初版依赖）
-API_CONTRACT.md         真后端 HTTP 契约
-HANDOFF/                交接文档（先读这里）
+API_CONTRACT.md         真后端 HTTP 契约（路径命名非权威，见顶部裁决）
+HANDOFF/                交接文档（先读这里；08 是无实现的第五端）
 _archive/               历史版本，别动
 uploads/                设计简报与素材
 ```
+
+**已删除**：`_ds/`（Claude Design 的 design system 编译产物）。仓库内的权威副本是 `web/frontend/src/vendor/ds-bundle.js` + `src/ds/`（含本地补丁）。连带 `liuli/admin.html`、`liuli-classic/index.html`、`scraps/old-liuli.html`、`_archive/liuli-v3/index.html` 直接打开会没样式 —— 重建照 `.jsx` 源码写，不需要这些页面能跑。
 
 ## 技术现状
 

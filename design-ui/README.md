@@ -23,7 +23,10 @@
 
 第五端「径 · 远路」只有文档（[`HANDOFF/08-jing-yuanlu.md`](HANDOFF/08-jing-yuanlu.md)），无实现。
 
-其余：`core/daycore-core.js` 四端共享的 mock 数据核心 · `_ds/` DaycoreUI 设计系统原件 · `app/` 与 `_archive/` 历史版本 · `uploads/` 设计简报与素材 · `scraps/` 零碎截图。
+其余：`core/daycore-core.js` 四端共享的 mock 数据核心 · `app/` 与 `_archive/` 历史版本 · `uploads/` 设计简报与素材 · `scraps/` 零碎截图。
+
+> **`_ds/` 已删除**（Claude Design 的 design system 编译产物，556K）。仓库内的权威副本是 [`web/frontend/src/vendor/ds-bundle.js`](../web/frontend/src/vendor/ds-bundle.js) 与 [`web/frontend/src/ds/`](../web/frontend/src/ds/)（含本地补丁，比原件多 129 字节）。
+> 连带影响：`liuli/admin.html`、`scraps/old-liuli.html`、`_archive/liuli-v3/index.html` 三个原型页直接打开会没有样式 —— 它们的 `<link>`/`<script>` 指向已删目录。重建时照 `.jsx` 源码写，用上面的 vendored 副本，不需要这三个页面能跑。
 
 ## 与主仓库的关系
 

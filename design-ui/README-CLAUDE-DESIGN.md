@@ -14,7 +14,7 @@
 ## 结构
 
 - `core/daycore-core.js` — 共享数据核心（mock API v2.3）：账本 append-only、读时石化（`min(now−5h, 今天00:00)`）、提案统一资源（虚影/卡/决策行级接受）、撤销=反向补偿、胆量系数、许愿池、Exchange 快照、意图路由。三端共用同一份 `localStorage`（key `daycore-v4-core`）——在任一端的动作，其余两端可见。
-- 四端各自自包含视觉层：琉璃玻璃拟态（`liuli/app/changjuan.css`）、纸屿纸张体系（`zhiyu/app/dc.css` + `flow.css`）、汀水色夜屏（`ting/app/ting.css`）、初版走 DaycoreUI 设计系统（`_ds/` + `liuli-classic/app/app.css`）。
+- 四端各自自包含视觉层：琉璃玻璃拟态（`liuli/app/changjuan.css`）、纸屿纸张体系（`zhiyu/app/dc.css` + `flow.css`）、汀水色夜屏（`ting/app/ting.css`）、初版走 DaycoreUI 设计系统（副本在 `web/frontend/src/{vendor,ds}/` + `liuli-classic/app/app.css`；`_ds/` 原件已删）。
 - 初版通过 `liuli-classic/app/store-bridge.js` 把旧数据模型投影到共享账本，因此四端数据互见。
 - 演示场景（健康日/危机日/冷启动）在门厅或各端设置里切换，写进共享账本。
 - 运营台：`liuli/admin.html`（独立页，沿用旧版）。

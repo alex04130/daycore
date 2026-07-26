@@ -18,7 +18,7 @@
 | 设置 | `page-settings.jsx` + `settings-theme.jsx` | 助手名 / L2 提示词 / 主题工作室（含 AI 生成）/ 管理台入口 |
 
 - `≥900px`：`.dc-rail` 左侧竖向导航（logo + 5 项 + 底部账户卡）；`<900px`：底部 `TabBar`。
-- 依赖 **DaycoreUI 设计系统**（`_ds/daycore-design-system-.../`）：`GlassCard` `Badge` `Sheet` `Confirm` `Segmented` `Field` `Calendar` `TimeBlockCard` `TabBar` `EmptyState`。
+- 依赖 **DaycoreUI 设计系统**（`_ds/` 原件已删；用仓库内副本 `web/frontend/src/vendor/ds-bundle.js` + `src/ds/`）：`GlassCard` `Badge` `Sheet` `Confirm` `Segmented` `Field` `Calendar` `TimeBlockCard` `TabBar` `EmptyState`。
 - 页面层样式 `liuli-classic/app/app.css`（**必须是 v3 版那份**，见 §4 陷阱）。
 
 ## 2. 桥接层：旧数据模型 ↔ 共享账本
