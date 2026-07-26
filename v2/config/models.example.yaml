@@ -1,0 +1,38 @@
+# Example AI model catalog. Copy to config/models.yaml and edit.
+# Supported `format` values are whatever wire-format packages are registered
+# (built-in: openai, anthropic, ollama). Add a new format = implement it under
+# internal/ai/formats/<name> + RegisterFormat + recompile, then reference it here.
+models:
+  - id: deepseek-chat            # the id you reference as DEFAULT_CHAT_MODEL
+    format: openai               # OpenAI Chat Completions wire format
+    base_url: https://api.deepseek.com
+    model: deepseek-chat         # upstream model name (defaults to id)
+    api_key_env: DEEPSEEK_API_KEY
+    tools: true
+    stream: true
+    context_window: 65536
+
+  - id: gpt-4o
+    format: openai
+    base_url: https://api.openai.com/v1
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    vision: true                 # mark vision-capable models so they can read images
+    tools: true
+    stream: true
+
+  - id: claude
+    format: anthropic
+    base_url: https://api.anthropic.com
+    model: claude-3-5-sonnet-latest
+    api_key_env: ANTHROPIC_API_KEY
+    vision: true
+    tools: true
+    stream: true
+
+  - id: llava
+    format: ollama
+    base_url: http://localhost:11434
+    model: llava
+    vision: true
+    stream: true

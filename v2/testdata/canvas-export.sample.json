@@ -1,0 +1,63 @@
+{
+  "version": "daycore.canvas.v1",
+  "exportedAt": "2026-07-07T04:00:00.000Z",
+  "baseURL": "https://canvas.umn.edu",
+  "courses": [
+    {
+      "canvasId": "101",
+      "name": "CSCI 3081W Program Design & Development",
+      "courseCode": "CSCI3081W",
+      "currentScore": 88.4,
+      "currentGrade": "B+"
+    },
+    {
+      "canvasId": "102",
+      "name": "MATH 2263 Multivariable Calculus",
+      "courseCode": "MATH2263",
+      "currentScore": 72.1,
+      "currentGrade": "C"
+    },
+    {
+      "canvasId": "103",
+      "name": "PHIL 1001 Introduction to Logic",
+      "courseCode": "PHIL1001",
+      "currentScore": null,
+      "currentGrade": null
+    }
+  ],
+  "assignments": [
+    {
+      "canvasId": "assignment-9001",
+      "courseCanvasId": "101",
+      "title": "Iteration 2: Drone Delivery Simulation",
+      "dueAt": "2026-07-10T04:59:00Z",
+      "pointsPossible": 100,
+      "submitted": false,
+      "graded": false,
+      "score": null,
+      "htmlUrl": "https://canvas.umn.edu/courses/101/assignments/9001"
+    },
+    {
+      "canvasId": "assignment-9002",
+      "courseCanvasId": "102",
+      "title": "Homework 7: Lagrange Multipliers",
+      "dueAt": "2026-07-09T04:59:00Z",
+      "pointsPossible": 30,
+      "submitted": false,
+      "graded": false,
+      "score": null,
+      "htmlUrl": "https://canvas.umn.edu/courses/102/assignments/9002"
+    },
+    {
+      "canvasId": "quiz-9003",
+      "courseCanvasId": "103",
+      "title": "Weekly Quiz 6: Predicate Logic",
+      "dueAt": "2026-07-12T04:59:00Z",
+      "pointsPossible": 10,
+      "submitted": true,
+      "graded": true,
+      "score": null,
+      "htmlUrl": "https://canvas.umn.edu/courses/103/quizzes/9003"
+    }
+  ]
+}

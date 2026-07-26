@@ -1,0 +1,82 @@
+# AI model catalog — the set of models the app can use is fully data-driven.
+# Add/remove entries here (no code changes) to support more models. Each entry
+# binds a model id to a registered wire format (openai | anthropic | ollama | …).
+#
+# caps: vision/tools/stream are declared, not auto-detected. The vision model is
+# whichever entry has `vision: true` (or DEFAULT_VISION_MODEL). The default chat
+# model is DEFAULT_CHAT_MODEL (env), which must match an id below.
+models:
+  # ── DeepSeek (OpenAI-compatible) — default chat model ──────────────────────
+  - id: deepseek-chat
+    format: openai
+    base_url: https://api.deepseek.com
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+    vision: false
+    tools: true
+    stream: true
+    deepseek_search: true
+    context_window: 65536
+    max_tokens: 4096
+
+  # ── DeepSeek reasoner — thinking model (set DEFAULT_PLANNER_MODEL to use) ──
+  # ── DeepSeek Anthropic-format — native web_search server-side tool ──────────
+  - id: deepseek-search
+    format: anthropic
+    base_url: https://api.deepseek.com/anthropic
+    model: deepseek-chat
+    api_key_env: DEEPSEEK_API_KEY
+    vision: false
+    tools: true
+    stream: true
+    deepseek_search: true
+    context_window: 65536
+    max_tokens: 4096
+
+  # ── DeepSeek reasoner — thinking model (set DEFAULT_PLANNER_MODEL to use) ──
+  - id: deepseek-reasoner
+    format: openai
+    base_url: https://api.deepseek.com
+    model: deepseek-reasoner
+    api_key_env: DEEPSEEK_API_KEY
+    vision: false
+    tools: true
+    stream: true
+    thinking: true
+    context_window: 65536
+    max_tokens: 8192
+    extra_body:
+      thinking:
+        enabled: true
+
+  # ── OpenAI GPT-4o — vision-capable (used for image→plan if enabled) ─────────
+  - id: gpt-4o
+    format: openai
+    base_url: https://api.openai.com/v1
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    vision: true
+    tools: true
+    stream: true
+    context_window: 128000
+
+  # ── Anthropic Claude (Messages API) — alternative chat/vision ───────────────
+  - id: claude
+    format: anthropic
+    base_url: https://api.anthropic.com
+    model: claude-3-5-sonnet-latest
+    api_key_env: ANTHROPIC_API_KEY
+    vision: true
+    tools: true
+    stream: true
+    context_window: 200000
+
+  # ── Local Ollama (llava) — offline vision, no API key ───────────────────────
+  - id: llava
+    format: ollama
+    base_url: http://localhost:11434
+    model: llava
+    vision: true
+    tools: false
+    stream: true
+    context_window: 8192

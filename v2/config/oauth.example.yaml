@@ -1,0 +1,28 @@
+# OAuth providers — copy to config/oauth.yaml and fill in client credentials.
+# "google" and "github" are presets: only client_id/client_secret are required;
+# their URLs and field mappings are filled automatically. Any other provider can
+# be added by supplying all fields (auth_url/token_url/userinfo_url/scopes + the
+# *_field mappings) — no code change needed.
+#
+# The redirect/callback URL is always:  <PUBLIC_BASE_URL>/api/auth/oauth/<name>/callback
+providers:
+  - name: google
+    client_id: ""
+    client_secret: ""
+
+  - name: github
+    client_id: ""
+    client_secret: ""
+
+  # Example custom provider (uncomment + fill to enable):
+  # - name: gitlab
+  #   client_id: "..."
+  #   client_secret: "..."
+  #   auth_url: https://gitlab.com/oauth/authorize
+  #   token_url: https://gitlab.com/oauth/token
+  #   userinfo_url: https://gitlab.com/api/v4/user
+  #   scopes: [read_user]
+  #   id_field: id
+  #   email_field: email
+  #   name_field: name
+  #   avatar_field: avatar_url

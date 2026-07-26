@@ -1,0 +1,214 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"daycore/internal/ai"
+	"daycore/internal/domain"
+)
+
+// POST /api/ai/companion — the companion agent over SSE v2. Context is
+// server-authoritative (clock, plans, memory, rules, assignments, moods).
+// When threadId is set, history is loaded from the server-side chat thread;
+// otherwise the client uploads conversationHistory (anonymous sessions).
+func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimit(w, r) {
+		return
+	}
+	var body struct {
+		Message       string `json:"message"`
+		Timezone      string `json:"timezone"`
+		AssistantName string `json:"assistantName"`
+		ThreadID      string `json:"threadId"`
+		ConversationHistory []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"conversationHistory"`
+	}
+	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
+		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 message")
+		return
+	}
+
+	sid := sessionIDFrom(r.Context())
+	s.decisions.cancelForSession(sid) // a new message supersedes any pending card
+
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	defer cancel()
+
+	locale := s.requestLocale(r)
+	name := orDefault(body.AssistantName, "Leo")
+	var messages []ai.Message
+	// When threadId is set, load history from the server-side chat thread;
+	// otherwise fall back to client-uploaded conversationHistory (anonymous).
+	if body.ThreadID != "" {
+		var err error
+		messages, err = s.buildCompanionMessages(ctx, sid, body.ThreadID, locale, body.Timezone, name, body.Message, nil)
+		if err != nil {
+			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			return
+		}
+	} else {
+		sys, err := s.companionSystemPrompt(ctx, sid, locale, body.Timezone, name)
+		if err != nil {
+			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			return
+		}
+		messages = []ai.Message{{Role: ai.RoleSystem, Content: sys}}
+		hist := body.ConversationHistory
+		if len(hist) > 20 {
+			hist = hist[len(hist)-20:]
+		}
+		for _, m := range hist {
+			// Whitelist roles: a client must not be able to inject a `system`
+			// (or `tool`) turn into its own LLM context. Anything not explicitly
+			// assistant is treated as a user message.
+			role := ai.RoleUser
+			if m.Role == string(ai.RoleAssistant) {
+				role = ai.RoleAssistant
+			}
+			messages = append(messages, ai.Message{Role: role, Content: m.Content})
+		}
+		messages = append(messages, ai.Message{Role: ai.RoleUser, Content: body.Message})
+		messages = s.maybeCompress(ctx, sid, "", locale, body.Timezone, name, messages)
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering for SSE
+	w.WriteHeader(http.StatusOK)
+
+	rc := http.NewResponseController(w)
+	rc.Flush()
+
+	answer := s.runCompanionAgent(ctx, sseSender{w: w, rc: rc}, r, s.catalog.DefaultChat(), sid, locale, body.Timezone, messages, true)
+
+	// Persist the turn to the server-side thread so threadId multi-turn context
+	// actually accumulates across requests. Messages carry sid, so a stray
+	// threadId can't write into another session's thread. Best-effort: the SSE
+	// stream already completed.
+	if body.ThreadID != "" && strings.TrimSpace(answer) != "" {
+		_ = s.store.Chats().AppendMessages(context.WithoutCancel(ctx), []domain.ChatMessage{
+			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleUser, Content: body.Message},
+			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleAssistant, Content: answer},
+		})
+	}
+}
+
+// buildCompanionMessages assembles system prompt + persisted thread summary +
+// thread history + the new user message, then applies sliding-window
+// compression — the threadId flow shared by the sync SSE endpoint and the
+// async endpoint. exclude skips message IDs already persisted for the current
+// turn (the async flow writes user + placeholder rows before running the
+// agent); pending placeholders from concurrent runs are always skipped.
+func (s *Server) buildCompanionMessages(ctx context.Context, sid, threadID, locale, tz, name, userMsg string, exclude map[string]bool) ([]ai.Message, error) {
+	sys, err := s.companionSystemPrompt(ctx, sid, locale, tz, name)
+	if err != nil {
+		return nil, err
+	}
+	messages := []ai.Message{{Role: ai.RoleSystem, Content: sys}}
+	// Re-inject the persisted rolling summary so compressed context carries
+	// across requests (each request otherwise rebuilds only from raw messages).
+	if threads, err := s.store.Chats().ListThreads(ctx, sid); err == nil {
+		for _, th := range threads {
+			if th.ID == threadID {
+				if strings.TrimSpace(th.Summary) != "" {
+					messages = append(messages, ai.Message{Role: ai.RoleSystem, Content: "[对话摘要]\n" + th.Summary})
+				}
+				break
+			}
+		}
+	}
+	if dbMsgs, err := s.store.Chats().ListMessages(ctx, threadID, sid, "", 50); err == nil {
+		// Messages come newest-first; reverse to chronological order.
+		for i := len(dbMsgs) - 1; i >= 0; i-- {
+			if exclude[dbMsgs[i].ID] || dbMsgs[i].Status == domain.MsgStatusPending {
+				continue
+			}
+			messages = append(messages, ai.Message{Role: ai.Role(dbMsgs[i].Role), Content: dbMsgs[i].Content})
+		}
+	}
+	messages = append(messages, ai.Message{Role: ai.RoleUser, Content: userMsg})
+	return s.maybeCompress(ctx, sid, threadID, locale, tz, name, messages), nil
+}
+
+// companionSystemPrompt assembles the layered system prompt:
+//
+//	L1_hard (pure boundaries, zero personality)
+//	→ L3_context (data: clock, plans, memory, weather)
+//	→ L2_persona (role + style, default "good buddy" or user override)
+//	→ L1_reminder (restated boundaries that L2 cannot override)
+func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, name string) (string, error) {
+	// L1: pure rule list — no template variables needed.
+	l1, err := s.prompts.Render(ctx, ai.PromptCompanionAgent, locale, ai.CompanionAgentData{})
+	if err != nil {
+		return "", err
+	}
+
+	// L3: data context (clock, plans, memory, weather, assignments, rules, moods).
+	loc, err := time.LoadLocation(tz)
+	if err != nil || tz == "" {
+		loc = time.UTC
+	}
+	now := time.Now().In(loc)
+	date := now.Format("2006-01-02")
+	weekday := ai.WeekdayName(now, locale)
+	dc := ai.BuildDateContext(date, weekday, now.Format("15:04"), tz, locale)
+
+	assignmentsCtx, rulesCtx := s.companionMaterials(ctx, sid)
+	l3, err := s.prompts.Render(ctx, ai.PromptCompanionContext, locale, ai.CompanionContextData{
+		Date: date, Weekday: weekday, Time: now.Format("15:04"), Timezone: tz,
+		RelativeDateMap:    dc.RelativeDateMap,
+		TodayPlan:          s.planBlocksJSON(ctx, sid, date),
+		TomorrowPlan:       s.planBlocksJSON(ctx, sid, now.AddDate(0, 0, 1).Format("2006-01-02")),
+		MemoryFacts:        s.memoryFactsContext(ctx, sid),
+		AssignmentsContext: assignmentsCtx, RulesContext: rulesCtx,
+		MoodHistory: s.moodHistoryContext(ctx, sid),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	// L2: role layer — user override or built-in "good buddy" default.
+	l2 := ""
+	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.PersonaPrompt != "" {
+		if strings.HasPrefix(locale, "zh") {
+			l2 = "\n\n## 你的个性化风格设定\n" + sess.PersonaPrompt
+		} else {
+			l2 = "\n\n## Your personalized style\n" + sess.PersonaPrompt
+		}
+	} else {
+		l2 = "\n\n" + ai.DefaultPersona(locale, name)
+	}
+
+	// L1_reminder: hard boundary restatement placed AFTER L2 so it can never
+	// be overridden by "ignore previous instructions" attacks.
+	reminder := "\n\n" + ai.HardBoundaryReminder(locale)
+
+	// Append the active wish pool so the assistant can proactively suggest
+	// something from it (the wish ↔ mood linkage).
+	l3extra := ""
+	if wishesCtx := s.activeWishesContext(ctx, sid); wishesCtx != "" && wishesCtx != "[]" {
+		if strings.HasPrefix(locale, "zh") {
+			l3extra = "\n\n## 愿望池（用户想做但还没安排的事）\n" + wishesCtx
+		} else {
+			l3extra = "\n\n## Wish pool (things the user wants to do but hasn't scheduled)\n" + wishesCtx
+		}
+	}
+
+	return l1 + "\n\n" + l3 + l3extra + l2 + reminder, nil
+}
+
+// planBlocksJSON renders a date's visible blocks as compact JSON for prompt
+// injection ("[]" when nothing is scheduled).
+func (s *Server) planBlocksJSON(ctx context.Context, sid, date string) string {
+	blocks := s.planBlocksForDate(ctx, sid, date)
+	if len(blocks) == 0 {
+		return "[]"
+	}
+	return marshalCompact(blocks)
+}

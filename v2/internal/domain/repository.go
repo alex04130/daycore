@@ -1,0 +1,169 @@
+package domain
+
+import (
+	"context"
+	"time"
+)
+
+type Store interface {
+	Sessions() SessionRepository
+	DayPlans() DayPlanRepository
+	Moods() MoodRepository
+	Companion() CompanionRepository
+	ThemeLog() ThemeLogRepository
+	OpLogs() OperationLogRepository
+	Users() UserRepository
+	Auth() AuthRepository
+	Prompts() PromptRepository
+	Chats() ChatRepository
+	AILogs() AICallLogRepository
+	Rules() RuleRepository
+	Courses() CourseRepository
+	Feedback() FeedbackLogRepository
+	Assignments() AssignmentRepository
+	Themes() ThemeRepository
+	Memory() MemoryRepository
+	Materials() MaterialRepository
+	Wishes() WishRepository
+	TempContexts() TempContextRepository
+
+	ChannelBindings() ChannelBindingRepository
+
+	Migrate(ctx context.Context) error
+	Ping(ctx context.Context) error
+	Close() error
+}
+
+type SessionRepository interface {
+	GetOrCreate(ctx context.Context, id string) (*Session, error)
+	Get(ctx context.Context, id string) (*Session, error)
+	Update(ctx context.Context, id string, upd SessionUpdate) (*Session, error)
+	IncrementInteraction(ctx context.Context, id string) error
+	GetByImportToken(ctx context.Context, token string) (*Session, error)
+}
+
+type DayPlanRepository interface {
+	Get(ctx context.Context, sessionID, date string) (*DayPlan, error)
+	Upsert(ctx context.Context, plan *DayPlan) (*DayPlan, error)
+	Range(ctx context.Context, sessionID, from, to string) ([]DayPlan, error)
+}
+
+type MoodRepository interface {
+	List(ctx context.Context, sessionID string, limit int) ([]MoodCheckin, error)
+	Create(ctx context.Context, m *MoodCheckin) (*MoodCheckin, error)
+	MarkExerciseCompleted(ctx context.Context, sessionID, id string) error
+}
+
+type CompanionRepository interface {
+	Get(ctx context.Context, sessionID string) (*CompanionMemory, error)
+	Upsert(ctx context.Context, sessionID string, history []Message, keyFacts []string) error
+}
+
+type ThemeLogRepository interface {
+	Add(ctx context.Context, sessionID, theme string) error
+}
+
+type OperationLogRepository interface {
+	Add(ctx context.Context, l *OperationLog) error
+	Get(ctx context.Context, sessionID, id string) (*OperationLog, error)
+	List(ctx context.Context, sessionID string, limit int) ([]OperationLog, error)
+}
+
+type UserRepository interface {
+	GetByID(ctx context.Context, id string) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	Upsert(ctx context.Context, u *User) (*User, error)
+	SetDataSession(ctx context.Context, userID, sessionID string) error
+	// IncrementTokenVersion bumps the user's token version, invalidating every
+	// previously issued JWT (used on logout).
+	IncrementTokenVersion(ctx context.Context, userID string) error
+}
+
+type AuthRepository interface {
+	GetCredentialByUserID(ctx context.Context, userID string) (*Credential, error)
+	UpsertCredential(ctx context.Context, c *Credential) error
+	GetOAuthIdentity(ctx context.Context, provider, providerUserID string) (*OAuthIdentity, error)
+	CreateOAuthIdentity(ctx context.Context, oi *OAuthIdentity) error
+}
+
+type PromptRepository interface {
+	Get(ctx context.Context, key, locale string) (*Prompt, error)
+	Set(ctx context.Context, key, locale, content string) error
+	List(ctx context.Context) ([]Prompt, error)
+}
+
+type ChatRepository interface {
+	ListThreads(ctx context.Context, sessionID string) ([]ChatThread, error)
+	CreateThread(ctx context.Context, t *ChatThread) (*ChatThread, error)
+	UpdateThread(ctx context.Context, sessionID, id string, upd ChatThreadUpdate) (*ChatThread, error)
+	DeleteThread(ctx context.Context, sessionID, id string) error
+	ListMessages(ctx context.Context, threadID, sessionID, before string, limit int) ([]ChatMessage, error)
+	AppendMessages(ctx context.Context, msgs []ChatMessage) error
+	GetMessage(ctx context.Context, sessionID, id string) (*ChatMessage, error)
+	UpdateMessage(ctx context.Context, sessionID, id string, upd ChatMessageUpdate) error
+	// FailPendingMessages marks every pending message as error — the startup
+	// sweep for async placeholders orphaned by a crash.
+	FailPendingMessages(ctx context.Context) (int64, error)
+	DeleteThreadMessages(ctx context.Context, sessionID, threadID string) error
+}
+
+type ChatThreadUpdate struct {
+	Title    *string
+	Summary  *string
+	Archived *bool
+}
+
+// ChatMessageUpdate is a partial message update (async turn finalization).
+type ChatMessageUpdate struct {
+	Content    *string
+	ToolEvents *string
+	Status     *string
+}
+
+type AICallLogRepository interface {
+	Add(ctx context.Context, l *AICallLog) error
+	Stats(ctx context.Context) (*AdminStats, error)
+}
+
+type RuleRepository interface {
+	Get(ctx context.Context, sessionID, id string) (*ScheduleRule, error)
+	List(ctx context.Context, sessionID string) ([]ScheduleRule, error)
+	Create(ctx context.Context, r *ScheduleRule) (*ScheduleRule, error)
+	Update(ctx context.Context, sessionID, id string, upd ScheduleRuleUpdate) (*ScheduleRule, error)
+	Delete(ctx context.Context, sessionID, id string) error
+}
+
+type CourseRepository interface {
+	UpsertByCanvasID(ctx context.Context, c *Course) (*Course, error)
+	List(ctx context.Context, sessionID string) ([]Course, error)
+}
+
+type AssignmentFilter struct {
+	DueFrom *time.Time
+	DueTo   *time.Time
+	Status  string
+}
+
+type MemoryRepository interface {
+	ListFacts(ctx context.Context, sessionID string) ([]MemoryFact, error)
+	AddFact(ctx context.Context, f *MemoryFact) (*MemoryFact, error)
+	DeleteFact(ctx context.Context, sessionID, id string) error
+	ClearFacts(ctx context.Context, sessionID string) (int, error)
+	AddImport(ctx context.Context, rec *ImportRecord) (*ImportRecord, error)
+	ListImports(ctx context.Context, sessionID string, limit int) ([]ImportRecord, error)
+}
+
+type ThemeRepository interface {
+	Get(ctx context.Context, sessionID, id string) (*CustomTheme, error)
+	List(ctx context.Context, sessionID string) ([]CustomTheme, error)
+	Create(ctx context.Context, t *CustomTheme) (*CustomTheme, error)
+	Update(ctx context.Context, sessionID, id string, upd CustomThemeUpdate) (*CustomTheme, error)
+	Delete(ctx context.Context, sessionID, id string) error
+}
+
+type AssignmentRepository interface {
+	Get(ctx context.Context, sessionID, id string) (*Assignment, error)
+	List(ctx context.Context, sessionID string, f AssignmentFilter) ([]Assignment, error)
+	UpsertByCanvasID(ctx context.Context, a *Assignment) (*Assignment, error)
+	SetStatus(ctx context.Context, sessionID, id, status string) error
+}

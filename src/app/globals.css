@@ -1,0 +1,228 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ─── Daycore Design Tokens — Tactile Floating Stack ─────────────────────── */
+@theme inline {
+  /* Keep shadcn base tokens for component compatibility */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+
+  /* Daycore custom tokens */
+  --font-heading: "Inter", "SF Pro Display", system-ui, sans-serif;
+  --font-body: "Inter", "SF Pro Text", system-ui, sans-serif;
+}
+
+/* ─── Theme CSS Variables (runtime-switchable) ────────────────────────────── */
+:root {
+  /* shadcn theme vars — adjust to match Daycore Sky theme */
+  --background: 240 253 244;
+  --foreground: 15 23 42;
+  --card: 255 255 255;
+  --card-foreground: 15 23 42;
+  --popover: 255 255 255;
+  --popover-foreground: 15 23 42;
+  --primary: 59 130 246;
+  --primary-foreground: 255 255 255;
+  --secondary: 241 245 249;
+  --secondary-foreground: 15 23 42;
+  --muted: 241 245 249;
+  --muted-foreground: 100 116 139;
+  --accent: 224 242 254;
+  --accent-foreground: 15 23 42;
+  --destructive: 239 68 68;
+  --border: 226 232 240;
+  --input: 226 232 240;
+  --ring: 59 130 246;
+
+  /* Daycore theme-specific custom properties */
+  --color-primary: #3b82f6;
+  --color-accent: #60a5fa;
+  --color-bg-start: #e0f2fe;
+  --color-bg-end: #f0f9ff;
+  --color-surface: rgba(255, 255, 255, 0.72);
+  --color-surface-hover: rgba(255, 255, 255, 0.88);
+  --color-border-custom: rgba(59, 130, 246, 0.18);
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --tab-bar-bg: rgba(255, 255, 255, 0.8);
+  --tab-bar-border: rgba(59, 130, 246, 0.15);
+
+  /* State colors */
+  --color-states-success: #22c55e;
+  --color-states-warning: #f59e0b;
+  --color-states-error: #ef4444;
+
+  /* Radii */
+  --radius-card: 20px;
+  --radius-chip: 100px;
+  --radius-button: 14px;
+  --radius-sheet: 24px;
+
+  /* Motion */
+  --duration-fast: 120ms;
+  --duration-normal: 280ms;
+  --duration-slow: 400ms;
+}
+
+/* ─── Theme Variants ──────────────────────────────────────────────────────── */
+[data-theme="sky"] {
+  --color-primary: #3b82f6;
+  --color-accent: #60a5fa;
+  --color-bg-start: #e0f2fe;
+  --color-bg-end: #f0f9ff;
+  --color-surface: rgba(255, 255, 255, 0.72);
+  --color-border-custom: rgba(59, 130, 246, 0.18);
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --tab-bar-bg: rgba(255, 255, 255, 0.8);
+  --tab-bar-border: rgba(59, 130, 246, 0.15);
+}
+
+[data-theme="sunset"] {
+  --color-primary: #f97316;
+  --color-accent: #fb923c;
+  --color-bg-start: #fff7ed;
+  --color-bg-end: #fef3c7;
+  --color-surface: rgba(255, 255, 255, 0.76);
+  --color-border-custom: rgba(249, 115, 22, 0.18);
+  --color-text-primary: #1c1917;
+  --color-text-secondary: #57534e;
+  --color-text-muted: #a8a29e;
+  --tab-bar-bg: rgba(255, 247, 237, 0.85);
+  --tab-bar-border: rgba(249, 115, 22, 0.15);
+}
+
+[data-theme="night"] {
+  --color-primary: #a78bfa;
+  --color-accent: #c4b5fd;
+  --color-bg-start: #1e1b4b;
+  --color-bg-end: #312e81;
+  /* surface 背景够深，文字必须足够亮才有对比度 */
+  --color-surface: rgba(55, 50, 120, 0.75);
+  --color-surface-hover: rgba(70, 65, 140, 0.88);
+  --color-border-custom: rgba(167, 139, 250, 0.28);
+  --color-text-primary: #f0edff;       /* 近白但带紫调，避免纯白刺眼 */
+  --color-text-secondary: #c4b5fd;     /* 浅紫，可读性好 */
+  --color-text-muted: #8b7fc2;         /* 中灰紫，明显区别于背景 */
+  --tab-bar-bg: rgba(28, 24, 68, 0.92);
+  --tab-bar-border: rgba(167, 139, 250, 0.22);
+  /* 选中态：深色背景+亮文字，避免白底白字 */
+  --color-chip-selected-bg: #a78bfa;
+  --color-chip-selected-text: #1e1b4b;
+}
+
+[data-theme="nature"] {
+  --color-primary: #16a34a;
+  --color-accent: #22c55e;
+  --color-bg-start: #f0fdf4;
+  --color-bg-end: #ecfdf5;
+  --color-surface: rgba(255, 255, 255, 0.74);
+  --color-border-custom: rgba(22, 163, 74, 0.18);
+  --color-text-primary: #052e16;
+  --color-text-secondary: #166534;
+  --color-text-muted: #6b7280;
+  --tab-bar-bg: rgba(240, 253, 244, 0.85);
+  --tab-bar-border: rgba(22, 163, 74, 0.15);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50 box-border;
+  }
+
+  html {
+    @apply font-sans;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    color: var(--color-text-primary);
+    background: linear-gradient(135deg, var(--color-bg-start) 0%, var(--color-bg-end) 100%);
+    min-height: 100svh;
+    transition: background 400ms ease-in-out;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+
+  /* Glassmorphism card base */
+  .glass-card {
+    background: var(--color-surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--color-border-custom);
+    border-radius: var(--radius-card);
+    box-shadow: 0 4px 24px rgba(59, 130, 246, 0.10), 0 1px 4px rgba(0,0,0,0.06);
+    transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+  }
+
+  .glass-card:hover {
+    background: var(--color-surface-hover);
+    box-shadow: 0 8px 32px rgba(59, 130, 246, 0.18), 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  /* Tab bar */
+  .tab-bar {
+    background: var(--tab-bar-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-top: 1px solid var(--tab-bar-border);
+    transition: background 400ms ease-in-out;
+  }
+
+  /* Skeleton shimmer */
+  @keyframes shimmer {
+    0% { background-position: -200% center; }
+    100% { background-position: 200% center; }
+  }
+
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--color-surface) 0%,
+      rgba(255,255,255,0.5) 50%,
+      var(--color-surface) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: 12px;
+  }
+
+  /* Global scrollbar hide/overlay */
+  * {
+    scrollbar-width: none; /* Firefox */
+  }
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none; /* Chrome/Safari/Edge */
+  }
+
+  /* Scrollbar hide utility */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}

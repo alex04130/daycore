@@ -1,0 +1,66 @@
+# Daycore v2 — app + optional databases (via profiles).
+#
+#   default (SQLite):     docker compose up app
+#   PostgreSQL:           DB_TYPE=postgres DB_DSN=postgres://daycore:daycore@postgres:5432/daycore?sslmode=disable \
+#                         docker compose --profile postgres up
+#   MySQL:                DB_TYPE=mysql DB_DSN="daycore:daycore@tcp(mysql:3306)/daycore?parseTime=true&charset=utf8mb4" \
+#                         docker compose --profile mysql up
+#   MongoDB:              DB_TYPE=mongodb DB_DSN=mongodb://mongo:27017/daycore \
+#                         docker compose --profile mongo up
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      APP_ENV: production
+      DB_TYPE: ${DB_TYPE:-sqlite}
+      DB_DSN: ${DB_DSN:-file:/app/data/daycore.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET (openssl rand -hex 32)}
+      COOKIE_SECRET: ${COOKIE_SECRET:?set COOKIE_SECRET (openssl rand -hex 32)}
+      PASSWORD_PEPPER: ${PASSWORD_PEPPER:-}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      DEFAULT_CHAT_MODEL: ${DEFAULT_CHAT_MODEL:-deepseek-chat}
+      DEFAULT_VISION_MODEL: ${DEFAULT_VISION_MODEL:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+    volumes:
+      - daycore-data:/app/data
+      - ../config:/app/config:ro   # edit models.yaml/oauth.yaml without rebuild
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: daycore
+      POSTGRES_PASSWORD: daycore
+      POSTGRES_DB: daycore
+    ports: ["5432:5432"]
+    volumes: [pg-data:/var/lib/postgresql/data]
+
+  mysql:
+    image: mysql:8
+    profiles: [mysql]
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: daycore
+      MYSQL_USER: daycore
+      MYSQL_PASSWORD: daycore
+    ports: ["3306:3306"]
+    volumes: [mysql-data:/var/lib/mysql]
+
+  mongo:
+    image: mongo:7
+    profiles: [mongo]
+    ports: ["27017:27017"]
+    volumes: [mongo-data:/data/db]
+
+volumes:
+  daycore-data:
+  pg-data:
+  mysql-data:
+  mongo-data:

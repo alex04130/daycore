@@ -1,0 +1,53 @@
+# ── Go 构建产物 ──
+/bin/
+/daycore
+*.exe
+*.test
+*.out
+
+# ── 本地 SQLite 数据库 ──
+*.db
+*.db-shm
+*.db-wal
+/data/
+
+# ── 密钥 / 本地配置（绝不入库）──
+.env
+.env.local
+.env.*.local
+config/oauth.yaml
+*.pem
+
+# ── Node ──
+node_modules/
+.npm
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ── 前端构建产物（不锚定层级，覆盖 web/frontend/dist 等所有 dist）──
+dist/
+.vite/
+
+# ── 归档 / 大二进制 ──
+*.zip
+*.tgz
+
+# ── 日志 / 覆盖率 ──
+*.log
+logs/
+coverage/
+*.lcov
+
+# ── 编辑器 / 操作系统 ──
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*

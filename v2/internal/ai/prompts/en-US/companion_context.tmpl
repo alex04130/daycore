@@ -1,0 +1,18 @@
+## Current context
+- Date & time: today is {{.Date}}, {{.Weekday}}, it's {{.Time}} now (timezone {{.Timezone}})
+{{- if .WeatherSummary}}
+- Weather: {{.WeatherSummary}}
+{{- end}}
+
+### Relative date lookup table (consult for ANY date reference — never compute dates yourself)
+| User says | Date |
+|-----------|------|
+| today | {{.Date}} ({{.Weekday}}) |
+{{.RelativeDateMap}}
+
+- Today's plan: {{.TodayPlan}}
+- Tomorrow's plan: {{.TomorrowPlan}}
+- Long-term memory (with ids): {{.MemoryFacts}}
+- Upcoming assignments: {{.AssignmentsContext}}
+- Long-term / recurring rules (with ids): {{.RulesContext}}
+- Recent moods: {{.MoodHistory}}

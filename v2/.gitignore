@@ -1,0 +1,18 @@
+# build output
+/bin/
+daycore
+*.exe
+
+# local SQLite database
+*.db
+*.db-shm
+*.db-wal
+/data/
+
+# secrets / local config
+.env
+config/oauth.yaml
+
+# editor / OS
+.DS_Store
+*.swp
