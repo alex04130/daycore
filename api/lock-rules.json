@@ -1,0 +1,85 @@
+{
+  "$comment": "Lock derivation contract, shared by the Go backend and every frontend. The backend is authoritative — a block on the wire always carries a computed lock_level — but frontends need the same rule to build blocks optimistically. Both sides run the cases below as a test table; a divergence is a test failure, not a surprise in production.",
+  "version": 1,
+  "source": "design-ui/core/daycore-core.js deriveLock()",
+
+  "classTitle": {
+    "pattern": "（课）|课$|课程|讲座|实验课|导论|Lecture|Lab\\s*课",
+    "flags": "i",
+    "trimInput": true,
+    "$comment": "pattern is byte-identical to the JS original. Apply it case-insensitively to the trimmed title. Go wraps it as (?i)(?:<pattern>) because RE2 scopes a flag group to its enclosing group."
+  },
+
+  "rules": [
+    { "when": "type != 'appointment'", "level": "none" },
+    { "when": "type == 'appointment' && classTitle matches", "level": "hard" },
+    { "when": "type == 'appointment'", "level": "soft" }
+  ],
+
+  "defaultReasonNote": "zh-CN is the design original, verbatim. en-US is a working translation and is NOT final — it needs sign-off before shipping (copy is frozen by project rule).",
+  "defaultReason": {
+    "hard": { "zh-CN": "课程时间由课表决定", "en-US": "Set by your class timetable" },
+    "soft": { "zh-CN": "和别人约好的时间", "en-US": "Time you agreed with someone else" }
+  },
+
+  "levels": {
+    "": "never derived — DeriveLock still has work to do",
+    "none": "derived, and free to move",
+    "soft": "agreed with someone else; moving needs confirmation",
+    "hard": "set by a timetable; the user cannot move it"
+  },
+
+  "sources": {
+    "": "never derived",
+    "derived": "inferred from type + title; safe to recompute",
+    "user": "set by hand; never recompute",
+    "agent": "set by the agent; never recompute"
+  },
+
+  "movable": {
+    "$comment": "Who may change a block's time. The agent plans around locks rather than being blocked by them; system must pass or revert could not undo a lock change. `confirmed` comes from the request, never from the block.",
+    "agent": "always",
+    "system": "always",
+    "user": { "hard": false, "soft": "only when confirmed", "none": true, "": true }
+  },
+
+  "cases": [
+    { "title": "CS 201 数据结构（课）", "type": "appointment", "level": "hard", "why": "（课） suffix" },
+    { "title": "高等数学课", "type": "appointment", "level": "hard", "why": "课$ at end" },
+    { "title": "数学课 ", "type": "appointment", "level": "hard", "why": "trailing space is trimmed before matching" },
+    { "title": "线性代数课程", "type": "appointment", "level": "hard", "why": "课程" },
+    { "title": "机器学习讲座", "type": "appointment", "level": "hard", "why": "讲座" },
+    { "title": "物理实验课", "type": "appointment", "level": "hard", "why": "实验课" },
+    { "title": "计算机导论", "type": "appointment", "level": "hard", "why": "导论" },
+    { "title": "Intro Lecture", "type": "appointment", "level": "hard", "why": "Lecture" },
+    { "title": "intro lecture", "type": "appointment", "level": "hard", "why": "case-insensitive" },
+    { "title": "Lab 课", "type": "appointment", "level": "hard", "why": "Lab\\s*课 with an ASCII space" },
+    { "title": "Lab课", "type": "appointment", "level": "hard", "why": "Lab\\s*课 with no space" },
+
+    { "title": "社团例会", "type": "appointment", "level": "soft", "why": "appointment, not a class" },
+    { "title": "和导师面谈", "type": "appointment", "level": "soft", "why": "appointment, not a class" },
+    { "title": "牙医预约", "type": "appointment", "level": "soft", "why": "appointment, not a class" },
+
+    { "title": "写作业", "type": "task", "level": "none", "why": "not an appointment" },
+    { "title": "复习课程笔记", "type": "task", "level": "none", "why": "type wins — a task is never locked even if the title matches" },
+    { "title": "午饭", "type": "meal", "level": "none", "why": "not an appointment" },
+    { "title": "散步", "type": "relax", "level": "none", "why": "not an appointment" },
+    { "title": "", "type": "appointment", "level": "soft", "why": "empty title is not a class" }
+  ],
+
+  "knownDivergencesNote": "Verified by running both engines, not reasoned about. Note that a non-ASCII space only diverges when 课 is NOT the last character — otherwise the 课$ branch matches on both sides and hides the difference ('Lab　课' is hard everywhere). Accepted rather than patched: the pattern stays verbatim, and the server is authoritative so a client is corrected within one round-trip. Do NOT 'fix' these by editing the pattern — that forks it from the design original.",
+  "knownDivergences": [
+    {
+      "case": { "title": "Lab　课表", "type": "appointment" },
+      "js": "hard",
+      "go": "soft",
+      "why": "U+3000 ideographic space between Lab and 课. JavaScript's \\s matches it, RE2's \\s is ASCII-only ([\\t\\n\\f\\r ]). 课 is not final, so the 课$ branch does not rescue it."
+    },
+    {
+      "case": { "title": "Lab 课表", "type": "appointment" },
+      "js": "hard",
+      "go": "soft",
+      "why": "U+00A0 no-break space — same cause as above."
+    }
+  ]
+}
