@@ -2,7 +2,7 @@
 
 > 实时文档：改代码必须同批更新本目录对应文件。最后全面核对：2026-07-14。
 
-## 包结构（v2/，Go module `daycore`，go 1.23）
+## 包结构（仓库根，Go module `daycore`，go 1.23）
 
 | 包 | 职责 |
 |---|---|
@@ -30,7 +30,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 路由注册模式
 
-`server.go` 的 `New()` 里 `mux.HandleFunc("METHOD /path", s.handleXxx)` 集中注册（60+ 条），路由→handler 文件映射见 API_SURFACE.md，REST 细节以 `v2/api/openapi.yaml` 为准。
+`server.go` 的 `New()` 里 `mux.HandleFunc("METHOD /path", s.handleXxx)` 集中注册（60+ 条），路由→handler 文件映射见 API_SURFACE.md，REST 细节以 `api/openapi.yaml` 为准。
 
 ## main.go 启动/关停
 
@@ -50,6 +50,6 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 仓库级布局
 
-- `v2/api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。
+- `api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。
 - 仓库根 `claude-design/` = 设计交付原件（只读参考）。
 - 仓库根 `src/` 等 = v1 Next.js 遗留，不动。

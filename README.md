@@ -1,6 +1,6 @@
 # Daycore v2 — AI 自主规划日程助手 / AI Autonomous Day Planner
 
-**v2.1.0-beta（v2 测试版 / v2 beta）**
+**v2.2.0-beta（v2 测试版 / v2 beta）**
 
 [中文](#中文) · [English](#english)
 
@@ -24,8 +24,7 @@ Daycore 是一个面向学生的「AI 自主规划 + 温和陪伴」应用：把
 ### 快速开始（本地测试版）
 
 ```bash
-# 1) 后端（默认 SQLite，零外部依赖；:8080）
-cd v2
+# 1) 后端（默认 SQLite，零外部依赖；:8080）—— 在仓库根执行
 cp .env.example .env               # 填 DEEPSEEK_API_KEY 才能用 AI 功能
 go run ./cmd/daycore
 
@@ -38,7 +37,7 @@ npm run dev                        # 打开 http://localhost:5173
 或者本地跑「单二进制模式」（更接近生产）：
 
 ```bash
-cd v2/web/frontend && npm run build   # 产出 dist/
+cd web/frontend && npm run build      # 产出 dist/
 cd ../.. && go run ./cmd/daycore      # STATIC_DIR 默认 web/frontend/dist，直接打开 http://localhost:8080
 ```
 
@@ -46,7 +45,7 @@ cd ../.. && go run ./cmd/daycore      # STATIC_DIR 默认 web/frontend/dist，�
 
 ```bash
 # 构建
-cd v2/web/frontend && npm install && npm run build
+cd web/frontend && npm install && npm run build
 cd ../.. && make build                # CGO_ENABLED=0 → bin/daycore（静态单文件）
 
 # 上传 bin/daycore + config/ + web/frontend/dist 到服务器，然后：
@@ -102,7 +101,7 @@ server {
 
 ### 版本
 
-版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)（`2.<minor>.<patch>` + `beta` 渠道；minor=功能里程碑，patch=修复）。`GET /api/healthz` 返回 `version`/`channel`，设置页展示「Daycore v2.1.0-beta · v2 测试版」。
+版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)（`2.<minor>.<patch>` + `beta` 渠道；minor=功能里程碑，patch=修复）。`GET /api/healthz` 返回 `version`/`channel`，设置页展示「Daycore v2.2.0-beta · v2 测试版」。
 
 ---
 
@@ -124,8 +123,7 @@ Daycore is an "AI autonomous planning + gentle companion" app for students: hand
 ### Quick start (local)
 
 ```bash
-# 1) Backend (SQLite by default, zero external services; :8080)
-cd v2
+# 1) Backend (SQLite by default, zero external services; :8080) — run from repo root
 cp .env.example .env               # set DEEPSEEK_API_KEY to enable AI features
 go run ./cmd/daycore
 
@@ -139,7 +137,7 @@ Single-binary mode (closer to production): `cd web/frontend && npm run build`, t
 ### Deploy to a server (custom domain)
 
 ```bash
-cd v2/web/frontend && npm install && npm run build
+cd web/frontend && npm install && npm run build
 cd ../.. && make build             # CGO_ENABLED=0 → bin/daycore (static binary)
 
 # Ship bin/daycore + config/ + web/frontend/dist, then run:
@@ -169,7 +167,7 @@ Point the browser extension's push URL at `https://day.example.com` and paste th
 
 ### Configuration & versioning
 
-All env vars are documented in [`.env.example`](.env.example). Version single source: [`internal/version/version.go`](internal/version/version.go) (`2.<minor>.<patch>` + `beta` channel; minor = feature milestone, patch = fixes). `GET /api/healthz` returns `version`/`channel`; Settings shows "Daycore v2.1.0-beta · v2 beta".
+All env vars are documented in [`.env.example`](.env.example). Version single source: [`internal/version/version.go`](internal/version/version.go) (`2.<minor>.<patch>` + `beta` channel; minor = feature milestone, patch = fixes). `GET /api/healthz` returns `version`/`channel`; Settings shows "Daycore v2.2.0-beta · v2 beta".
 
 ---
 
@@ -194,10 +192,13 @@ internal/
   server/                   路由 + 中间件 + handlers（SSE / auto-plan / 导入 / 记忆 / 主题 / 静态托管）
 api/                        openapi.yaml + FRONTEND_HANDOFF.md（产品与协议规范）
 web/frontend/               React 前端（Vite；npm run dev / build）
-web/{app,_ds,…}             设计交付原型（实现参考，勿删）
 deploy/                     Dockerfile / docker-compose / nginx
 testdata/                   canvas-export.sample.json / sample.ics
-../extension/               Chrome MV3 插件
+docs/                       实时项目文档（架构/认证/Agent/数据/AI/路由总表）
+extension/                  Chrome MV3 插件（抓 Canvas → POST /api/import/canvas）
+claude-design/              设计交付原件（设计系统 _ds/ + 原型 app/，只读参考）
+design-ui/                  前后端分离式前端的落地点（空占位，后端未跟进）
+daycore.agent.final/        论文与架构图产出物
 ```
 
 ### 扩展点（registry / 驱动模式）

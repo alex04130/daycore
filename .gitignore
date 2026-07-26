@@ -45,6 +45,8 @@ coverage/
 .DS_Store
 *.swp
 *~
+*.bak
+*.orig
 .idea/
 .vscode/
 .fuse_hidden*

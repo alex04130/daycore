@@ -1,7 +1,9 @@
 # Daycore v2 — 验证补完报告（2026-07-13）
 
-> 范围：对 `v2/` 后端做功能性 + 安全性全面审计，修复全部发现的 bug，将天气重构为适配器模式，重构 plan.md 的 P5/P∞ 规划，产出前端 API 契约。
-> 结果：8 个批次全部完成，`go build/vet/test` 全绿，端到端冒烟通过。代码实际在 `v2/internal/`（仓库根无 `internal/`）。
+> 范围：对 Go 后端做功能性 + 安全性全面审计，修复全部发现的 bug，将天气重构为适配器模式，重构 plan.md 的 P5/P∞ 规划，产出前端 API 契约。
+> 结果：8 个批次全部完成，`go build/vet/test` 全绿，端到端冒烟通过。
+>
+> *路径说明：本报告成文时代码位于 `v2/` 子目录下；建立 git 仓库时 `v2/` 已上提到仓库根，文中链接均已同步为新路径。*
 
 ---
 
@@ -45,20 +47,20 @@ plan.md 宣称「P0-P4 全部完成 ✅」。但「标记完成」不等于「�
 
 | 级别 | 项 | 修复 | 位置 |
 |------|----|------|------|
-| High | XFF 限速绕过 | `X-Forwarded-For` 仅在 `TRUST_PROXY_HEADERS` 开启时信任，取最后一跳（客户端不可伪造） | [server.go](../v2/internal/server/server.go) `clientIP` |
-| High | CORS `*`+credentials | wildcard 分支禁止发 `Allow-Credentials` | [middleware.go](../v2/internal/server/middleware.go) `corsMW` |
-| High | OAuth 未验证邮箱接管 | 只有 `email_verified=true` 才按邮箱链接已有账户；未验证邮箱建账户时不写 email | [handlers_auth_oauth.go](../v2/internal/server/handlers_auth_oauth.go) |
-| High | dev 弱密钥 + 开放 admin | dev 模式默认只绑 loopback（`127.0.0.1`），弱密钥启动告警 | [config.go](../v2/internal/config/config.go) |
+| High | XFF 限速绕过 | `X-Forwarded-For` 仅在 `TRUST_PROXY_HEADERS` 开启时信任，取最后一跳（客户端不可伪造） | [server.go](../internal/server/server.go) `clientIP` |
+| High | CORS `*`+credentials | wildcard 分支禁止发 `Allow-Credentials` | [middleware.go](../internal/server/middleware.go) `corsMW` |
+| High | OAuth 未验证邮箱接管 | 只有 `email_verified=true` 才按邮箱链接已有账户；未验证邮箱建账户时不写 email | [handlers_auth_oauth.go](../internal/server/handlers_auth_oauth.go) |
+| High | dev 弱密钥 + 开放 admin | dev 模式默认只绑 loopback（`127.0.0.1`），弱密钥启动告警 | [config.go](../internal/config/config.go) |
 | High | channel token 过期不检查 | verify 强制 10min TTL + 后台 sweep（并入批次 D 重构） | — |
-| Medium | admin token 非恒定时间 | `crypto/subtle.ConstantTimeCompare` | [handlers_admin.go](../v2/internal/server/handlers_admin.go) |
-| Medium | auth 无爆破防护 + argon2 DoS | 独立 auth 限速（默认 10/min）+ argon2 并发上限 4 | [middleware.go](../v2/internal/server/middleware.go) / [password.go](../v2/internal/auth/password.go) |
-| Medium | Mongo `$regex` ReDoS | `regexp.QuoteMeta` 转义用户输入 | [mongostore/material_repo.go](../v2/internal/storage/mongostore/material_repo.go) |
-| Medium | JWT 不可撤销 | **token_version 机制**：logout 递增版本，userMW 校验 → 旧 token 立即失效；默认 TTL 30 天→7 天 | [token.go](../v2/internal/auth/token.go) + 4 存储后端 |
-| Medium | SECURE_COOKIES 默认 false | production 未显式设置时默认 true | [config.go](../v2/internal/config/config.go) |
+| Medium | admin token 非恒定时间 | `crypto/subtle.ConstantTimeCompare` | [handlers_admin.go](../internal/server/handlers_admin.go) |
+| Medium | auth 无爆破防护 + argon2 DoS | 独立 auth 限速（默认 10/min）+ argon2 并发上限 4 | [middleware.go](../internal/server/middleware.go) / [password.go](../internal/auth/password.go) |
+| Medium | Mongo `$regex` ReDoS | `regexp.QuoteMeta` 转义用户输入 | [mongostore/material_repo.go](../internal/storage/mongostore/material_repo.go) |
+| Medium | JWT 不可撤销 | **token_version 机制**：logout 递增版本，userMW 校验 → 旧 token 立即失效；默认 TTL 30 天→7 天 | [token.go](../internal/auth/token.go) + 4 存储后端 |
+| Medium | SECURE_COOKIES 默认 false | production 未显式设置时默认 true | [config.go](../internal/config/config.go) |
 | Low | mood IDOR | `MarkExerciseCompleted` 加 `session_id` 谓词（接口 + SQL + Mongo + handler） | — |
-| Low | agent memory 无长度上限 | tool 侧 clamp 到 500 字（对齐用户端） | [tool_memory.go](../v2/internal/server/tool_memory.go) |
-| Low | client 可注入 system role | companion 历史 role 白名单（仅 user/assistant） | [handlers_ai_companion.go](../v2/internal/server/handlers_ai_companion.go) |
-| Low | health 泄漏 DB 错误 | 泛化为 "database unavailable" + 服务端日志 | [handlers_misc.go](../v2/internal/server/handlers_misc.go) |
+| Low | agent memory 无长度上限 | tool 侧 clamp 到 500 字（对齐用户端） | [tool_memory.go](../internal/server/tool_memory.go) |
+| Low | client 可注入 system role | companion 历史 role 白名单（仅 user/assistant） | [handlers_ai_companion.go](../internal/server/handlers_ai_companion.go) |
+| Low | health 泄漏 DB 错误 | 泛化为 "database unavailable" + 服务端日志 | [handlers_misc.go](../internal/server/handlers_misc.go) |
 
 **审计确认无问题的面**（有证据）：密码哈希（argon2id + pepper + 恒定时间）、JWT 无 alg-confusion、cookie HMAC 签名、匿名→登录 claim 不可劫持、SQL 全参数化、agent 工具严格限定当前 session、决策卡不可跨 session 响应、无 SSRF、静态服务无路径穿越、prompt 模板注入受限（`text/template` 无 FuncMap）。
 
@@ -86,7 +88,7 @@ plan.md 宣称「P0-P4 全部完成 ✅」。但「标记完成」不等于「�
 
 ## 五、批次 C — 时区三模式实装
 
-`timeutil.ToUTC/FromUTC` 本身正确（`ParseInLocation`/`In` 处理 DST），只是从没被调用。新增 [timezone.go](../v2/internal/server/timezone.go) 的 `fillBlockUTC`：
+`timeutil.ToUTC/FromUTC` 本身正确（`ParseInLocation`/`In` 处理 DST），只是从没被调用。新增 [timezone.go](../internal/server/timezone.go) 的 `fillBlockUTC`：
 - `floating`：跟墙钟，不锚定（无 `utc_time`）
 - `fixed`：绝对时刻，存 UTC 锚点
 - `local`：生理节律，跟当前时区，也存锚点
@@ -100,7 +102,7 @@ plan.md 宣称「P0-P4 全部完成 ✅」。但「标记完成」不等于「�
 根因：整块从不接线。修复：
 
 1. **main.go 接线**：创建 Registry → 配置了 `ONEBOT_WS_URL` 则注册 OneBot → 创建 Worker → `StartAll` + `Start` + **inbound 消费循环** → 对已绑定 session `ScheduleUser`；config 补 `ONEBOT_WS_URL/ONEBOT_TOKEN/WORKER_DEFAULT_TZ`。
-2. **inbound → agent 桥**：新增 [channel_agent.go](../v2/internal/server/channel_agent.go)——`HandleInbound` 解析绑定 → `runChannelMessage`（用 `nullResponseWriter` 复用同一 agent loop）→ 回推。
+2. **inbound → agent 桥**：新增 [channel_agent.go](../internal/server/channel_agent.go)——`HandleInbound` 解析绑定 → `runChannelMessage`（用 `nullResponseWriter` 复用同一 agent loop）→ 回推。
 3. **bind→verify 修复**：重构绑定接口——`GetPendingByToken`（查未验证 token 行，此前查询含 `verified_at IS NOT NULL` 永远查不到）+ `Promote`（设真实 external_id + verified_at）+ `ExpirePending`（sweep）。**顺带修了 `ListBySession` 遇 NULL verified_at 崩溃**（`sql.NullInt64`）。
 4. **cron 修复**：`cronScheduleAt` 用 `CRON_TZ=` 前缀——**同时**修了时区（按用户 tz 触发）和 6 字段 spec 解析失败（缺 `WithSeconds()` 导致晨/晚简报被静默丢弃）。
 5. **OneBot 群 @ 过滤**：`strings.Contains("@")` → 精确匹配 `[CQ:at,qq=self_id]`；频控 map 加驱逐（>60s 清理，防无界增长）。
@@ -158,12 +160,13 @@ internal/weather/
 
 ## 十、批次 H — 前端契约
 
-产出物在 `v2/api/`：
+产出物在 `api/`：
 
 - **`openapi.yaml`**（OpenAPI 3.1，重写）：全 **93 操作 / 53 路径**，完整 components/schemas（TimeBlock 加 local + utc_time、Material/Wish/ChatThread/Forecast/SSE 帧/AdminStats 等）。此前只覆盖 39 路由（42%）且有缩进 bug + 明确 punt 了 ~40 路由。Python 验证 YAML 合法（redocly 因离线跳过）。
 - **`FRONTEND_HANDOFF.md`**（外科式修正）：保留原有设计价值（tokens/六界面/i18n/记忆/主题），顶部插入权威的 **v2 协议章节**——修正审计发现的致命错误：旧文档描述的是 v1 的 `data:{"delta"}`+`[DONE]` SSE 和 `<plan_update>`/`<rule_update>`/`<memory_update>` XML 标签，实际是 **v2 tool-calls 帧协议**（`{"type":...}` 帧 + `{"type":"done"}`，7 种帧类型 + 决策卡阻塞时序）。
 
-> `web/FRONTEND_HANDOFF.md` + `web/api/openapi.yaml` 是更旧的重复副本，未删除（避免破坏未知引用）；**权威版本是 `v2/api/`**，建议后续删除 `web/` 副本。
+> ~~`web/FRONTEND_HANDOFF.md` + `web/api/openapi.yaml` 是更旧的重复副本，未删除（避免破坏未知引用）；建议后续删除。~~
+> **已处理**：两份旧副本均已不在树中，`web/` 下只剩 `frontend/`。**权威版本是 `api/`**。
 
 ---
 

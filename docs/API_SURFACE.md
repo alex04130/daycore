@@ -1,6 +1,6 @@
 # 路由 → Handler 映射总表
 
-> 实时文档：加/改路由必须同批更新本表 + `v2/api/openapi.yaml`。REST 细节（请求/响应 schema）以 openapi.yaml 为准，本表只管「路由在哪个文件」。最后全面核对：2026-07-14。
+> 实时文档：加/改路由必须同批更新本表 + `api/openapi.yaml`。REST 细节（请求/响应 schema）以 openapi.yaml 为准，本表只管「路由在哪个文件」。最后全面核对：2026-07-14。
 
 ## 公开（无需 session）
 

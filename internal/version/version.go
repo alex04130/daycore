@@ -2,7 +2,7 @@
 // the settings screen and returned by /api/healthz.
 //
 // Versioning scheme (v2 beta line):
-//   - Format: 2.<minor>.<patch>, Channel "beta" → displayed as "v2.1.0-beta".
+//   - Format: 2.<minor>.<patch>, Channel "beta" → displayed as "v2.2.0-beta".
 //   - minor +1 for each feature milestone (a new screen, a new subsystem such
 //     as memory or themes); patch +1 for fixes and small tweaks.
 //   - The -beta channel suffix stays until the production release, which drops

@@ -24,7 +24,7 @@ Daycore v2 是一个 Go 1.23 单二进制后端 + React/Vite 前端的 AI 日程
 ### 2.1 最简启动（SQLite + DeepSeek）
 
 ```bash
-cd v2
+# 在仓库根执行
 
 # 1. 设置 AI 密钥
 echo 'DEEPSEEK_API_KEY=sk-your-key' > .env
@@ -44,12 +44,11 @@ go run ./cmd/daycore
 ### 2.2 开发模式（前端热更新）
 
 ```bash
-# 终端 1 —— 启动后端
-cd v2
+# 终端 1 —— 启动后端（仓库根）
 go run ./cmd/daycore
 
 # 终端 2 —— 启动前端开发服务器
-cd v2/web/frontend
+cd web/frontend
 npm run dev    # Vite :5173, /api → :8080 代理
 ```
 
@@ -85,7 +84,7 @@ TAVILY_API_KEY=tvly-your-key go run ./cmd/daycore
 ## 3. 开发命令
 
 ```bash
-cd v2
+# 在仓库根执行
 
 # 后端
 go run ./cmd/daycore          # 启动（默认 SQLite, :8080）
@@ -134,7 +133,7 @@ sqlite3 daycore.db ".schema operation_logs"
 ## 4. 项目结构
 
 ```
-v2/
+daycore/                               # 仓库根即实现面
 ├── cmd/daycore/main.go                # 装配入口：注册驱动/格式 → 打开 Store → Migrate → HTTP 服务（优雅关闭）
 ├── config/
 │   ├── models.yaml                    # 模型目录（数据驱动，加模型零代码改）
@@ -367,7 +366,7 @@ type Capabilities struct {
 格式通过 `RegisterFormat` 自注册。在 `init()` 中调用即可：
 
 ```go
-// v2/internal/ai/formats/gemini/gemini.go
+// internal/ai/formats/gemini/gemini.go
 package gemini
 
 import "daycore/internal/ai"
@@ -836,7 +835,7 @@ func (s *Server) logOp(ctx context.Context, l *domain.OperationLog) string {
 
 ## 11. 项目规则
 
-- **实现域唯一**：Daycore 业务代码只在 `v2/` 下。仓库根 `src/` 是旧 Eazo Next.js 模板，不要往里写 Daycore 业务
+- **实现域唯一**：仓库根即实现面，后端在 `internal/`、前端在 `web/frontend/`。`claude-design/` 是只读设计原件、`design-ui/` 是待导入的分离式前端占位，都不要往里写业务代码
 - **无包袱直切**：Beta 阶段不做双轨/灰度/迁移脚本。前后端同 PR 合入，回滚靠 git revert
 - **AI 必须只在服务端调用**：所有 `ai.Chat / ai.ChatStream` 调用只发生在 `internal/server/` 的 handler 或 agent 循环中。前端绝不直接调 AI
 - **永远不信任客户端上送的上下文**：companion handler 不接收 `todayPlan / moodHistory / memoryContext / date / weekday / time`，全部由服务端从 store 组装

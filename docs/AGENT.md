@@ -22,7 +22,7 @@ func (s *Server) runCompanionAgent(ctx, sink /*阶段2起为 agentSink 接口*/,
 
 ## SSE v2 帧协议
 
-`delta / reasoning / tool_start / tool_result / decision_card / error / done`，心跳 `: ping\n\n`。tool_result 带 `opId` 供撤销（POST /api/ops/{id}/revert）。契约细节见 `v2/api/FRONTEND_HANDOFF.md` §B。
+`delta / reasoning / tool_start / tool_result / decision_card / error / done`，心跳 `: ping\n\n`。tool_result 带 `opId` 供撤销（POST /api/ops/{id}/revert）。契约细节见 `api/FRONTEND_HANDOFF.md` §B。
 
 ## 决策卡（agent.go decisionRegistry）
 

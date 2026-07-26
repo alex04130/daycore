@@ -2,19 +2,26 @@
 
 ## 布局
 
-- `v2/` — 当前产品（Go 后端 + `v2/web/frontend/` Vite+React 前端）。**根目录的 `src/`、`package.json`、`plan.md` 等是 v1（Next.js）遗留，不要动。**
+仓库根即实现面 —— Go 单二进制后端 + Vite/React 前端，无子项目分层。
+
+- `cmd/daycore/` + `internal/` — Go 后端（14 个包，module 名 `daycore`）。
+- `web/frontend/` — **现役** Vite+React 前端，生产由 Go 二进制托管 `STATIC_DIR`。
+- `design-ui/` — 前后端分离式前端的落地点，**当前为空占位**，后端未跟进。
+- `api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。
+- `docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表）。
+- `extension/` — Chrome MV3 插件（抓 Canvas → 推 `POST /api/import/canvas`）。
 - `claude-design/` — Claude Design 的设计交付原件（设计系统 `_ds/`、原型 `app/`）。只读参考，不参与构建。
-- `v2/api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。
-- `v2/docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表）。
+- `daycore.agent.final/` — 论文与架构图产出物，不参与构建。
 
 ## 实时文档铁律
 
-1. **任何代码改动，必须在同一批修改中更新 `v2/docs/` 对应文件**（改了认证就改 `AUTH.md`，加了路由就改 `API_SURFACE.md` + `openapi.yaml`，依此类推）。文档与代码不同步视为改动未完成。
-2. **做规划/探索时先读 `v2/docs/`，不要派 agent 全量扫代码**；只对将要改动的文件做点状核实。发现文档与代码脱节时，先修文档再继续。
+1. **任何代码改动，必须在同一批修改中更新 `docs/` 对应文件**（改了认证就改 `AUTH.md`，加了路由就改 `API_SURFACE.md` + `openapi.yaml`，依此类推）。文档与代码不同步视为改动未完成。
+2. **做规划/探索时先读 `docs/`，不要派 agent 全量扫代码**；只对将要改动的文件做点状核实。发现文档与代码脱节时，先修文档再继续。
 
 ## 常用事实
 
-- 版本唯一来源：`v2/internal/version/version.go`（同步 `v2/web/frontend/package.json`）。规则：2.<minor>.<patch>-beta。
-- 构建验证：`cd v2 && go build ./... && go vet ./... && go test ./...`。
-- 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `v2/docs/DATA.md`。
-- 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`v2/internal/ai/prompts.go`）。
+- 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta。
+- 构建验证：`go build ./... && go vet ./... && go test ./...`（或 `make test`，会先跑 i18n 校验）。
+- 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
+- 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。
+- 历史：v1（Next.js + Eazo SDK）已于建库时移除，可从首个 commit 取回。代码中出现的 `v2` 字样如无特别说明均指外部 API 版本号（如 Google OAuth、QWeather），不要当作目录路径改写。
