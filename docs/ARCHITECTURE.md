@@ -84,4 +84,108 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 - `internal/search` —— 硬编码 `if TavilyKey != "" { Tavily } else { DuckDuckGo }`，**无注册表**，物理上无法增删搜索通道。
 - `internal/channels` —— 有 `Registry`，但 `cmd/daycore/main.go:141` 是 OneBot 硬编码单例，且**拿 `ONEBOT_WS_URL` 是否为空来决定要不要启动 Worker** —— 后果是没绑通道的用户，节律学习、定时 auto-plan、20h 关怀全都不跑。这是既有缺陷，落地节律后会非常显眼。
 
-运维控制台（`design-ui/liuli/admin/`，8 个分区）依赖的 `PUT /api/admin/{config,models,oauth}`、`POST /api/admin/models/test`、`restart-ack` 目前**全部不存在**；已有的只有 prompts / stats / ailogs / users / db 五组。
+运维控制台（`design-ui/liuli/admin/`，8 个分区，**留在主仓库不做独立子仓库**）依赖的 `PUT /api/admin/{config,models,oauth}`、`POST /api/admin/models/test`、`restart-ack` 目前**全部不存在**；已有的只有 prompts / stats / ailogs / users / db 五组。
+
+## 目标：外部能力走 HTTP 适配器，不再改代码
+
+**接一个新的搜索源／天气源／消息通道，不应该需要改 Go 代码或写插件** —— 只应该需要写一个 HTTP 适配层，它可以独立部署、放在别的服务器、独立扩缩容。
+
+设计沿用 `config/models.yaml` 已验证的模式（`format` 绑定 registry 里注册的实现，`base_url` 指外部服务），推广到 weather / search / channels：内置 provider 保持 Go 实现走各自 format，**外部适配器统一走 `format: http`**。对上层透明 —— `WeatherProvider` / `Searcher` / `Channel` 三个接口一行不用改。
+
+两类协议形状不同，**载体也不同**：
+
+**查询型（天气、搜索）= HTTP** —— 无状态请求／响应，天然可并发，WS 反而累赘：
+```
+GET  /manifest   → {name, displayName, logo, type:"query", capabilities:["weather"|"search"]}
+POST /weather    {lat, lon, date, tz}   → {temp, condition, …}
+POST /search     {query, limit, locale} → {results:[{title, url, snippet}]}
+```
+
+**通道型（QQ/napcat 等）= WebSocket** —— 双向、有状态、需要身份。只在真的收发消息时才有流量。帧协议：
+```
+后端 →  {"t":"hello", "protocol":1}
+适配器 → {"t":"manifest", "name","displayName","logo","features":{attachments,markdown}}
+适配器 → {"t":"inbound", "externalUserId","externalName","avatar","messageId","text","attachments","ts"}
+后端 →  {"t":"send", "to":"<externalUserId>","text","replyTo":"<messageId>"}
+后端 →  {"t":"ping"}   // 断线重连沿用 onebot 现有逻辑
+```
+
+**连接方向必须两种都支持** —— 取决于谁在 NAT 后面，协议不该替部署做决定：
+
+| `mode` | 谁连谁 | 适用 |
+|---|---|---|
+| `dial` | 后端作 client 连出去（适配器当 server） | 适配器有可达地址。**现有 onebot 就是这种**（`websocket.DefaultDialer.DialContext`） |
+| `listen` | 后端开 WS 端点，等适配器连进来 | 适配器在 NAT／内网后面，后端有公网地址 |
+
+OneBot 11 本身就规定了三种接入方式，现有实现只覆盖第一种，都要补：
+
+| `providers.yaml` 的 mode | OneBot 官方术语 | 现状 |
+|---|---|---|
+| `dial` | 正向 WebSocket（napcat 当 server） | ✅ 已实现 |
+| `listen` | 反向 WebSocket（napcat 主动连后端） | ⬜ 待补 |
+| `http` | HTTP 上报 + HTTP API 调用 | ⬜ 待补 |
+
+`internal/channels` 的 `Channel` 接口（`Send(externalID, msg)` + `Start(inbound chan<-)` + `Stop()`）对三种模式**都适用** —— `Start` 里是拨出去还是挂个 handler 等连接，是实现细节。**零接口变更**。
+
+`manifest` 必须自带 `displayName` 与 `logo` —— 控制台与前端据此渲染，**接一个新通道零前端改动**。
+
+### 内置 vs 外部：写了的直接配置，没写的走转换层
+
+| 能力 | 内置（Go 实现，直接配置） | 外部（写适配层） |
+|---|---|---|
+| 天气 | openmeteo / qweather / openweathermap / wttrin（已有四个） | `format: http` |
+| 搜索 | tavily（有 key）+ DuckDuckGo（免费兜底） | `format: http` |
+| 通道 | napcat/OneBot（已有）+ 后续常见可接 bot 的平台 | `format: ws` |
+
+### 搜索有三层来源，第一层目前是死代码
+
+1. **模型厂商原生搜索** —— 走 **Anthropic 的 web search server tool 规范**（DeepSeek 的 Anthropic 兼容端点即此；kimi 等同类可比照）。**结果不是「融进回答的黑盒」** —— 规范返回的是 `web_search_tool_result` 块，其 `.content` 是一个 **`web_search_result` 结构化列表**（带 citations），后端拿得到、可落库、可展示来源。
+
+   ⚠️ **现状：完全未接线（2026-07-26 核实）**。`config/models.yaml` 的 `deepseek_search: true` 是死配置：
+   - `Capabilities.DeepseekSearch` 只被写入（`internal/ai/models.go:86`），**没有任何消费方**
+   - `ToolDef.ServerSide`（`internal/ai/provider.go:44`）**全仓零赋值**
+   - `internal/ai/formats/anthropic/anthropic.go:106` 序列化 tools 时只输出 `{Name, Description, InputSchema}`，**没有 type-based server tool 分支**
+   - 同文件只解析 `text` / `tool_use` / `content_block_delta` / `message_stop` 四种块，**不认识 `server_tool_use` 与 `web_search_tool_result`**
+
+   要接通需要两件事：发请求时按 `{"type": "web_search_20250305", "name": "web_search", "max_uses": N}` 序列化，收响应时解析 `web_search_tool_result` 并把 `.content` 映射成 `SearchResult`。
+
+2. **内置工具搜索** —— agent 调 `web_search` 工具 → `Searcher` 接口 → tavily / DuckDuckGo。已实现。
+3. **外部适配器** —— 协议转换层，`format: http`。
+
+三层的**执行位置不同，结果模型应当统一**：第 1 层由模型服务端执行，第 2、3 层由后端执行，但都产出「标题 + URL + 摘要」的列表，都该落到同一个 `SearchResult`，这样账本、引用展示、前端渲染只有一套。
+
+### 厂商原生搜索有两种形状，配置入口不同
+
+| 形状 | 机制 | 配置放哪 |
+|---|---|---|
+| **返回独立结果** | server tool 规范，响应里带结构化列表（Anthropic `web_search_tool_result` 即此，DeepSeek 走它） | **搜索配置** —— 要注册工具、要解析结果、要映射成 `SearchResult` |
+| **直接嵌入提示词** | 没有结构化返回，靠提示词引导模型自己去搜并在回答里带上 | **模型配置** —— 本质是一段随模型走的提示词片段 |
+
+模型有没有原生搜索、是哪种形状，由 `models.yaml` 的能力声明表达（把现有的 `deepseek_search` 布尔泛化成 provider 无关的 `server_search`）。
+
+### 多个搜索源并存：把选择权交给模型
+
+不做「后端挑一个搜索源」的硬路由，而是**把多个搜索源各自注册成工具**，每个带自己的描述，模型按当前问题自己选（这与体验内核共识 5「不设关键词硬规则、错了再改」同构）。描述通过提示词模板动态注入：
+
+```gotemplate
+{{if .Searches}}
+## 可用的搜索来源
+{{range .Searches}}- `{{.ToolName}}`：{{.Description}}
+{{end}}{{end}}
+```
+
+## 配置驱动的提示词片段：哪里用得到，哪里就能改
+
+**提示词片段应该跟着配置走，就近编辑，而不是全堆在 Prompt 管理页。** 一个搜索源该怎么描述给模型、一个消息通道有什么特性（QQ 不支持 markdown、回复要短），都是那个 provider 自己的属性 —— 编辑入口就应该在它自己的配置卡片旁边，而不是让人去 Prompt 页翻一个巨大的模板。
+
+现有基建已经够用，不需要新机制：
+
+- `internal/ai/prompts.go` 用 `text/template`，`Render(ctx, key, locale, data any)` 接任意数据 —— `{{if}}` / `{{range}}` 天然可用，且现有模板里已有 5 处 `{{if}}` 先例。
+- `PromptService` 有 `Validate`（parse 校验），控制台保存模板时能挡住语法错误。
+- `prompt_overrides` 表 + `PUT /api/admin/prompts/{key}` 已是「文件作种子 + DB 存覆盖 + 立即生效」的正确范式，provider 描述照搬。
+
+落地形状：每个 provider 在 `providers.yaml` 里带一段 `description`（**zh-CN / en-US 双份 —— 提示词双 locale 是启动期硬校验**），控制台在该 provider 的配置卡片旁给「编辑描述」入口，改动落 DB 覆盖层，`companion_agent.tmpl` 用 `{{range}}` 消费。同一套机制覆盖搜索源、消息通道、天气源。
+
+⚠️ `companion_agent.tmpl` 目前是**零插值**的纯规则清单（有意为之，见 `AGENTS.md`）。引入 `{{range}}` 是对它的第一次结构性改动，两个 locale 必须同批改。
+
+落地计划见批次 F。
