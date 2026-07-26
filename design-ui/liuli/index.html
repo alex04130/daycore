@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN" data-cj="sky">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>琉璃 · 长卷 — Daycore</title>
+<link rel="stylesheet" href="app/changjuan.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../core/daycore-core.js"></script>
+<script>
+// 主题应用（唯一实现）：内置 = data-cj；AI 自定义 = 基底 data-cj + 变量覆写；预览走 window.__cjPreview
+window.cjApplyTheme = (function () {
+  var B = { sky: 1, sunset: 1, night: 1, nature: 1 };
+  var MAP = { '--primary': '--accent', '--accent': '--accent2', '--bg-start': '--bg', '--bg-end': '--bg2', '--text-primary': '--ink', '--text-secondary': '--ink2', '--text-muted': '--ink3', '--surface': '--glass', '--success': '--ok', '--warning': '--warm' };
+  return function () {
+    var root = document.documentElement;
+    Object.keys(MAP).forEach(function (k) { root.style.removeProperty(MAP[k]); });
+    var th = window.__cjPreview || null;
+    if (!th) {
+      var id = DcCore.theme('liuli') || 'sky';
+      if (B[id]) { root.setAttribute('data-cj', id); return; }
+      th = (DcCore.state.customThemes || []).find(function (t) { return t.id === id; });
+      if (!th) { root.setAttribute('data-cj', 'sky'); return; }
+    }
+    root.setAttribute('data-cj', th.dark ? 'night' : (B[th.base] ? th.base : 'sky'));
+    var v = th.variables || {};
+    Object.keys(v).forEach(function (k) { if (MAP[k]) root.style.setProperty(MAP[k], v[k]); });
+  };
+})();
+cjApplyTheme();
+</script>
+<script src="app/icons.js"></script>
+<script src="app/icons-ext.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="app/cj-parts.jsx"></script>
+<script type="text/babel" src="app/cj-canvas.jsx"></script>
+<script type="text/babel" src="app/cj-drawers.jsx"></script>
+<script type="text/babel" src="app/cj-settings.jsx"></script>
+<script type="text/babel" src="app/cj-main.jsx"></script>
+</body>
+</html>

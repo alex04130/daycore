@@ -5,12 +5,21 @@
 仓库根即实现面 —— Go 单二进制后端 + Vite/React 前端，无子项目分层。
 
 - `cmd/daycore/` + `internal/` — Go 后端（14 个包，module 名 `daycore`）。
-- `web/frontend/` — **现役** Vite+React 前端，生产由 Go 二进制托管 `STATIC_DIR`。
-- `design-ui/` — 前后端分离式前端的落地点，**当前为空占位**，后端未跟进。
+- `web/frontend/` — **现役** Vite+React 前端，生产由 Go 二进制托管 `STATIC_DIR`。**将来会被四端替换**，替换完成前不要动它（任何时刻都要有能跑的东西）。
+- `design-ui/` — **设计原型**（只读参考，不参与构建）：四套范式级不同的前端（琉璃·长卷 / 纸屿·顺流 / 汀·此刻 / 琉璃初版）+ `core/daycore-core.js` 共享 mock + `HANDOFF/` 交接文档 + `_ds/` 设计系统。重建时逐行对照它。**注意其 `API_CONTRACT.md` 的路径命名不是权威**，详见该目录 `CLAUDE.md` 顶部裁决。
 - `api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。
-- `docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表）。
+- `docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表）+ `EXPERIENCE_CORE.md`（端无关语义总纲，v2.3）。
 - `extension/` — Chrome MV3 插件（抓 Canvas → 推 `POST /api/import/canvas`）。
-- 设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`；设计交付原件不在仓库内（在 Claude Design 网页版）。
+- 设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`；原件在 `design-ui/_ds/`。
+
+## 目标架构（进行中）
+
+前后端分离部署：Go 后端收敛为纯 API 服务，四个前端各自独立构建部署、做成 **git 子仓库**，与后端只靠 **API 契约 + 版本号**同步 —— 前端声明最低 API 支持，后端由 `GET /api/version` 报告。落地方案见 `docs/EXPERIENCE_CORE.md` 与计划文件。
+
+**版本号分三层，不要混**：
+1. 后端构建版本 — `internal/version/version.go` 的 `Version` + `Channel`（现 `2.2.0-beta`）
+2. **API 契约版本** — 同文件 `APIVersion` + `APIMinor`（现 `1` / `0`）。**四个前端子仓握手用的是这个**；breaking 改动升 `APIVersion`，additive 升 `APIMinor`
+3. 各前端自己的版本号 — 独立迭代，与上面两个解耦（`design-ui/API_CONTRACT.md` 抬头的「v4」就是这一层，不是 API 版本）
 
 ## 实时文档铁律
 

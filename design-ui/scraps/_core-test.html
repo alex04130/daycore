@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><title>core self-test</title><style>body{font:13px/1.5 ui-monospace,monospace;padding:20px}pre{white-space:pre-wrap}</style></head><body><pre id="o">running…</pre>
+<script src="../core/daycore-core.js"></script>
+<script>
+const C = DcCore, o = [];
+const t = (n, f) => { try { const v = f(); o.push('OK   ' + n + (v === undefined ? '' : ' :: ' + JSON.stringify(v).slice(0, 110))); } catch (e) { o.push('FAIL ' + n + ' :: ' + e.message); } };
+C.scenarioSet('healthy');
+t('seed blocks', () => C.state.blocks.length);
+t('yesterday stone', () => { const b = C.blocksOf(C.addDays(C.todayIso(), -1))[0]; return b && C.phaseOf(b); });
+t('capture time am', () => { const r = C.captureIntent('明天早上8点去图书馆自习'); const b = C.state.blocks.find(x => x.id === r.blockId); return [r.kind, b.date === C.addDays(C.todayIso(), 1), b.start]; });
+t('undo capture', () => { const op = C.state.ops.find(x => x.payload.type === 'add_block'); return C.undo(op.id); });
+t('capture wish', () => C.captureIntent('想学一点吉他').kind);
+t('capture mood+mem', () => { const r = C.captureIntent('压力好大，明天还要考试'); return [r.kind, C.state.moods[0].l]; });
+t('capture query', () => C.captureIntent('最近的截止是什么时候？').kind);
+t('capture material', () => C.captureIntent('图书馆三楼靠窗的位置下午最安静，适合复习').kind);
+t('stack<=3', () => C.stack().length <= 3);
+t('ghost exists', () => C.ghostsOf(C.todayIso()).length + C.ghostsOf(C.addDays(C.todayIso(), 1)).length >= 1);
+t('accept one row', () => { const p = C.state.proposals.find(x => x.rows && x.state === 'pending'); const before = C.state.blocks.length; C.accept(p.id, p.rows[0].id); return [C.state.blocks.length - before, p.rows[0].state, p.state]; });
+t('undo accept', () => { const op = C.state.ops.find(x => x.payload.type === 'proposal_accept'); return C.undo(op.id); });
+t('reject drops boldness', () => { const p = C.state.proposals.find(x => x.state === 'pending' && x.kind === 'card'); const s0 = C.boldness(p.domain).score; C.reject(p.id); return C.boldness(p.domain).score < s0; });
+t('stone move blocked', () => { const b = C.blocksOf(C.addDays(C.todayIso(), -1))[0]; return C.moveBlock(b.id, { date: C.todayIso(), start: '20:00' }); });
+t('reschedule proposal', () => { const b = C.blocksOf(C.addDays(C.todayIso(), -1))[0]; return !!C.proposeReschedule(b.id); });
+t('brief', () => C.brief().title);
+t('river 15d', () => C.river().length);
+t('radar', () => C.radar().slice(0, 2).map(a => a.dueLabel));
+t('gapsOf today', () => C.gapsOf(C.todayIso()).map(g => g.start + '-' + g.end + '(' + g.min + ')'));
+t('flowNow', () => { const f = C.flowNow(); return [f.current && f.current.title, f.next && f.next.title, f.gapMin]; });
+t('ledger grouped', () => C.ledgerByDay(3).length >= 1);
+t('l0 count', () => C.l0Today() >= 1);
+t('exchange', () => { C.followUp(null, '为什么'); const ex = C.consumeExchange(); return !!ex && !C.state.exchange; });
+t('crisis', () => { C.scenarioSet('crisis'); return [C.state.scenario, C.stack().length, C.unreadPush() && C.unreadPush().kind]; });
+t('cold honest', () => { C.scenarioSet('cold'); return [C.blocksOf(C.todayIso()).length, C.brief().honest]; });
+C.scenarioSet('healthy');
+document.getElementById('o').textContent = o.join('\n');
+</script></body></html>

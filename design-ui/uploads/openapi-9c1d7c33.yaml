@@ -1,0 +1,849 @@
+openapi: 3.1.0
+info:
+  title: Daycore v2 API
+  version: "2.2.0"
+  description: >
+    Daycore v2 backend (Go). Autonomous AI day-planning + mood companion.
+    Anonymous-first: POST /api/session/init issues an httpOnly, signed session
+    cookie (dc_sid) that authorizes all data endpoints. Optional email/OAuth
+    sign-in sets an httpOnly JWT cookie (dc_auth); logout revokes all issued JWTs
+    (server-side token version). Same-origin web frontends MUST send cookies
+    (fetch: credentials:"include"). Native apps and separately-deployed frontends
+    use header credentials instead (dual-rail, cookies stay supported): the
+    signed session token in X-Session-Token (returned by /api/session/init with
+    {"tokenInBody":true}) and/or the JWT in Authorization: Bearer (returned by
+    login/register with {"tokenInBody":true}). Check GET /api/version (apiVersion
+    contract major) before use — matching rules in FRONTEND_HANDOFF.md.
+    The browser extension authenticates to /api/import/* with X-Import-Token;
+    admin endpoints use X-Admin-Token.
+    Errors are {error, message}. The single SSE endpoint is /api/ai/companion —
+    see FRONTEND_HANDOFF.md §B for the v2 frame protocol (NOT the legacy [DONE]).
+servers:
+  - url: http://localhost:8080
+    description: Local (Go serves the API; nginx proxies /api in production)
+
+tags:
+  - { name: session }
+  - { name: plan }
+  - { name: rules }
+  - { name: ai }
+  - { name: chat }
+  - { name: materials }
+  - { name: wishes }
+  - { name: inbox }
+  - { name: memory }
+  - { name: mood }
+  - { name: themes }
+  - { name: import }
+  - { name: channels }
+  - { name: ops }
+  - { name: feedback }
+  - { name: auth }
+  - { name: admin }
+  - { name: meta }
+
+security:
+  - sessionCookie: []
+  - sessionToken: []
+  - bearerAuth: []
+
+paths:
+  # ─── session & auth ────────────────────────────────────────────────────────
+  /api/session/init:
+    post:
+      operationId: sessionInit
+      tags: [session]
+      summary: Create/return the anonymous session; sets dc_sid cookie.
+      description: >
+        Optional body {"tokenInBody":true} adds "sessionToken" (the same signed
+        value as the dc_sid cookie) to the response for clients without a cookie
+        jar; send it back as the X-Session-Token header.
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { tokenInBody: { type: boolean } } } } } }
+      responses: { '200': { description: "OK (Session; + sessionToken when tokenInBody)", content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
+  /api/session/theme:
+    post:
+      operationId: sessionTheme
+      tags: [session]
+      summary: Record the current theme.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { theme: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/session/settings:
+    patch:
+      operationId: sessionSettings
+      tags: [session]
+      summary: Update assistantName / theme / language / personaPrompt.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { assistantName: { type: string }, currentTheme: { type: string }, language: { type: string, enum: [zh-CN, en-US] }, personaPrompt: { type: string, maxLength: 2000 } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
+  /api/session/preferences:
+    get:
+      operationId: getPreferences
+      tags: [session]
+      summary: Get the 7 proactive-feature toggles.
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+    patch:
+      operationId: setPreferences
+      tags: [session]
+      summary: Partial update of proactive toggles.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+  /api/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Email + password sign-up (rate-limited).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Email + password sign-in; merges anonymous data into the canonical session.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/auth/logout:
+    post: { operationId: logout, tags: [auth], summary: Clear the auth cookie and revoke all issued JWTs., responses: { '200': { description: OK } } }
+  /api/auth/providers:
+    get: { operationId: oauthProviders, tags: [auth], summary: List enabled OAuth providers., responses: { '200': { description: OK } } }
+  /api/auth/oauth/{provider}:
+    get:
+      operationId: oauthStart
+      tags: [auth]
+      summary: Begin the OAuth authorization-code flow (redirects).
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }]
+      responses: { '302': { description: Redirect to provider } }
+  /api/auth/oauth/{provider}/callback:
+    get:
+      operationId: oauthCallback
+      tags: [auth]
+      summary: OAuth callback; links only verified emails, sets dc_auth, redirects to /.
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
+      responses: { '302': { description: Redirect to / } }
+  /api/me:
+    get: { operationId: me, tags: [auth], summary: Current user or {user:null}., responses: { '200': { description: OK } } }
+
+  # ─── plan & rules ──────────────────────────────────────────────────────────
+  /api/plan:
+    get:
+      operationId: getPlan
+      tags: [plan]
+      summary: Single day with rule occurrences merged in (JSON null when empty).
+      parameters: [{ name: date, in: query, required: true, schema: { type: string, example: "2026-07-13" } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { oneOf: [ { $ref: '#/components/schemas/DayPlan' }, { type: 'null' } ] } } } } }
+    post:
+      operationId: upsertPlan
+      tags: [plan]
+      summary: Upsert a day's plan (full blocks). Use PATCH for single-block edits.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date], properties: { date: { type: string }, blocks: { type: array, items: { $ref: '#/components/schemas/TimeBlock' } }, note: { type: string }, sourceType: { type: string } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+    patch:
+      operationId: patchPlan
+      tags: [plan]
+      summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+  /api/plan/range:
+    get:
+      operationId: getPlanRange
+      tags: [plan]
+      summary: Batch fetch [from,to] with rule occurrences merged per date.
+      parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
+  /api/rules:
+    get: { operationId: listRules, tags: [rules], summary: All rules (active + paused)., responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/ScheduleRule' } } } } } } } } }
+    post:
+      operationId: createRule
+      tags: [rules]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleInput' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRule' } } } }, '400': { $ref: '#/components/responses/Error' } }
+  /api/rules/batch:
+    post:
+      operationId: batchCreateRules
+      tags: [rules]
+      summary: Create many rules (ICS/timetable confirmations).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/RuleInput' } } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  /api/rules/{id}:
+    patch:
+      operationId: patchRule
+      tags: [rules]
+      summary: Partial update (validated BEFORE persist so a bad update can't corrupt the row).
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleInput' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRule' } } } }, '400': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+    delete:
+      operationId: deleteRule
+      tags: [rules]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+
+  # ─── AI ──────────────────────────────────────────────────────────────────
+  /api/ai/companion:
+    post:
+      operationId: companion
+      tags: [ai]
+      summary: Companion agent over SSE v2 (tool-calls frame protocol).
+      description: >
+        Returns text/event-stream. Each frame is `data: {json}\n\n` discriminated
+        by `type`: delta | reasoning | tool_start | tool_result | decision_card |
+        error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
+        FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
+        history; client roles are whitelisted to user/assistant.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+      responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
+  /api/ai/companion/async:
+    post:
+      operationId: companionAsync
+      tags: [ai]
+      summary: Fire-and-forget companion turn (no client connection needed).
+      description: >
+        Persists the user message plus a pending assistant placeholder and
+        returns 202 immediately; the agent runs server-side detached from the
+        connection. Poll GET /api/chat/messages/{messageId} (or the thread's
+        message list) until status leaves "pending". A decision_card frame may
+        appear in the placeholder's toolEvents while still pending — answer it
+        via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
+        threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message, threadId], properties: { message: { type: string }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string } } } } } }
+      responses:
+        '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /api/ai/auto-plan:
+    post:
+      operationId: autoPlan
+      tags: [ai]
+      summary: Autonomous multi-day planning from imported materials.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { from: { type: string }, to: { type: string }, mode: { type: string, enum: [keep_manual, replace_all] }, extra: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  /api/ai/plan-text:
+    post:
+      operationId: planText
+      tags: [ai]
+      summary: Natural language → day plan JSON (candidates).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, date: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/ai/plan-image:
+    post:
+      operationId: planImage
+      tags: [ai]
+      summary: Image → day plan (vision). imageBase64 has no data: prefix.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string }, date: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  /api/ai/extract-schedule-image:
+    post:
+      operationId: extractScheduleImage
+      tags: [ai]
+      summary: Timetable screenshot → rule candidates.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  /api/ai/travel:
+    post:
+      operationId: aiTravel
+      tags: [ai]
+      summary: Destination + dates → AI itinerary suggestion + inbox draft.
+      description: >
+        Returns {title, summary, itinerary{days[]}, tips[], draftId}. Confirming
+        is the standard POST /api/inbox/commit with the draftId — it lands as a
+        travel material (Body carries destination/dates/itinerary/tips JSON).
+        Requires the travel category to be enabled. Rate-limited.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [destination], properties: { destination: { type: string }, startDate: { type: string }, endDate: { type: string }, notes: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+  /api/ai/mood:
+    post:
+      operationId: aiMood
+      tags: [ai]
+      summary: Mood → AI response (memory facts injected).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { mood: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/ai/theme:
+    post:
+      operationId: aiTheme
+      tags: [ai]
+      summary: AI-generated theme palette (preview, not persisted).
+      requestBody: { content: { application/json: { schema: { type: object, properties: { description: { type: string }, base: { type: string }, themeId: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/decisions/{id}/respond:
+    post:
+      operationId: respondDecision
+      tags: [ai]
+      summary: Resolve a pending decision card (unblocks the companion agent loop).
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { choice: { type: string }, text: { type: string } } } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+
+  # ─── chat threads ──────────────────────────────────────────────────────────
+  /api/chat/threads:
+    get: { operationId: listThreads, tags: [chat], summary: List threads (first call auto-imports legacy companion_memory once)., responses: { '200': { description: OK } } }
+    post:
+      operationId: createThread
+      tags: [chat]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatThread' } } } } }
+  /api/chat/threads/{id}:
+    patch:
+      operationId: updateThread
+      tags: [chat]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string }, archived: { type: boolean } } } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+    delete:
+      operationId: deleteThread
+      tags: [chat]
+      summary: Delete a thread and cascade its messages.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+  /api/chat/threads/{id}/messages:
+    get:
+      operationId: listMessages
+      tags: [chat]
+      summary: Cursor pagination (newest→oldest); before = oldest createdAt (UnixMilli) of the previous page.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: before, in: query, schema: { type: string, description: "UnixMilli; non-numeric → 400" } }, { name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } } } } } } }, '400': { $ref: '#/components/responses/Error' } }
+    delete:
+      operationId: clearMessages
+      tags: [chat]
+      summary: Clear all messages (keep the thread).
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK } }
+  /api/chat/messages/{id}:
+    get:
+      operationId: getMessage
+      tags: [chat]
+      summary: One message by id — cheap polling target for async turns.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '404': { $ref: '#/components/responses/Error' } }
+
+  # ─── materials & wishes ────────────────────────────────────────────────────
+  /api/materials:
+    get:
+      operationId: listMaterials
+      tags: [materials]
+      parameters: [{ name: category, in: query, schema: { type: string } }, { name: q, in: query, schema: { type: string } }, { name: limit, in: query, schema: { type: integer } }, { name: offset, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK } }
+    post:
+      operationId: createMaterial
+      tags: [materials]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } } }
+  /api/materials/search:
+    get:
+      operationId: searchMaterials
+      tags: [materials]
+      summary: Full-text search — engine-native FTS with ranking, substring fallback as the recall floor.
+      description: >
+        Served by the storage engine's native index when available (SQLite FTS5
+        trigram / PG tsvector / MySQL FULLTEXT ngram / Mongo text), with real
+        relevance scores. Falls back transparently to the case-insensitive
+        substring scan when the index is unavailable, the term is under 3
+        characters (SQLite), or the engine can't tokenize the script (Mongo +
+        CJK) — fallback results carry Score 1. Best-effort ranking; recall is
+        guaranteed by the fallback.
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }, { name: category, in: query, schema: { type: string } }, { name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: '#/components/schemas/SearchResult' } } } } } } }, '501': { $ref: '#/components/responses/Error' } }
+  /api/materials/categories:
+    get:
+      operationId: materialCategories
+      tags: [materials]
+      summary: The category registry with this session's enablement flags.
+      description: >
+        Full localized list {id, name, icon, enabled, default}. Frontends render
+        the toggle panel from the full list and the capture UI from the enabled
+        subset. Toggle via PATCH /api/session/preferences {materialCategories}.
+        Writes to /api/materials validate category against the registry (empty →
+        "note", unknown → 400 bad_category); reads never reject legacy free-text
+        categories.
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { categories: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, icon: { type: string }, enabled: { type: boolean }, default: { type: boolean } } } } } } } } } }
+  /api/materials/{id}:
+    get: { operationId: getMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+    patch:
+      operationId: updateMaterial
+      tags: [materials]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+    delete: { operationId: deleteMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/wishes:
+    get:
+      operationId: listWishes
+      tags: [wishes]
+      parameters: [{ name: status, in: query, schema: { type: string, enum: [active, done, archived] } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { wishes: { type: array, items: { $ref: '#/components/schemas/Wish' } } } } } } } }
+    post:
+      operationId: createWish
+      tags: [wishes]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, note: { type: string }, effortMin: { type: integer } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } } }
+  /api/wishes/{id}:
+    get: { operationId: getWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+    patch:
+      operationId: updateWish
+      tags: [wishes]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string }, note: { type: string }, effortMin: { type: integer }, status: { type: string, enum: [active, done, archived] } } } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+    delete: { operationId: deleteWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+
+  # ─── inbox & temp-context ──────────────────────────────────────────────────
+  /api/inbox/process:
+    post:
+      operationId: inboxProcess
+      tags: [inbox]
+      summary: Classify a quick capture ({text} or {temp_id}) via AI → confirmation card + draftId.
+      description: >
+        AI classification over the session's ENABLED categories (see
+        /api/materials/categories). Response always carries the legacy keys
+        {understanding, suggestions}; when the AI is confident (≥0.5) it adds
+        "classification" ({category, confidence, title, summary, structured,
+        suggested_action, advice?}) and "draftId" — show the card, let the user
+        confirm/override, then POST /api/inbox/commit. On AI failure or low
+        confidence it falls back to the keyword categorizer (no draftId).
+        Rate-limited like other AI endpoints.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, temp_id: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/inbox/commit:
+    post:
+      operationId: inboxCommit
+      tags: [inbox]
+      summary: Execute a confirmed classification draft (server-side mapping to the target module).
+      description: >
+        Looks up the server-side draft (1h TTL), applies optional overrides,
+        validates the category against the session's enabled set, and lands the
+        capture as a typed Material (Body = {"text", "structured"?, "advice"?}
+        JSON, Source "inbox"). Preferred over hand-rolling module calls — the
+        classification→module mapping lives once, server-side.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [draftId], properties: { draftId: { type: string }, overrides: { type: object, properties: { category: { type: string }, title: { type: string }, summary: { type: string }, body: { type: string } } }, alsoKeepNote: { type: boolean, description: "when the draft routes to an assignment, also keep the raw capture as a material" } } } } } }
+      responses: { '200': { description: "OK {type: material|assignment, material?, assignment?} — academic drafts with a due date become manual assignments" }, '400': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+  /api/inbox/upload:
+    post:
+      operationId: inboxUpload
+      tags: [inbox]
+      summary: Upload a file (≤8MB); small files (≤1MB) persist for /process to consume. Requires session + rate-limited.
+      requestBody: { content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { temp_id: { type: string }, filename: { type: string }, size: { type: integer }, content_type: { type: string }, stored: { type: boolean } } } } } } }
+  /api/temp-context:
+    get:
+      operationId: getTempContext
+      tags: [inbox]
+      summary: Get a session-scoped value (missing/expired → {data:null}).
+      parameters: [{ name: key, in: query, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: string, nullable: true }, ttl: { type: string } } } } } } }
+    put:
+      operationId: putTempContext
+      tags: [inbox]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [key], properties: { key: { type: string }, payload: { type: string }, ttlSeconds: { type: integer } } } } } }
+      responses: { '200': { description: OK } }
+
+  # ─── memory / mood / themes ────────────────────────────────────────────────
+  /api/memory:
+    get: { operationId: listMemory, tags: [memory], responses: { '200': { description: OK } } }
+    post:
+      operationId: addMemory
+      tags: [memory]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [fact], properties: { fact: { type: string, maxLength: 500 }, source: { type: string, enum: [chat, user, import] } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+    delete: { operationId: clearMemory, tags: [memory], summary: Forget everything (privacy)., responses: { '200': { description: OK } } }
+  /api/memory/{id}:
+    delete: { operationId: deleteMemory, tags: [memory], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/mood:
+    get:
+      operationId: listMood
+      tags: [mood]
+      parameters: [{ name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK } }
+    post:
+      operationId: createMood
+      tags: [mood]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mood], properties: { mood: { type: string }, aiResponse: { type: string }, exerciseOffered: { type: string }, theme: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+    patch:
+      operationId: patchMood
+      tags: [mood]
+      summary: Mark a check-in's exercise completed (session-scoped).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [id], properties: { id: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/themes:
+    get: { operationId: listThemes, tags: [themes], responses: { '200': { description: OK } } }
+    post:
+      operationId: createTheme
+      tags: [themes]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }
+      responses: { '200': { description: OK } }
+  /api/themes/{id}:
+    patch: { operationId: patchTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }, responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+    delete: { operationId: deleteTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+
+  # ─── import / courses / assignments ────────────────────────────────────────
+  /api/import/token:
+    get: { operationId: getImportToken, tags: [import], responses: { '200': { description: OK } } }
+    post: { operationId: rotateImportToken, tags: [import], responses: { '200': { description: OK } } }
+  /api/import/canvas:
+    post:
+      operationId: importCanvas
+      tags: [import]
+      security: [{ importToken: [] }, { sessionCookie: [] }]
+      summary: Canvas direct push (extension) or JSON upload.
+      responses: { '200': { description: OK } }
+  /api/import/ics:
+    post: { operationId: importICS, tags: [import], summary: ICS upload (preview → confirm via rules/batch)., responses: { '200': { description: OK } } }
+  /api/import/history:
+    get: { operationId: importHistory, tags: [import], responses: { '200': { description: OK } } }
+  /api/courses:
+    get: { operationId: listCourses, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Course' } } } } } } }
+  /api/assignments:
+    get: { operationId: listAssignments, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } } } }
+    post:
+      operationId: createAssignment
+      tags: [import]
+      summary: Manually add a deadline (quick-capture academic route).
+      description: Source "manual"; Canvas re-imports never touch manual rows. dueAt accepts RFC3339, YYYY-MM-DDTHH:MM, or YYYY-MM-DD.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, dueAt: { type: string }, courseId: { type: string } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }, '400': { $ref: '#/components/responses/Error' } }
+  /api/assignments/{id}:
+    patch:
+      operationId: patchAssignment
+      tags: [import]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
+      responses: { '200': { description: OK } }
+
+  # ─── channels ──────────────────────────────────────────────────────────────
+  /api/channels:
+    get: { operationId: listChannels, tags: [channels], summary: Available channels + binding status., responses: { '200': { description: OK } } }
+  /api/channels/{channel}/bind:
+    post:
+      operationId: bindChannel
+      tags: [channels]
+      summary: Generate a 12-char token (10-min TTL) to send to the bot.
+      parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { token: { type: string }, channel: { type: string }, note: { type: string } } } } } } }
+  /api/channels/{channel}/verify:
+    post:
+      operationId: verifyChannel
+      tags: [channels]
+      summary: Verify token + externalId (unauthenticated, rate-limited, TTL-enforced).
+      parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token, externalId], properties: { token: { type: string }, externalId: { type: string } } } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '410': { $ref: '#/components/responses/Error' } }
+  /api/channels/{channel}/unbind:
+    delete: { operationId: unbindChannel, tags: [channels], parameters: [{ name: channel, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+
+  # ─── feedback / ops ────────────────────────────────────────────────────────
+  /api/feedback:
+    post:
+      operationId: addFeedback
+      tags: [feedback]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { messageId: { type: string }, useful: { type: boolean }, reason: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /api/ops:
+    get:
+      operationId: listOps
+      tags: [ops]
+      parameters: [{ name: limit, in: query, schema: { type: integer } }]
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ops: { type: array, items: { $ref: '#/components/schemas/OperationLog' } } } } } } } }
+  /api/ops/{id}/revert:
+    post:
+      operationId: revertOp
+      tags: [ops]
+      summary: Undo one logged operation (a revert cannot itself be reverted).
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+
+  # ─── companion-history (legacy) ────────────────────────────────────────────
+  /api/companion-history:
+    get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
+    post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
+
+  # ─── admin (X-Admin-Token) ─────────────────────────────────────────────────
+  /api/admin/prompts:
+    get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
+  /api/admin/prompts/{key}:
+    get:
+      operationId: adminGetPrompt
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      parameters: [{ name: key, in: path, required: true, schema: { type: string } }, { name: locale, in: query, schema: { type: string } }]
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+    put:
+      operationId: adminSetPrompt
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      parameters: [{ name: key, in: path, required: true, schema: { type: string } }, { name: locale, in: query, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [content], properties: { content: { type: string } } } } } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  /api/admin/stats:
+    get: { operationId: adminStats, tags: [admin], security: [{ adminToken: [] }], summary: Dashboard aggregation (incl. feedbackUseful/feedbackTotal)., responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStats' } } } } } }
+  /api/admin/ailogs:
+    get: { operationId: adminAILogs, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/users:
+    get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/users/{id}:
+    delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/admin/db/tables:
+    get: { operationId: adminDBTables, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/db/table/{name}:
+    get: { operationId: adminDBBrowse, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /api/admin/db/table/{name}/{id}:
+    delete: { operationId: adminDBDelete, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }, { name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /api/admin/db/export:
+    get: { operationId: adminDBExport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/db/import:
+    post: { operationId: adminDBImport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/db/backup:
+    get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+
+  # ─── meta ──────────────────────────────────────────────────────────────────
+  /api/healthz:
+    get:
+      operationId: health
+      tags: [meta]
+      security: []
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, db: { type: string }, version: { type: string }, channel: { type: string }, env: { type: string } } } } } }, '503': { description: DB unavailable } }
+  /api/models:
+    get: { operationId: listModels, tags: [meta], security: [], responses: { '200': { description: OK } } }
+  /api/version:
+    get:
+      operationId: apiVersion
+      tags: [meta]
+      security: []
+      summary: API contract version (independent of the build version).
+      description: >
+        Clients call this before anything else. apiVersion is the contract major
+        (breaking changes only); apiMinor bumps on additive changes; build is the
+        server build ("2.2.0-beta"); minClient is the oldest compatible client
+        build (advisory). Matching rules in FRONTEND_HANDOFF.md.
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string } } } } } } }
+
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: dc_sid }
+    authCookie: { type: apiKey, in: cookie, name: dc_auth }
+    sessionToken: { type: apiKey, in: header, name: X-Session-Token, description: "Same signed value as the dc_sid cookie, for clients without a cookie jar. Get it from POST /api/session/init {tokenInBody:true}." }
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT, description: "Same JWT as the dc_auth cookie. Get it from login/register {tokenInBody:true}; logout revokes all issued JWTs (token-version bump)." }
+    importToken: { type: apiKey, in: header, name: X-Import-Token, description: "Session-scoped token for the browser extension's direct push." }
+    adminToken: { type: apiKey, in: header, name: X-Admin-Token, description: "Admin endpoints." }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: "Stable code the frontend translates (e.g. no_session, bad_request, rate_limited, token_expired)." }
+        message: { type: string, description: "Localized fallback message." }
+    TimeBlock:
+      type: object
+      required: [id, title, type, time_mode, timezone]
+      properties:
+        id: { type: string }
+        date: { type: string, example: "2026-07-13", description: "YYYY-MM-DD" }
+        time: { type: string, nullable: true, example: "14:30", description: "HH:MM or null when unscheduled" }
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal] }
+        duration_min: { type: integer, nullable: true }
+        time_mode: { type: string, enum: [floating, fixed, local], description: "floating=wall clock (no utc_time); fixed=absolute instant; local=circadian, follows current tz. fixed/local carry utc_time." }
+        timezone: { type: string, example: "Asia/Shanghai" }
+        utc_time: { type: string, nullable: true, description: "RFC3339 UTC anchor for fixed/local blocks." }
+        offset_min: { type: integer, nullable: true }
+        offset_ref: { type: string }
+        completed: { type: boolean }
+        isAchievement: { type: boolean }
+        rule_id: { type: string, description: "Set when the block is an occurrence of a ScheduleRule." }
+        origin: { type: string, enum: [auto, manual, rule], description: "auto=generated (dashed border, replaced on re-plan); manual=user (survives); rule=materialized occurrence." }
+        hidden: { type: boolean, description: "Tombstone — filtered out of reads; never render." }
+    DayPlan:
+      type: object
+      properties:
+        id: { type: string, description: "Empty for synthetic rules-only days." }
+        sessionId: { type: string }
+        date: { type: string }
+        blocks: { type: array, items: { $ref: '#/components/schemas/TimeBlock' } }
+        sourceType: { type: string, enum: [text, image, auto, rules] }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanAction:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [add, update, remove] }
+        match: { type: object, additionalProperties: true, description: "e.g. {id}" }
+        changes: { type: object, additionalProperties: true }
+        block: { $ref: '#/components/schemas/TimeBlock' }
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string, nullable: true }
+        interactionCount: { type: integer }
+        signInPrompted: { type: boolean }
+        assistantName: { type: string }
+        currentTheme: { type: string }
+        language: { type: string, enum: [zh-CN, en-US] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Preferences:
+      type: object
+      properties:
+        morningBrief: { type: boolean }
+        eveningReview: { type: boolean }
+        deadlineAlerts: { type: boolean }
+        rollingReplan: { type: boolean }
+        gapSuggestions: { type: boolean }
+        doNotDisturb: { type: boolean }
+        autoPlan: { type: boolean }
+        materialCategories:
+          type: object
+          additionalProperties: { type: boolean }
+          description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+    ScheduleRule:
+      type: object
+      required: [id, title, type, time_mode, kind, active]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal] }
+        time: { type: string, nullable: true }
+        duration_min: { type: integer, nullable: true }
+        timezone: { type: string }
+        time_mode: { type: string, enum: [floating, fixed, local] }
+        kind: { type: string, enum: [once, recurring] }
+        date: { type: string, nullable: true }
+        freq: { type: string, enum: [daily, weekly, monthly, every_n_days] }
+        interval: { type: integer, minimum: 1 }
+        by_weekday: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        start_date: { type: string }
+        until: { type: string, nullable: true }
+        active: { type: boolean }
+        source: { type: string, enum: [user, chat, ics, image, canvas] }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    RuleInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal], default: task }
+        time: { type: string, nullable: true }
+        duration_min: { type: integer, nullable: true }
+        timezone: { type: string }
+        time_mode: { type: string, enum: [floating, fixed, local], default: floating }
+        kind: { type: string, enum: [once, recurring], default: recurring }
+        date: { type: string, nullable: true }
+        freq: { type: string, enum: [daily, weekly, monthly, every_n_days] }
+        interval: { type: integer, minimum: 1, default: 1 }
+        by_weekday: { type: array, items: { type: integer } }
+        start_date: { type: string }
+        until: { type: string, nullable: true }
+        active: { type: boolean, default: true }
+        source: { type: string, enum: [user, chat, ics, image, canvas], default: user }
+        note: { type: string, nullable: true }
+    Material:
+      type: object
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        category: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        body: { type: string }
+        source: { type: string }
+        mime_type: { type: string }
+        storage_ref: { type: string }
+        tags: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SearchResult:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        snippet: { type: string }
+        score: { type: number }
+    Wish:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        note: { type: string }
+        effortMin: { type: integer }
+        status: { type: string, enum: [active, done, archived] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChatThread:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        archived: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string }
+        threadId: { type: string }
+        sessionId: { type: string }
+        role: { type: string, enum: [user, assistant, system, tool] }
+        content: { type: string }
+        toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
+        status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        createdAt: { type: string, format: date-time }
+    CustomTheme:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        base: { type: string }
+        dark: { type: boolean }
+        variables: { type: object, additionalProperties: { type: string }, description: "CSS variable whitelist; color literals only (server-validated)." }
+    Course:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        canvasId: { type: string }
+        name: { type: string }
+        courseCode: { type: string }
+        currentScore: { type: number, nullable: true }
+        currentGrade: { type: string, nullable: true }
+    Assignment:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        courseId: { type: string }
+        canvasId: { type: string }
+        title: { type: string }
+        dueAt: { type: string, format: date-time, nullable: true }
+        pointsPossible: { type: number, nullable: true }
+        submitted: { type: boolean }
+        graded: { type: boolean }
+        status: { type: string, enum: [pending, planned, done, dismissed] }
+    OperationLog:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        actor: { type: string, enum: [user, agent, system] }
+        action: { type: string, example: "plan_update" }
+        targetId: { type: string }
+        date: { type: string }
+        summary: { type: string }
+        status: { type: string, enum: [ok, failed] }
+        createdAt: { type: string, format: date-time }
+    AdminStats:
+      type: object
+      properties:
+        users: { type: integer }
+        sessions: { type: integer }
+        aiCalls: { type: integer }
+        tokenUsed: { type: integer }
+        feedbackUseful: { type: integer }
+        feedbackTotal: { type: integer }

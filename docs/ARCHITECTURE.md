@@ -51,7 +51,18 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 ## 仓库级布局
 
 - `api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。
-- `docs/` = 实时项目文档，随代码同批更新。
+- `docs/` = 实时项目文档，随代码同批更新；`EXPERIENCE_CORE.md` 是端无关语义总纲（v2.3）。
 - `extension/` = Chrome MV3 插件（Canvas 抓取 → 导入）。
-- `design-ui/` = 前后端分离式前端的落地点，当前为空占位。
-- 设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`，仓库内不再保留设计交付原件（原件在 Claude Design 网页版）。
+- `design-ui/` = 设计原型，只读参考不参与构建。四端源码（liuli / zhiyu / ting / liuli-classic）+ `core/daycore-core.js` 共享 mock + `HANDOFF/` 交接文档 + `_ds/` 设计系统原件。其 `API_CONTRACT.md` 的路径命名非权威（见该目录 CLAUDE.md 顶部裁决）。
+- `web/frontend/` = 现役前端，将来被四端替换。
+- 设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`；原件在 `design-ui/_ds/`。
+
+## 目标架构：前后端分离（进行中）
+
+后端收敛为纯 API 服务，四个前端各自独立部署、做成 git 子仓库，只靠 **API 契约 + 版本协商**耦合：
+
+- **后端报告**：`GET /api/version` → `{apiVersion, apiMinor, minClient, build, channel}`
+- **前端声明**：各子仓 `package.json` 声明最低支持的 `apiVersion`/`apiMinor`，启动握手不满足则降级提示（不白屏 —— 语气铁律「给死路一条岔路」）
+- **升版规则**：breaking 升 `APIVersion`，additive（新端点/新字段）升 `APIMinor`。整批工作统一升一次，不要每个改动各升各的。
+
+版本三层的区分见根 `CLAUDE.md`「目标架构」一节。

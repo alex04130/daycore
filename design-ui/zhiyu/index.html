@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="sunset">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>纸屿 · 顺流 — Daycore</title>
+<link rel="stylesheet" href="app/dc.css">
+<link rel="stylesheet" href="app/flow.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="../core/daycore-core.js"></script>
+<script>
+// 纸色应用（唯一实现）：内置 = data-theme；AI 纸色 = 基底 + --dc-* 变量覆写；预览走 window.__flPreview
+window.flApplyTheme = (function () {
+  var B = { sky: 1, sunset: 1, night: 1, nature: 1 };
+  var MAP = { '--primary': '--dc-accent', '--accent': '--dc-accent-2', '--bg-start': '--dc-bg', '--surface': '--dc-surface', '--surface-hover': '--dc-surface-2', '--text-primary': '--dc-ink', '--text-secondary': '--dc-ink-2', '--text-muted': '--dc-ink-3', '--success': '--dc-ok', '--warning': '--dc-warn', '--error': '--dc-err' };
+  return function () {
+    var root = document.documentElement;
+    Object.keys(MAP).forEach(function (k) { root.style.removeProperty(MAP[k]); });
+    root.style.removeProperty('--dc-line'); root.style.removeProperty('--dc-accent-ink');
+    var th = window.__flPreview || null;
+    if (!th) {
+      var id = DcCore.theme('zhiyu') || 'sunset';
+      if (B[id]) { root.setAttribute('data-theme', id); return; }
+      th = (DcCore.state.customThemes || []).find(function (t) { return t.id === id; });
+      if (!th) { root.setAttribute('data-theme', 'sunset'); return; }
+    }
+    root.setAttribute('data-theme', th.dark ? 'night' : (B[th.base] ? th.base : 'sunset'));
+    var v = th.variables || {};
+    Object.keys(v).forEach(function (k) { if (MAP[k]) root.style.setProperty(MAP[k], v[k]); });
+    if (v['--text-primary']) root.style.setProperty('--dc-line', 'color-mix(in srgb, ' + v['--text-primary'] + ' 10%, transparent)');
+    root.style.setProperty('--dc-accent-ink', '#fff');
+  };
+})();
+flApplyTheme();
+</script>
+<script src="app/icons.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="app/flow-parts.jsx"></script>
+<script type="text/babel" src="app/flow-panels.jsx"></script>
+<script type="text/babel" src="app/flow-settings.jsx"></script>
+<script type="text/babel" src="app/flow-main.jsx"></script>
+</body>
+</html>
