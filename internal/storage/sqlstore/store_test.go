@@ -430,3 +430,125 @@ func TestChatMessageStatusRoundTrip(t *testing.T) {
 		t.Fatalf("done row must survive sweep: %q", m.Status)
 	}
 }
+
+// TestBlockLockAndNoteRoundTrip pins the batch-A fields onto the wire. Blocks
+// live inside a JSON blob, so a field that fails to round-trip fails silently —
+// no column, no error, just a value that quietly becomes the zero value.
+func TestBlockLockAndNoteRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	dur := 95
+	tm := "10:10"
+	in := []domain.TimeBlock{
+		{
+			ID: "locked", Title: "CS 201 数据结构（课）", Type: domain.BlockAppointment,
+			Time: &tm, DurationMin: &dur, TimeMode: domain.TimeFloating,
+			LockLevel: domain.LockHard, LockReason: "课程时间由课表决定",
+			LockSource: domain.LockSourceDerived,
+		},
+		{
+			// Unlocked by hand: LockNone must survive, otherwise a re-read would
+			// helpfully lock the user's class right back up.
+			ID: "unlocked", Title: "社团例会", Type: domain.BlockAppointment,
+			TimeMode:  domain.TimeFloating,
+			LockLevel: domain.LockNone, LockSource: domain.LockSourceUser,
+		},
+		{
+			ID: "refished", Title: "锻炼", Type: domain.BlockTask,
+			TimeMode: domain.TimeFloating, Note: "只做了一半，手腕疼",
+			RescheduledFrom: "orig-1", RescheduleCount: 2,
+		},
+	}
+	if _, err := s.DayPlans().Upsert(ctx, &domain.DayPlan{
+		SessionID: "sid-lock", Date: "2026-07-26", Blocks: in,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.DayPlans().Get(ctx, "sid-lock", "2026-07-26")
+	if err != nil || len(got.Blocks) != 3 {
+		t.Fatalf("get: %+v err=%v", got, err)
+	}
+	by := map[string]domain.TimeBlock{}
+	for _, b := range got.Blocks {
+		by[b.ID] = b
+	}
+
+	if b := by["locked"]; b.LockLevel != domain.LockHard ||
+		b.LockReason != "课程时间由课表决定" || b.LockSource != domain.LockSourceDerived {
+		t.Errorf("hard lock lost: level=%q reason=%q source=%q", b.LockLevel, b.LockReason, b.LockSource)
+	}
+	if b := by["unlocked"]; b.LockLevel != domain.LockNone || b.LockSource != domain.LockSourceUser {
+		t.Errorf("deliberate unlock lost: level=%q source=%q", b.LockLevel, b.LockSource)
+	}
+	if b := by["refished"]; b.Note != "只做了一半，手腕疼" ||
+		b.RescheduledFrom != "orig-1" || b.RescheduleCount != 2 {
+		t.Errorf("note/refish lost: note=%q from=%q count=%d", b.Note, b.RescheduledFrom, b.RescheduleCount)
+	}
+
+	// A legacy block carries no lock at all; LockUnset is what tells DeriveLock
+	// it still has work to do, so it must not be confused with LockNone.
+	if _, err := s.DayPlans().Upsert(ctx, &domain.DayPlan{
+		SessionID: "sid-legacy", Date: "2026-07-26",
+		Blocks: []domain.TimeBlock{{ID: "old", Title: "旧块", Type: domain.BlockTask}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	legacy, _ := s.DayPlans().Get(ctx, "sid-legacy", "2026-07-26")
+	if legacy.Blocks[0].LockLevel != domain.LockUnset {
+		t.Errorf("legacy block should read back as LockUnset, got %q", legacy.Blocks[0].LockLevel)
+	}
+}
+
+// TestOpLogDomain covers both halves: an explicit domain survives, and a row
+// written without one still reads back classified (existing rows predate the
+// column and must not skew rapport scoring).
+func TestOpLogDomain(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	explicit := &domain.OperationLog{
+		SessionID: "sid-d", Actor: domain.ActorAgent, Action: "plan_add",
+		Domain: domain.OpDomainCare, Summary: "explicit wins",
+	}
+	if err := s.OpLogs().Add(ctx, explicit); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.OpLogs().Get(ctx, "sid-d", explicit.ID)
+	if err != nil || got.Domain != domain.OpDomainCare {
+		t.Fatalf("explicit domain: %q err=%v", got.Domain, err)
+	}
+
+	derived := &domain.OperationLog{
+		SessionID: "sid-d", Actor: domain.ActorUser, Action: "memory_add", Summary: "derive me",
+	}
+	if err := s.OpLogs().Add(ctx, derived); err != nil {
+		t.Fatal(err)
+	}
+	if derived.Domain != domain.OpDomainArchive {
+		t.Errorf("Add should stamp the derived domain onto the struct, got %q", derived.Domain)
+	}
+	got, _ = s.OpLogs().Get(ctx, "sid-d", derived.ID)
+	if got.Domain != domain.OpDomainArchive {
+		t.Errorf("derived domain: %q", got.Domain)
+	}
+
+	// Simulate a pre-migration row: column present but empty.
+	if _, err := s.exec(ctx,
+		`INSERT INTO operation_logs (id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at)
+		 VALUES (?, ?, ?, ?, '', '', '', ?, '', ?, '', ?)`,
+		"legacy-1", "sid-d", domain.ActorUser, "rule_create", "legacy row", domain.OpStatusOK, nowMillis()); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.OpLogs().Get(ctx, "sid-d", "legacy-1")
+	if err != nil || got.Domain != domain.OpDomainHabit {
+		t.Fatalf("legacy row should derive habit, got %q err=%v", got.Domain, err)
+	}
+	logs, _ := s.OpLogs().List(ctx, "sid-d", 10)
+	for _, l := range logs {
+		if l.Domain == "" {
+			t.Errorf("List returned an unclassified row: action=%q", l.Action)
+		}
+	}
+}

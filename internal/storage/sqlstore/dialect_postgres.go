@@ -81,6 +81,7 @@ func (postgresDialect) Migrations() []string {
 			session_id TEXT NOT NULL,
 			actor TEXT NOT NULL DEFAULT 'user',
 			action TEXT NOT NULL,
+			domain TEXT NOT NULL DEFAULT '',
 			target_id TEXT NOT NULL DEFAULT '',
 			date TEXT NOT NULL DEFAULT '',
 			summary TEXT NOT NULL DEFAULT '',

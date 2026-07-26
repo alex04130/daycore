@@ -81,6 +81,12 @@ func sessionColumnMigrations(textType string) []ColumnMigration {
 			DDL: `ALTER TABLE users ADD COLUMN data_session_id ` + userText + ` NOT NULL DEFAULT ''`},
 		ColumnMigration{Table: "users", Column: "token_version",
 			DDL: `ALTER TABLE users ADD COLUMN token_version ` + intType + ` NOT NULL DEFAULT 0`},
+		// Existing rows get '' rather than a guessed domain: OpDomainOf can
+		// derive one from the action at read time, and a wrong stored value
+		// would quietly skew rapport scores that are meant to be replayable
+		// from the log itself.
+		ColumnMigration{Table: "operation_logs", Column: "domain",
+			DDL: `ALTER TABLE operation_logs ADD COLUMN domain ` + textType + ` NOT NULL DEFAULT ''`},
 	)
 	return migs
 }

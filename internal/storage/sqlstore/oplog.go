@@ -17,11 +17,14 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 		l.ID = uuid.NewString()
 	}
 	l.Summary = domain.ClampOpLogSummary(l.Summary)
+	if l.Domain == "" {
+		l.Domain = domain.OpDomainOf(l.Action)
+	}
 	now := nowMillis()
 	_, err := r.exec(ctx,
-		`INSERT INTO operation_logs (id, session_id, actor, action, target_id, date, summary, detail, status, request_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.ID, l.SessionID, l.Actor, l.Action, l.TargetID, l.Date, l.Summary, l.Detail, l.Status, l.RequestID, now)
+		`INSERT INTO operation_logs (id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, l.SessionID, l.Actor, l.Action, l.Domain, l.TargetID, l.Date, l.Summary, l.Detail, l.Status, l.RequestID, now)
 	if err != nil {
 		return err
 	}
@@ -31,19 +34,24 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 
 func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.OperationLog, error) {
 	row := r.queryRow(ctx,
-		`SELECT id, session_id, actor, action, target_id, date, summary, detail, status, request_id, created_at
+		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
 		 FROM operation_logs WHERE id = ? AND session_id = ?`, id, sessionID)
 	var (
 		l         domain.OperationLog
 		createdAt int64
 	)
-	err := row.Scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.TargetID, &l.Date,
+	err := row.Scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.Domain, &l.TargetID, &l.Date,
 		&l.Summary, &l.Detail, &l.Status, &l.RequestID, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	// Rows written before the column existed carry ''; derive rather than
+	// backfill, so the log stays append-only.
+	if l.Domain == "" {
+		l.Domain = domain.OpDomainOf(l.Action)
 	}
 	l.CreatedAt = fromMillis(createdAt)
 	return &l, nil
@@ -54,7 +62,7 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 		limit = 50
 	}
 	rows, err := r.query(ctx,
-		`SELECT id, session_id, actor, action, target_id, date, summary, detail, status, request_id, created_at
+		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
 		 FROM operation_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
@@ -67,9 +75,12 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 			l         domain.OperationLog
 			createdAt int64
 		)
-		if err := rows.Scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.TargetID, &l.Date,
+		if err := rows.Scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.Domain, &l.TargetID, &l.Date,
 			&l.Summary, &l.Detail, &l.Status, &l.RequestID, &createdAt); err != nil {
 			return nil, err
+		}
+		if l.Domain == "" {
+			l.Domain = domain.OpDomainOf(l.Action)
 		}
 		l.CreatedAt = fromMillis(createdAt)
 		out = append(out, l)

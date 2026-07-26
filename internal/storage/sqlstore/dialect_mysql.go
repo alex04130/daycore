@@ -64,6 +64,7 @@ func (mysqlDialect) Migrations() []string {
 			session_id VARCHAR(191) NOT NULL,
 			actor VARCHAR(16) NOT NULL DEFAULT 'user',
 			action VARCHAR(64) NOT NULL,
+			domain VARCHAR(16) NOT NULL DEFAULT '',
 			target_id VARCHAR(191) NOT NULL DEFAULT '',
 			date VARCHAR(16) NOT NULL DEFAULT '',
 			summary VARCHAR(512) NOT NULL DEFAULT '',

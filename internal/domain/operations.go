@@ -3,7 +3,10 @@
 // it is the "interface" half of the database/interface separation.
 package domain
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ─── Operation log actors ────────────────────────────────────────────────────
 
@@ -19,6 +22,41 @@ const (
 	OpStatusOK     = "ok"
 	OpStatusFailed = "failed"
 )
+
+// ─── Operation domains ───────────────────────────────────────────────────────
+
+// OpDomain groups an operation by the part of the user's life it touched. Two
+// features read it: the river colours its bands by domain, and rapport (how much
+// latitude the user has given the agent) is scored per domain — being trusted
+// with the schedule says nothing about being trusted to archive things.
+//
+// Rapport is only kept for the first four; OpDomainSystem is plumbing and never
+// earns or loses any.
+const (
+	OpDomainSchedule = "schedule" // plans, blocks, rules — anything on the timeline
+	OpDomainHabit    = "habit"    // recurring patterns the agent inferred
+	OpDomainArchive  = "archive"  // materials, memories, wishes — the filing cabinet
+	OpDomainCare     = "care"     // moods, check-ins, the 20h protector
+	OpDomainSystem   = "system"   // settings, themes, imports; not scored
+)
+
+// OpDomainOf maps an operation action to its domain. Unknown actions fall back
+// to system so a new action never silently skews someone's rapport score.
+func OpDomainOf(action string) string {
+	switch {
+	case strings.HasPrefix(action, "plan_"), strings.HasPrefix(action, "autoplan"):
+		return OpDomainSchedule
+	case strings.HasPrefix(action, "rule_"):
+		return OpDomainHabit
+	case strings.HasPrefix(action, "memory_"), strings.HasPrefix(action, "material_"),
+		strings.HasPrefix(action, "wish_"), strings.HasPrefix(action, "assignment_"):
+		return OpDomainArchive
+	case strings.HasPrefix(action, "mood_"), strings.HasPrefix(action, "protector_"):
+		return OpDomainCare
+	default:
+		return OpDomainSystem
+	}
+}
 
 // ─── Summary limit ───────────────────────────────────────────────────────────
 
@@ -45,6 +83,7 @@ type OperationLog struct {
 	SessionID string    `json:"sessionId"`
 	Actor     string    `json:"actor"`  // "user" | "agent" | "system"
 	Action    string    `json:"action"` // e.g. "plan_upsert", "rule_delete"
+	Domain    string    `json:"domain"` // see OpDomain*; derived via OpDomainOf when not set
 	TargetID  string    `json:"targetId,omitempty"`
 	Date      string    `json:"date,omitempty"` // YYYY-MM-DD the operation targets
 	Summary   string    `json:"summary"`

@@ -34,6 +34,34 @@ const (
 	OriginRule   = "rule"
 )
 
+// LockLevel says how firmly a block's time slot is fixed. Some hours are simply
+// not the user's to move — a lecture is set by the timetable, a meeting by the
+// other party — and the planner has to know that before it reshuffles a day.
+//
+// The zero value is deliberately NOT "unlocked": it means "never derived yet",
+// which is a third state the design prototype expressed as `undefined` (see
+// design-ui/HANDOFF/01-core-contract.md §5). A block whose level was cleared by
+// the user is LockNone, and that must survive a re-read — otherwise DeriveLock
+// would helpfully lock the user's class right back up every time it is loaded.
+// LockSource is what keeps those two apart.
+type LockLevel string
+
+const (
+	LockUnset LockLevel = ""     // not derived yet; DeriveLock will fill it in
+	LockNone  LockLevel = "none" // derived, and the slot is free to move
+	LockSoft  LockLevel = "soft" // agreed with someone else; move needs confirmation
+	LockHard  LockLevel = "hard" // set by a timetable; the user cannot move it at all
+)
+
+// LockSource records who decided the lock, so a derived guess never overwrites a
+// deliberate choice.
+const (
+	LockSourceUnset   = ""        // never derived
+	LockSourceDerived = "derived" // inferred from type + title; safe to recompute
+	LockSourceUser    = "user"    // the user set it by hand; never recompute
+	LockSourceAgent   = "agent"   // the agent set it; never recompute
+)
+
 // TimeBlock is a single scheduled item inside a day plan. The JSON shape is the
 // wire contract shared with the AI prompts and the frontend, so the tags must
 // stay stable.
@@ -54,6 +82,27 @@ type TimeBlock struct {
 	RuleID        string    `json:"rule_id,omitempty"` // set when the block was expanded from a ScheduleRule
 	Origin        string    `json:"origin,omitempty"`  // "auto" | "manual" | "rule"; empty = legacy/manual
 	Hidden        bool      `json:"hidden,omitempty"`  // tombstone: user removed this rule occurrence for the day
+
+	// Note is whatever the user felt like writing when they checked the block
+	// off — how it went, what was left half-done. Always optional: we never ask
+	// for it, we just keep a place for it, and the agent reads it to know the
+	// user better.
+	Note string `json:"note"` // no omitempty: revert must be able to restore a cleared note
+
+	// Lock fields. All three are no-omitempty because revertPlanUpdate rebuilds
+	// changes key-by-key from the "before" snapshot — a key missing from the
+	// JSON is a key revert cannot restore.
+	LockLevel  LockLevel `json:"lock_level"`
+	LockReason string    `json:"lock_reason"`
+	LockSource string    `json:"lock_source"`
+
+	// Re-fishing: an unfinished block whose time was never the point (exercise,
+	// reading) gets offered a new slot instead of quietly rotting in the past.
+	// Bookings do not — a lecture you missed is missed. RescheduledFrom chains
+	// each retry back to the original so RescheduleCount can stop the offers
+	// once it is clear the user simply does not want to do this.
+	RescheduledFrom string `json:"rescheduled_from,omitempty"`
+	RescheduleCount int    `json:"reschedule_count,omitempty"`
 }
 
 // DayPlan is the set of time blocks for one session on one date.

@@ -18,6 +18,7 @@ type opLogDoc struct {
 	SessionID string    `bson:"session_id"`
 	Actor     string    `bson:"actor"`
 	Action    string    `bson:"action"`
+	Domain    string    `bson:"domain"`
 	TargetID  string    `bson:"target_id"`
 	Date      string    `bson:"date"`
 	Summary   string    `bson:"summary"`
@@ -27,6 +28,21 @@ type opLogDoc struct {
 	CreatedAt time.Time `bson:"created_at"`
 }
 
+// toDomain derives the domain for rows written before the field existed rather
+// than backfilling them — the log is append-only, and OpDomainOf reproduces the
+// same answer from the action every time.
+func (d opLogDoc) toDomain() domain.OperationLog {
+	dom := d.Domain
+	if dom == "" {
+		dom = domain.OpDomainOf(d.Action)
+	}
+	return domain.OperationLog{
+		ID: d.ID, SessionID: d.SessionID, Actor: d.Actor, Action: d.Action,
+		Domain: dom, TargetID: d.TargetID, Date: d.Date, Summary: d.Summary,
+		Detail: d.Detail, Status: d.Status, RequestID: d.RequestID, CreatedAt: d.CreatedAt,
+	}
+}
+
 type opLogRepo struct{ *Store }
 
 func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
@@ -34,11 +50,14 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 		l.ID = uuid.NewString()
 	}
 	l.Summary = domain.ClampOpLogSummary(l.Summary)
+	if l.Domain == "" {
+		l.Domain = domain.OpDomainOf(l.Action)
+	}
 	l.CreatedAt = time.Now().UTC()
 	_, err := r.c("operation_logs").InsertOne(ctx, opLogDoc{
 		ID: l.ID, SessionID: l.SessionID, Actor: l.Actor, Action: l.Action,
-		TargetID: l.TargetID, Date: l.Date, Summary: l.Summary, Detail: l.Detail,
-		Status: l.Status, RequestID: l.RequestID, CreatedAt: l.CreatedAt,
+		Domain: l.Domain, TargetID: l.TargetID, Date: l.Date, Summary: l.Summary,
+		Detail: l.Detail, Status: l.Status, RequestID: l.RequestID, CreatedAt: l.CreatedAt,
 	})
 	return err
 }
@@ -59,11 +78,7 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 		if err := cur.Decode(&d); err != nil {
 			return nil, err
 		}
-		out = append(out, domain.OperationLog{
-			ID: d.ID, SessionID: d.SessionID, Actor: d.Actor, Action: d.Action,
-			TargetID: d.TargetID, Date: d.Date, Summary: d.Summary, Detail: d.Detail,
-			Status: d.Status, RequestID: d.RequestID, CreatedAt: d.CreatedAt,
-		})
+		out = append(out, d.toDomain())
 	}
 	return out, cur.Err()
 }
@@ -76,9 +91,6 @@ func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.Opera
 		}
 		return nil, err
 	}
-	return &domain.OperationLog{
-		ID: d.ID, SessionID: d.SessionID, Actor: d.Actor, Action: d.Action,
-		TargetID: d.TargetID, Date: d.Date, Summary: d.Summary, Detail: d.Detail,
-		Status: d.Status, RequestID: d.RequestID, CreatedAt: d.CreatedAt,
-	}, nil
+	l := d.toDomain()
+	return &l, nil
 }
