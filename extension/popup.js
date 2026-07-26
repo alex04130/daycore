@@ -1,6 +1,7 @@
 // Popup: drives the fetch (delegated to the service worker), then builds the
-// JSON/CSV downloads locally and optionally pushes straight to a local Daycore
-// via POST /api/import/canvas with the X-Import-Token header.
+// JSON/CSV downloads locally and optionally pushes straight to Daycore — local
+// or a deployed domain — via POST /api/import/canvas with the X-Import-Token
+// header. The target origin must be granted in Options first (see options.js).
 
 const t = (key, subs) => chrome.i18n.getMessage(key, subs) || key;
 
@@ -114,9 +115,29 @@ pushBtn.addEventListener("click", async () => {
     setStatus(t("pushNoToken"), "error");
     return;
   }
+
+  const base = daycoreURL.replace(/\/+$/, "");
+  let origin;
+  try {
+    origin = new URL(base).origin;
+  } catch (_e) {
+    setStatus(t("pushBadURL"), "error");
+    return;
+  }
+
+  // Without a host permission for this origin the fetch dies on CORS with a
+  // opaque "Failed to fetch" — check first and point at Options instead.
+  const granted = await chrome.permissions
+    .contains({ origins: [`${origin}/*`] })
+    .catch(() => false);
+  if (!granted) {
+    setStatus(t("pushNoPerm", [origin]), "error");
+    return;
+  }
+
   pushBtn.disabled = true;
   try {
-    const res = await fetch(`${daycoreURL.replace(/\/+$/, "")}/api/import/canvas`, {
+    const res = await fetch(`${base}/api/import/canvas`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Import-Token": importToken },
       body: JSON.stringify(exportData),

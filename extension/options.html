@@ -32,19 +32,29 @@
       font-size: 14px;
       cursor: pointer;
     }
+    button.secondary {
+      margin-left: 8px;
+      background: #eef1f8;
+      color: #3a4152;
+    }
+    button:disabled { opacity: .55; cursor: default; }
+    .hint { margin: 6px 0 0; font-size: 12px; color: #6b7280; }
     #saved { margin-left: 12px; color: #256029; }
     #saved.error { color: #b3261e; }
+    #saved.pending { color: #6b7280; }
   </style>
 </head>
 <body>
   <h1 data-i18n="optTitle"></h1>
   <label for="daycore-url" data-i18n="optDaycoreURL"></label>
-  <input id="daycore-url" type="url" placeholder="http://localhost:8080" />
+  <input id="daycore-url" type="url" placeholder="https://day.example.com" />
+  <p class="hint" data-i18n="optDaycoreURLHint"></p>
   <label for="import-token" data-i18n="optToken"></label>
   <input id="import-token" type="text" placeholder="dcimp_…" />
   <label for="domains" data-i18n="optDomains"></label>
   <textarea id="domains" placeholder="canvas.umn.edu"></textarea>
-  <button id="save" data-i18n="optSave"></button><span id="saved"></span>
+  <button id="save" data-i18n="optSave"></button
+  ><button id="test" class="secondary" data-i18n="optTest"></button><span id="saved"></span>
   <script src="options.js"></script>
 </body>
 </html>
