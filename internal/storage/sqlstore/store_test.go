@@ -552,3 +552,108 @@ func TestOpLogDomain(t *testing.T) {
 		}
 	}
 }
+
+// TestOpLogScan covers the replay path. rapport is defined as a reading of the
+// ledger, so its cache must be rebuildable by re-folding every operation in the
+// order it happened — which List (newest-first, capped) cannot provide.
+func TestOpLogScan(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Same-millisecond writes are ordinary; the cursor has to break the tie on
+	// id or paging silently skips or repeats rows. Add() stamps its own clock,
+	// so the collision has to be inserted directly — three sequential Add calls
+	// usually land in different milliseconds and would not exercise this.
+	tie := nowMillis()
+	for _, id := range []string{"c", "a", "b"} {
+		if _, err := s.exec(ctx,
+			`INSERT INTO operation_logs (id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, '', '', ?, '', ?, '', ?)`,
+			"same-"+id, "sid-scan", domain.ActorUser, "plan_add", domain.OpDomainSchedule,
+			"tie "+id, domain.OpStatusOK, tie); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(5 * time.Millisecond)
+	for i, action := range []string{"rule_create", "memory_add", "mood_record"} {
+		if err := s.OpLogs().Add(ctx, &domain.OperationLog{
+			ID: "later-" + string(rune('x'+i)), SessionID: "sid-scan",
+			Actor: domain.ActorAgent, Action: action, Summary: action,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	// A second session must never leak into the replay.
+	_ = s.OpLogs().Add(ctx, &domain.OperationLog{
+		SessionID: "sid-other", Actor: domain.ActorUser, Action: "plan_add", Summary: "other",
+	})
+
+	// Walk the whole log one page at a time, exactly as a replay would.
+	var (
+		seen   []domain.OperationLog
+		cursor domain.OpLogCursor
+	)
+	for pages := 0; ; pages++ {
+		if pages > 10 {
+			t.Fatal("scan did not terminate — the cursor is not advancing")
+		}
+		page, err := s.OpLogs().Scan(ctx, "sid-scan", cursor, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		seen = append(seen, page...)
+		last := page[len(page)-1]
+		cursor = domain.OpLogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+
+	if len(seen) != 6 {
+		ids := make([]string, len(seen))
+		for i, l := range seen {
+			ids[i] = l.ID
+		}
+		t.Fatalf("replay saw %d rows, want 6: %v", len(seen), ids)
+	}
+	for _, l := range seen {
+		if l.SessionID != "sid-scan" {
+			t.Errorf("another session leaked into the replay: %s", l.ID)
+		}
+	}
+	// Oldest-first, and no duplicates across page boundaries.
+	dup := map[string]bool{}
+	for i, l := range seen {
+		if dup[l.ID] {
+			t.Errorf("row %s returned twice", l.ID)
+		}
+		dup[l.ID] = true
+		if i > 0 && l.CreatedAt.Before(seen[i-1].CreatedAt) {
+			t.Errorf("out of order at %d: %s before %s", i, l.CreatedAt, seen[i-1].CreatedAt)
+		}
+	}
+	// The three same-millisecond rows must come back id-ascending.
+	var ties []string
+	for _, l := range seen {
+		if strings.HasPrefix(l.ID, "same-") {
+			ties = append(ties, l.ID)
+		}
+	}
+	if want := []string{"same-a", "same-b", "same-c"}; len(ties) != 3 ||
+		ties[0] != want[0] || ties[1] != want[1] || ties[2] != want[2] {
+		t.Errorf("same-millisecond rows should be id-ascending, got %v", ties)
+	}
+	// Domain is derived on read, so a replay can score by domain.
+	for _, l := range seen {
+		if l.Domain == "" {
+			t.Errorf("row %s came back unclassified", l.ID)
+		}
+	}
+
+	// A zero cursor starts from the beginning.
+	first, err := s.OpLogs().Scan(ctx, "sid-scan", domain.OpLogCursor{}, 1)
+	if err != nil || len(first) != 1 || first[0].ID != "same-a" {
+		t.Fatalf("zero cursor should start at the oldest row, got %+v err=%v", first, err)
+	}
+}

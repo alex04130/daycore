@@ -57,6 +57,27 @@ func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.Opera
 	return &l, nil
 }
 
+// Scan walks the log oldest-first so derived state can be rebuilt by re-folding
+// it. The keyset predicate (created_at, id) is what makes paging safe here:
+// created_at is milliseconds, ties are ordinary, and OFFSET paging over an
+// append-only table would drift as new rows land mid-replay.
+func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLogCursor, limit int) ([]domain.OperationLog, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := r.query(ctx,
+		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
+		 FROM operation_logs
+		 WHERE session_id = ? AND (created_at > ? OR (created_at = ? AND id > ?))
+		 ORDER BY created_at ASC, id ASC LIMIT ?`,
+		sessionID, toMillis(after.CreatedAt), toMillis(after.CreatedAt), after.ID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanOpLogs(rows)
+}
+
 func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.OperationLog, error) {
 	if limit <= 0 {
 		limit = 50
@@ -68,7 +89,13 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 		return nil, err
 	}
 	defer rows.Close()
+	return scanOpLogs(rows)
+}
 
+// scanOpLogs reads the shared SELECT column list. Rows written before the
+// domain column existed carry '' and are classified on read — the log is
+// append-only, and OpDomainOf reproduces the same answer from the action.
+func scanOpLogs(rows *sql.Rows) ([]domain.OperationLog, error) {
 	out := []domain.OperationLog{}
 	for rows.Next() {
 		var (

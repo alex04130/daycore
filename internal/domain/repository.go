@@ -63,10 +63,28 @@ type ThemeLogRepository interface {
 	Add(ctx context.Context, sessionID, theme string) error
 }
 
+// OpLogCursor marks a position in the append-only log. The id breaks ties:
+// created_at is stored to the millisecond and two operations in the same
+// millisecond are ordinary, so ordering on time alone would silently skip or
+// repeat rows across pages.
+//
+// The zero value means "from the beginning".
+type OpLogCursor struct {
+	CreatedAt time.Time
+	ID        string
+}
+
 type OperationLogRepository interface {
 	Add(ctx context.Context, l *OperationLog) error
 	Get(ctx context.Context, sessionID, id string) (*OperationLog, error)
+	// List returns the newest entries first — the ledger view.
 	List(ctx context.Context, sessionID string, limit int) ([]OperationLog, error)
+	// Scan walks the log oldest-first from a cursor. This is the replay path:
+	// rapport is defined as a reading of the ledger rather than a fact of its
+	// own, so its cache must be rebuildable by re-folding every operation in
+	// the order it happened. List cannot do that — it is newest-first and
+	// capped.
+	Scan(ctx context.Context, sessionID string, after OpLogCursor, limit int) ([]OperationLog, error)
 }
 
 type UserRepository interface {

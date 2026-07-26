@@ -62,6 +62,39 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 	return err
 }
 
+// Scan walks the log oldest-first from a cursor so derived state can be rebuilt
+// by re-folding it. Keyset over (created_at, _id) rather than skip/limit: the
+// collection is append-only and grows during a replay, so an offset would drift.
+func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLogCursor, limit int) ([]domain.OperationLog, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	filter := bson.M{"session_id": sessionID}
+	if !after.CreatedAt.IsZero() || after.ID != "" {
+		filter["$or"] = []bson.M{
+			{"created_at": bson.M{"$gt": after.CreatedAt}},
+			{"created_at": after.CreatedAt, "_id": bson.M{"$gt": after.ID}},
+		}
+	}
+	cur, err := r.c("operation_logs").Find(ctx, filter,
+		options.Find().
+			SetSort(bson.D{{Key: "created_at", Value: 1}, {Key: "_id", Value: 1}}).
+			SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []domain.OperationLog{}
+	for cur.Next(ctx) {
+		var d opLogDoc
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, d.toDomain())
+	}
+	return out, cur.Err()
+}
+
 func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.OperationLog, error) {
 	if limit <= 0 {
 		limit = 50
