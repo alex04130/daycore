@@ -119,7 +119,7 @@ paths:
       parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
       responses: { '302': { description: Redirect to / } }
   /api/me:
-    get: { operationId: me, tags: [auth], summary: Current user or {user:null}., responses: { '200': { description: OK } } }
+    get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }
 
   # ─── plan & rules ──────────────────────────────────────────────────────────
   /api/plan:
@@ -227,7 +227,7 @@ paths:
     post:
       operationId: planImage
       tags: [ai]
-      summary: Image → day plan (vision). imageBase64 has no data: prefix.
+      summary: "Image → day plan (vision). imageBase64 has no data: prefix."
       requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string }, date: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
   /api/ai/extract-schedule-image:
@@ -389,7 +389,7 @@ paths:
     post:
       operationId: inboxProcess
       tags: [inbox]
-      summary: Classify a quick capture ({text} or {temp_id}) via AI → confirmation card + draftId.
+      summary: "Classify a quick capture ({text} or {temp_id}) via AI → confirmation card + draftId."
       description: >
         AI classification over the session's ENABLED categories (see
         /api/materials/categories). Response always carries the legacy keys
@@ -425,7 +425,7 @@ paths:
     get:
       operationId: getTempContext
       tags: [inbox]
-      summary: Get a session-scoped value (missing/expired → {data:null}).
+      summary: "Get a session-scoped value (missing/expired → {data:null})."
       parameters: [{ name: key, in: query, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: string, nullable: true }, ttl: { type: string } } } } } } }
     put:
@@ -652,6 +652,26 @@ components:
         rule_id: { type: string, description: "Set when the block is an occurrence of a ScheduleRule." }
         origin: { type: string, enum: [auto, manual, rule], description: "auto=generated (dashed border, replaced on re-plan); manual=user (survives); rule=materialized occurrence." }
         hidden: { type: boolean, description: "Tombstone — filtered out of reads; never render." }
+        note: { type: string, description: "Whatever the user felt like writing when checking the block off — how it went, what was left half-done. Always optional; never prompted for. The agent reads it." }
+        lock_level:
+          type: string
+          enum: ["", none, soft, hard]
+          description: >-
+            How firmly the time slot is fixed. THREE states, not two: "" means
+            never derived yet (the server will fill it in on read), none means
+            derived and free to move. hard=set by a timetable, the user cannot
+            move it; soft=agreed with someone else, moving needs confirmation.
+            Derivation rule and the shared case table live in api/lock-rules.json.
+        lock_reason: { type: string, description: "Why it is locked. Derived reasons are looked up per request locale; a user-set reason is stored verbatim." }
+        lock_source:
+          type: string
+          enum: ["", derived, user, agent]
+          description: >-
+            Who decided the lock. derived=inferred from type+title and safe to
+            recompute; user/agent=a deliberate choice, never recomputed. Without
+            this a hand-unlocked class would be re-locked on every read.
+        rescheduled_from: { type: string, description: "Id of the block this one was re-fished from, chaining each retry back to the original." }
+        reschedule_count: { type: integer, description: "How many times this item has been offered a new slot. Past the configured limit the agent stops offering and records the preference instead." }
     DayPlan:
       type: object
       properties:
@@ -833,10 +853,22 @@ components:
         sessionId: { type: string }
         actor: { type: string, enum: [user, agent, system] }
         action: { type: string, example: "plan_update" }
+        domain:
+          type: string
+          enum: [schedule, habit, archive, care, system]
+          description: >-
+            Which part of the user's life the operation touched. Two consumers:
+            the river colours its bands by domain, and rapport (how much latitude
+            the user has given the agent) is scored per domain — being trusted
+            with the schedule says nothing about being trusted to archive things.
+            Only the first four are scored; system is plumbing. Derived from the
+            action prefix when a row does not carry one.
         targetId: { type: string }
         date: { type: string }
-        summary: { type: string }
+        summary: { type: string, description: "Short list-view line, clamped to 512 runes." }
+        detail: { type: string, description: "Full JSON payload including before/after snapshots — this is what revert replays. Unbounded." }
         status: { type: string, enum: [ok, failed] }
+        requestId: { type: string }
         createdAt: { type: string, format: date-time }
     AdminStats:
       type: object
