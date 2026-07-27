@@ -54,6 +54,12 @@ type Server struct {
 	decisions   *decisionRegistry
 	worker      *Worker // set by main.go after construction; nil when channels are off
 
+	// locales is the pair this deployment puts in front of users — one main
+	// language and one to fall back on, which is what the frontends render as
+	// a two-position switch. i18n.Supported is the wider capability; this is
+	// the product decision layered on it.
+	locales i18n.Offered
+
 	// asyncWG tracks detached background goroutines (async companion turns,
 	// inbound channel handling) so graceful shutdown can wait for them.
 	asyncWG sync.WaitGroup
@@ -98,6 +104,7 @@ func New(d Deps) *Server {
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
 		weather:     d.Weather, search: search.New(), searcher: d.Searcher,
 		decisions: newDecisionRegistry(),
+		locales:   d.Config.Locales,
 	}
 }
 
@@ -320,7 +327,7 @@ func (s *Server) requestLocale(r *http.Request) string {
 			sessionLang = sess.Language
 		}
 	}
-	return i18n.Resolve(sessionLang, r.Header.Get("Accept-Language"))
+	return s.locales.Resolve(sessionLang, r.Header.Get("Accept-Language"))
 }
 
 // ─── response/request helpers ────────────────────────────────────────────────

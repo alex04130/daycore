@@ -125,7 +125,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	}
 
 	prefs := parsePrefs(sess.Preferences)
-	locale := i18n.Resolve(sess.Language, "")
+	locale := w.s.locales.Resolve(sess.Language, "")
 	name := sess.AssistantName
 	if name == "" {
 		name = "Daycore"
@@ -236,7 +236,7 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 		w.log.Warn("worker checkDeadlines: get session", "sid", sid, "err", err)
 		return
 	}
-	locale := i18n.Resolve(sess.Language, "")
+	locale := w.s.locales.Resolve(sess.Language, "")
 
 	msg := formatDeadlineWarning(locale, urgent, now)
 	w.sendToChannels(ctx, sid, msg)
@@ -293,7 +293,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 		w.log.Warn("worker checkRollingReplan: get session", "sid", sid, "err", err)
 		return
 	}
-	locale := i18n.Resolve(sess.Language, "")
+	locale := w.s.locales.Resolve(sess.Language, "")
 
 	// Call the agent to evaluate and suggest a replan.
 	overdueJSON, _ := json.Marshal(overdue)

@@ -24,20 +24,27 @@ func IsSupported(locale string) bool {
 // Normalize maps an arbitrary BCP-47-ish tag onto a supported locale, or ""
 // when the language is not shipped. Region/script variants collapse onto the
 // shipped locale of the same base language ("en-GB" → "en-US").
+//
+// It derives everything from Supported rather than from a switch, so adding a
+// language is one entry in one list. When Supported carries two regions of the
+// same language, an unlisted third region resolves to the first of them in
+// Supported order — declaration order is the tiebreak, so put the one you would
+// rather serve first.
 func Normalize(tag string) string {
 	tag = strings.TrimSpace(tag)
 	if tag == "" {
 		return ""
 	}
-	base := strings.ToLower(tag)
-	if i := strings.IndexAny(base, "-_"); i >= 0 {
-		base = base[:i]
+	for _, l := range Supported {
+		if strings.EqualFold(l, tag) {
+			return l
+		}
 	}
-	switch base {
-	case "zh":
-		return "zh-CN"
-	case "en":
-		return "en-US"
+	base := baseOf(tag)
+	for _, l := range Supported {
+		if baseOf(l) == base {
+			return l
+		}
 	}
 	return ""
 }
@@ -58,14 +65,7 @@ func FromAcceptLanguage(header string) string {
 	return ""
 }
 
-// Resolve picks the effective locale: the session's stored language when set
-// and supported, else the Accept-Language negotiation, else Default.
-func Resolve(sessionLang, acceptLanguage string) string {
-	if l := Normalize(sessionLang); l != "" {
-		return l
-	}
-	if l := FromAcceptLanguage(acceptLanguage); l != "" {
-		return l
-	}
-	return Default
-}
+// Negotiation deliberately lives on Offered, not here: resolving against
+// everything the binary supports would hand a user a language their deployment
+// does not offer, and the resulting UI would have no way to switch back out of
+// it. See Offered.Resolve.

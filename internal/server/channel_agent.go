@@ -8,7 +8,6 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/channels"
-	"daycore/internal/i18n"
 )
 
 // discardSink drops every agent frame; channel replies only need the final
@@ -50,7 +49,7 @@ func (s *Server) runChannelMessage(ctx context.Context, sid, text string) string
 	if err != nil {
 		return ""
 	}
-	locale := i18n.Resolve(sess.Language, "")
+	locale := s.locales.Resolve(sess.Language, "")
 	name := sess.AssistantName
 	if name == "" {
 		name = "Leo"

@@ -37,7 +37,7 @@ func (s *Server) handleSessionInit(w http.ResponseWriter, r *http.Request) {
 	// First contact: adopt the browser's language so prompts and AI replies
 	// match the user before they ever open settings.
 	if sess.Language == "" {
-		lang := i18n.Resolve("", r.Header.Get("Accept-Language"))
+		lang := s.locales.Resolve("", r.Header.Get("Accept-Language"))
 		if updated, err := s.store.Sessions().Update(r.Context(), sid, domain.SessionUpdate{Language: &lang}); err == nil {
 			sess = updated
 		}
@@ -94,8 +94,13 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Language != nil {
+		// Normalize first so "zh" and "zh-Hans-CN" both land on the offered
+		// tag, then refuse anything this deployment does not offer. Reads clamp
+		// silently (Offered.Resolve) because a stored value can go stale; a
+		// write is the user actively choosing, and choosing something that is
+		// not on offer should say so rather than quietly become something else.
 		lang := i18n.Normalize(*body.Language)
-		if lang == "" {
+		if !s.locales.Has(lang) {
 			s.writeErr(w, http.StatusBadRequest, "unsupported_locale", "不支持的语言")
 			return
 		}

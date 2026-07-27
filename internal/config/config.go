@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"daycore/internal/i18n"
+
 	"github.com/joho/godotenv"
 )
 
@@ -81,6 +83,15 @@ type Config struct {
 	WeatherProvider   string
 	QWeatherKey       string
 	OpenWeatherMapKey string
+
+	// Locales is the language pair this deployment offers its users — one main
+	// language and one to fall back on. i18n.Supported is what the binary can
+	// speak; this is what a given install shows. Two rather than N so every
+	// frontend can render the switch as one button instead of a menu.
+	//
+	// Set from PRIMARY_LOCALE / SECONDARY_LOCALE. Leaving SECONDARY_LOCALE empty
+	// makes this a single-language install and the frontends hide the switch.
+	Locales i18n.Offered
 
 	// UsingDevSecrets is true when JWT/Cookie secrets fell back to the insecure
 	// public dev defaults (no real secret configured). main.go warns on it.
@@ -170,6 +181,17 @@ func Load() (*Config, error) {
 	if _, ok := os.LookupEnv("HOST"); !ok && !c.IsProduction() {
 		c.Host = "127.0.0.1"
 	}
+	// A typo here would otherwise surface as every user silently seeing the
+	// wrong language, so it fails the boot instead.
+	def := i18n.DefaultOffer()
+	locales, err := i18n.Offer(
+		getEnv("PRIMARY_LOCALE", def.Primary),
+		getEnv("SECONDARY_LOCALE", def.Secondary),
+	)
+	if err != nil {
+		return nil, err
+	}
+	c.Locales = locales
 	return c, nil
 }
 

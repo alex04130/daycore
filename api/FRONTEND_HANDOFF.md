@@ -57,12 +57,15 @@
 
 ### G. 前后端分离 / 原生端：版本契约 + header 认证（2026-07-14 新增）
 
-**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient}`。
+**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, locales}`。
 
 - `apiVersion` = API 契约大版本，只在破坏性变更时 +1，**独立于构建版本**。客户端硬编码自己期望的值，不等 → 硬阻断并提示升级（web 前端把它存 `state.apiMismatch`）。
 - `apiMinor` = 新增性变更（加端点/字段）+1；客户端可据此对可选功能降级。
 - `build`/`channel` = 构建版本展示用（"2.2.0-beta"）；`minClient` = 服务器认为兼容的最老客户端构建（提示更新用，不阻断）。
-- 老后端没有此端点 → 前端回退 `GET /api/healthz` 读 version/channel。
+- `locales` = **本部署给用户的一主一副**（`{primary, secondary, list}`，2026-07-26 加）。前端的语言开关从 `list` 画，**不许写死** —— 同一个二进制会被以不同配对部署。`list` 只有一项 = 单语言安装，**隐藏开关而不是禁用**（此时 `secondary` 为 `""`）。用户选中的那一个走 `PATCH /api/session` 的 `language`；写不在这对里的值返回 `400 unsupported_locale`，但读永远不失败（后端静默钳到 primary），所以换配对不会让老用户的设置页打不开。每端的开关要长成那一端自己的样子，见 `docs/EXPERIENCE_CORE.md` §1.1。
+- 老后端没有此端点 → 前端回退 `GET /api/healthz` 读 version/channel。老后端没有 `locales` 字段 → 前端按单语言处理，隐藏开关。
+
+> ⚠️ `locales` 是**新增性变更**，按规则该让 `apiMinor` +1，但**这一次没有升** —— 落地计划要求把散在各批次里的 APIMinor 提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。SPEC-FREEZE 时连同其余新增字段一起升。
 
 **双轨认证（cookie 全保留，header 新增；分离部署/原生端主推 header）**：
 

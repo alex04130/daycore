@@ -26,12 +26,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // version. Public: separated frontends and native clients call this first to
 // decide compatibility (matching rules in api/FRONTEND_HANDOFF.md).
 func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
+	// locales tells a frontend which language switch to draw before it has a
+	// session: primary first, secondary second, and a single entry meaning
+	// "this install speaks one language — hide the switch". Frontends must not
+	// hardcode the pair; the same binary is deployed with different ones.
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": version.APIVersion,
 		"apiMinor":   version.APIMinor,
 		"build":      version.Full(),
 		"channel":    version.Channel,
 		"minClient":  version.MinClient,
+		"locales": map[string]any{
+			"primary":   s.locales.Primary,
+			"secondary": s.locales.Secondary,
+			"list":      s.locales.List(),
+		},
 	})
 }
 

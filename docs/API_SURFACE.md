@@ -8,7 +8,7 @@
 |---|---|
 | GET /api/healthz（含 version/channel/env） | handlers_misc.go |
 | GET /api/models | handlers_misc.go |
-| GET /api/version（API 契约版本，2026-07-14 起） | handlers_misc.go |
+| GET /api/version（API 契约版本，2026-07-14 起；**2026-07-26 加 `locales`：本部署的一主一副，前端据此画语言开关，`list` 只有一项时隐藏开关**） | handlers_misc.go |
 | POST /api/session/init | handlers_session.go |
 | POST /api/auth/register·login·logout, GET /api/auth/providers, GET /api/me | handlers_auth.go |
 | GET /api/auth/oauth/{provider}[/callback] | handlers_auth_oauth.go |

@@ -72,6 +72,13 @@ paths:
       operationId: sessionSettings
       tags: [session]
       summary: Update assistantName / theme / language / personaPrompt.
+      description: >
+        language must be one of the two locales GET /api/version reports under
+        locales — the enum below is what the binary ships, which is a wider set
+        than any one deployment offers. A shipped-but-not-offered locale is
+        rejected with 400 unsupported_locale. Reads never fail this way: a
+        stored locale that is no longer offered silently resolves to the
+        primary, so changing a deployment's pair does not break existing users.
       requestBody: { content: { application/json: { schema: { type: object, properties: { assistantName: { type: string }, currentTheme: { type: string }, language: { type: string, enum: [zh-CN, en-US] }, personaPrompt: { type: string, maxLength: 2000 } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
   /api/session/preferences:
@@ -612,7 +619,14 @@ paths:
         (breaking changes only); apiMinor bumps on additive changes; build is the
         server build ("2.2.0-beta"); minClient is the oldest compatible client
         build (advisory). Matching rules in FRONTEND_HANDOFF.md.
-      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string } } } } } } }
+
+
+        locales is the language pair this deployment offers: primary first,
+        secondary second. Frontends draw their language switch from list and
+        must not hardcode the pair — the same binary is deployed with different
+        ones. A single-element list means the install speaks one language and
+        the switch should be hidden, not disabled. secondary is "" in that case.
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, locales: { type: object, properties: { primary: { type: string, example: "zh-CN" }, secondary: { type: string, example: "en-US" }, list: { type: array, items: { type: string }, minItems: 1, maxItems: 2 } } } } } } } } }
 
 components:
   securitySchemes:
