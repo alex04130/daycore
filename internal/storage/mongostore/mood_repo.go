@@ -19,6 +19,8 @@ type moodDoc struct {
 	ExerciseOffered   *string   `bson:"exercise_offered,omitempty"`
 	ExerciseCompleted bool      `bson:"exercise_completed"`
 	Theme             *string   `bson:"theme,omitempty"`
+	Source            string    `bson:"source,omitempty"`
+	Note              string    `bson:"note,omitempty"`
 	CreatedAt         time.Time `bson:"created_at"`
 }
 
@@ -43,7 +45,7 @@ func (r moodRepo) List(ctx context.Context, sessionID string, limit int) ([]doma
 		out = append(out, domain.MoodCheckin{
 			ID: d.ID, SessionID: d.SessionID, Mood: d.Mood, AIResponse: d.AIResponse,
 			ExerciseOffered: d.ExerciseOffered, ExerciseCompleted: d.ExerciseCompleted,
-			Theme: d.Theme, CreatedAt: d.CreatedAt,
+			Theme: d.Theme, Source: d.Source, Note: d.Note, CreatedAt: d.CreatedAt,
 		})
 	}
 	return out, cur.Err()
@@ -57,7 +59,7 @@ func (r moodRepo) Create(ctx context.Context, m *domain.MoodCheckin) (*domain.Mo
 	_, err := r.c("mood_checkins").InsertOne(ctx, moodDoc{
 		ID: m.ID, SessionID: m.SessionID, Mood: m.Mood, AIResponse: m.AIResponse,
 		ExerciseOffered: m.ExerciseOffered, ExerciseCompleted: m.ExerciseCompleted,
-		Theme: m.Theme, CreatedAt: m.CreatedAt,
+		Theme: m.Theme, Source: m.Source, Note: m.Note, CreatedAt: m.CreatedAt,
 	})
 	return m, err
 }

@@ -42,6 +42,8 @@ func (mysqlDialect) Migrations() []string {
 			exercise_offered VARCHAR(64),
 			exercise_completed TINYINT(1) NOT NULL DEFAULT 0,
 			theme VARCHAR(64),
+			source VARCHAR(32) NOT NULL DEFAULT '',
+			note TEXT,
 			created_at BIGINT NOT NULL,
 			KEY mood_session_created (session_id, created_at)
 		)`,

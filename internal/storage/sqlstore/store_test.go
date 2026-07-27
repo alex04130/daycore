@@ -657,3 +657,40 @@ func TestOpLogScan(t *testing.T) {
 		t.Fatalf("zero cursor should start at the oldest row, got %+v err=%v", first, err)
 	}
 }
+
+// source and note must survive a round trip: the mood window weighs an
+// agent-recorded check-in less than one the user pressed, and it cannot do that
+// if the column comes back empty.
+func TestMoodSourceAndNoteRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	in := &domain.MoodCheckin{
+		SessionID: "sid1", Mood: "down",
+		Source: domain.MoodSourceAgent,
+		Note:   "开会开到很晚，作业只写了一半",
+	}
+	if _, err := s.Moods().Create(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Moods().List(ctx, "sid1", 10)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("list: %v (%d rows)", err, len(got))
+	}
+	if got[0].Source != domain.MoodSourceAgent {
+		t.Errorf("source = %q, want %q", got[0].Source, domain.MoodSourceAgent)
+	}
+	if got[0].Note != in.Note {
+		t.Errorf("note = %q, want %q", got[0].Note, in.Note)
+	}
+
+	// A row written without a source reads back as "" — which the window treats
+	// as a user check-in, since the agent could not record one before the
+	// column existed.
+	if _, err := s.Moods().Create(ctx, &domain.MoodCheckin{SessionID: "sid2", Mood: "calm"}); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := s.Moods().List(ctx, "sid2", 10)
+	if len(plain) != 1 || plain[0].Source != "" || plain[0].Note != "" {
+		t.Errorf("got %+v, want empty source and note", plain)
+	}
+}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"daycore/internal/ai"
+	"daycore/internal/mood"
 )
 
 // POST /api/ai/mood — mood → warm text response.
@@ -43,15 +45,60 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"response": resp.Content})
 }
 
-// moodHistoryContext renders the latest mood check-ins as compact JSON.
-func (s *Server) moodHistoryContext(ctx context.Context, sid string) string {
-	moods, err := s.store.Moods().List(ctx, sid, 5)
-	if err != nil || len(moods) == 0 {
-		return "[]"
+// moodWindowLimit is how many check-ins feed the window. Decay makes the tail
+// weigh almost nothing, so this only has to be comfortably more than the
+// trend comparison can use.
+const moodWindowLimit = 30
+
+// moodWindow derives this session's mood reading — trend, decayed score,
+// staleness. Everything that wants to know how the user has been doing goes
+// through here (EXPERIENCE_CORE §12.6): the companion's context, rapport's tone
+// tier, the Protector's wording, the briefs, card tone, how full auto-plan
+// makes a day. Six separate derivations would drift, and the user would meet a
+// system that is gentle in one place and brisk in another about the same week.
+func (s *Server) moodWindow(ctx context.Context, sid string) mood.Window {
+	checkins, err := s.store.Moods().List(ctx, sid, moodWindowLimit)
+	if err != nil {
+		return mood.Window{Trend: mood.TrendUnknown}
 	}
-	out := make([]map[string]any, 0, len(moods))
-	for _, m := range moods {
-		out = append(out, map[string]any{"mood": m.Mood, "at": m.CreatedAt.Format("01-02")})
+	return mood.Read(checkins, time.Now(), mood.DefaultConfig())
+}
+
+// moodHistoryContext renders the mood window for prompt injection.
+//
+// It is a window and not a list of the last five check-ins on purpose. A raw
+// list invites the model to read whatever is on top as today's mood, which is
+// how a single bad Tuesday three weeks ago ends up colouring a Thursday. The
+// window states the direction, says how old the newest reading is, and says
+// plainly when it does not know — so the template can branch on speakable
+// instead of the model inferring a mood from a date it half-read.
+func (s *Server) moodHistoryContext(ctx context.Context, sid string) string {
+	w := s.moodWindow(ctx, sid)
+	if !w.Known {
+		if w.LastKind == "" {
+			return `{"known":false,"why":"no check-ins"}`
+		}
+		return marshalCompact(map[string]any{
+			"known": false, "why": "only faded check-ins",
+			"lastKind": w.LastKind, "daysSince": daysSince(w.Staleness),
+		})
+	}
+	out := map[string]any{
+		"known":     true,
+		"trend":     w.Trend,
+		"tone":      w.Tone(),
+		"speakable": w.Speakable(),
+		"lastKind":  w.LastKind,
+		"daysSince": daysSince(w.Staleness),
+		"samples":   w.Samples,
+	}
+	if w.Stale {
+		// The one thing the model must not do with an old reading is wear it as
+		// today's mood, so say so in words rather than trusting it to infer the
+		// rule from a number.
+		out["note"] = "too old to assume; ask rather than presume"
 	}
 	return marshalCompact(out)
 }
+
+func daysSince(d time.Duration) int { return int(d.Hours() / 24) }

@@ -16,7 +16,7 @@ func (r moodRepo) List(ctx context.Context, sessionID string, limit int) ([]doma
 		limit = 10
 	}
 	rows, err := r.query(ctx,
-		`SELECT id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, created_at
+		`SELECT id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, source, note, created_at
 		 FROM mood_checkins WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
@@ -31,15 +31,19 @@ func (r moodRepo) List(ctx context.Context, sessionID string, limit int) ([]doma
 			offered   sql.NullString
 			completed int
 			theme     sql.NullString
+			source    sql.NullString
+			note      sql.NullString
 			createdAt int64
 		)
-		if err := rows.Scan(&m.ID, &m.SessionID, &m.Mood, &aiResp, &offered, &completed, &theme, &createdAt); err != nil {
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Mood, &aiResp, &offered, &completed, &theme, &source, &note, &createdAt); err != nil {
 			return nil, err
 		}
 		m.AIResponse = ptrString(aiResp)
 		m.ExerciseOffered = ptrString(offered)
 		m.ExerciseCompleted = completed != 0
 		m.Theme = ptrString(theme)
+		m.Source = source.String
+		m.Note = note.String
 		m.CreatedAt = fromMillis(createdAt)
 		out = append(out, m)
 	}
@@ -52,10 +56,10 @@ func (r moodRepo) Create(ctx context.Context, m *domain.MoodCheckin) (*domain.Mo
 	}
 	now := nowMillis()
 	_, err := r.exec(ctx,
-		`INSERT INTO mood_checkins (id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO mood_checkins (id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, source, note, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		m.ID, m.SessionID, m.Mood, nullString(m.AIResponse), nullString(m.ExerciseOffered),
-		boolToInt(m.ExerciseCompleted), nullString(m.Theme), now)
+		boolToInt(m.ExerciseCompleted), nullString(m.Theme), m.Source, m.Note, now)
 	if err != nil {
 		return nil, err
 	}

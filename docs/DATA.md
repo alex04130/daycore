@@ -12,7 +12,7 @@
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
 | material_category.go | MaterialCategory 注册表（10 类，note/diet/health/academic/travel 默认开）+ MaterialCategoryByID | 加类别 = 此文件加一条目（含 `Names` 与 `Hints`，**两者都要每种 Supported locale 齐全**，见下「Go 侧显示名的多语言机制」）；写侧枚举校验在 handlers_materials_full.go `normalizeCategory`（空→note，未知→400；读侧不拦 legacy 自由文本）；会话级开关在 SessionPrefs.MaterialCategories |
 | plan.go | DayPlan, TimeBlock, BlockType, TimeMode(floating/fixed/local), Origin(auto/manual/rule), **LockLevel(""/none/soft/hard)** | 见下「块的锁定与重捞字段」 |
-| rules.go / memory.go / mood.go / session.go / user.go / theme.go / prompts.go | 同名实体 | user.TokenVersion json:"-" |
+| rules.go / memory.go / mood.go / session.go / user.go / theme.go / prompts.go | 同名实体（**MoodCheckin 加 Source/Note**） | user.TokenVersion json:"-"；MoodCheckin 见下「心情窗口」 |
 | operations.go | OperationLog（**加 Domain 列**）, AICallLog, AdminStats, **OpDomain 常量 + OpDomainOf()** | 见下「操作域」 |
 | repository.go | 全部 Repository 接口 + Store 组合接口 | 新方法先在这里定义 |
 | searcher.go | Searcher/SearchQuery/SearchResult（+ 阶段5 MaterialFTS 能力接口） | |
@@ -223,6 +223,59 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 - **DB 覆盖层的表**：`SetOverrides` 的接口已就位，但 `locale_overrides` 表要跟**批次 C 的五张表一起建**（proposals / leases / job_runs / rapport / rhythm）—— 三方言 DDL 分两次改是计划明令避免的事，且作者不在本机跑 pg/mysql/mongo，方言分歧只能靠 review 抓。在那之前只有 files + embedded 两层生效。
 - **控制台的语言包分区**（列出已装语言 + 覆盖率、导出、粘贴导入、重载 `LOCALES_DIR`）：批次 F5，`Coverage`/`Export`/`Keys` 都已备好。
+
+## 心情窗口（`internal/mood/`，体验内核 §12.6，2026-07-26）
+
+**一次打卡不是心情，一段走向才是。** 「今天焦虑」和「连着四天越来越焦虑」是两件事，只有后者该改变系统行为；三周前的一次低落今天不该有任何权重。所以**任何要用心情做判断的地方读的都不是最近一条 `MoodCheckin`，而是 `mood.Read()` 派生出的窗口**。
+
+与石化、默契同属**读时派生**：不建趋势表、不跑定时任务，参数错了下次读就自愈。
+
+```go
+type Window struct {
+    Known     bool          // 有没有足够近的信号说得出话
+    Score     float64       // 衰减加权均值 valence，−2..+2
+    Trend     Trend         // improving / worsening / flat / unknown
+    Staleness time.Duration // 距上次打卡多久 —— 这本身就是信息
+    Stale     bool          // 超过阈值：知道，但不能当今天的底色
+    LastKind  string; LastAt time.Time
+    Samples   int; Weight float64
+}
+func (w Window) Speakable() bool   // Known && !Stale —— 提示词分支就看它
+func (w Window) Tone() Tone        // neutral / gentle / bright
+func (w Window) Restrained() bool  // auto-plan 该不该排少一点
+```
+
+**衰减 vs 新鲜度是两件事，别合并**：
+
+| | 回答什么 | 默认 |
+|---|---|---|
+| 衰减（`HalfLife`） | 旧数据算几分 | 半衰期 72h，**指数衰减、永不归零** |
+| 新鲜度（`StaleAfter`） | 还能不能开口谈心情 | 72h |
+
+**不设硬性截断**是刻意的：「只看 7 天」会让持续的低落在第 8 天凭空消失 —— 而那正是它最要紧的时候。三周前的一条低落衰减到 7 个半衰期后 ≈0.008，实际归零但没有断崖。
+
+`Known` 与 `Stale` **可以同时为真**：有真实历史，但太旧、不能替今天说话。此时 agent 知道「上周不太好」，但不该表现得那就是今天早上 —— 那是可以问的事，不是可以假设的事。
+
+- **未注册的 mood id 跳过而不是当中性**：不在注册表里的心情没有 valence，记成 0 会把每个均值都往中间拖。
+- **趋势在两段之内取无权均值**：问题是「那时候比现在差吗」，在旧的那一段里套衰减曲线回答的是另一个问题。两段各至少一条才给方向，否则 `unknown`（「说不准」和「没在动」是不同的答案）。
+- **代打卡权重更低**（`AgentWeight` 0.6）：`source=agent` 是从用户说的话里推断出来的，`source=user` 是他自己按的按钮。都算数，不等重（§12.1）。
+- **`POST /api/mood` 不接受 body 里的 source**，一律记 `user`。让客户端自己挑，就等于让它写出服务端会悄悄打折的打卡 —— 或者更糟，让一个前端 bug 把真实打卡重标成推断。agent 用自己的工具写 `agent`。
+
+**用得到的地方全部走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
+
+**注入的是窗口不是最近五条**。原来的 `moodHistoryContext` 吐 `[{mood,at}×5]`，这会诱导模型把最上面那条当成今天的心情 —— 三周前一个糟糕的周二就这样染上了一个周四。现在吐的是 `{known, trend, tone, speakable, lastKind, daysSince, samples}`，`Stale` 时额外带一句 `"too old to assume; ask rather than presume"`：这条规则要用话说出来，不能指望模型从一个日期数字里推出来。
+
+⚠️ **一条边界**：心情窗口是**语气与节奏**的输入，**不是内容与拒绝**的输入。锁定块的 409 不查心情 —— 拒绝要即时、确定、可测；一个拖不动的块，用户需要立刻知道为什么，而不是等系统先想想他今天心情如何。
+
+`Restrained()` 比 `Tone()==gentle` **更窄**（要求低分**且**方向不向上）：说话轻一点便宜且低风险，悄悄给人少排一点事却是在替他决定他的时间。
+
+### `MoodCheckin` 新增两列（`source` / `note`）
+
+走 `ColumnMigration`（`sessionColumnMigrations` 里追加两条），三方言建表 DDL 同步加。
+
+- `source`：`user` / `agent`。存量行 `''`，**读作 user** —— 这列存在之前 agent 根本记不了打卡，所以那些就是用户自己记的。
+- `note`：**MySQL 的 TEXT 不允许字面 DEFAULT**，三方言共用一份迁移清单，所以 ALTER 与建表都不带 `NOT NULL DEFAULT ''`，读时把 NULL 归一成 `""`。
+- 回归测试：`sqlstore/store_test.go` 的 `TestMoodSourceAndNoteRoundTrip`（含「没写 source 的行读回来是空」）。
 
 ## 操作域（OperationLog.Domain）
 

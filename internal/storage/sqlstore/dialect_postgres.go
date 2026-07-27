@@ -59,6 +59,8 @@ func (postgresDialect) Migrations() []string {
 			exercise_offered TEXT,
 			exercise_completed INTEGER NOT NULL DEFAULT 0,
 			theme TEXT,
+			source TEXT NOT NULL DEFAULT '',
+			note TEXT,
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS mood_session_created ON mood_checkins(session_id, created_at)`,

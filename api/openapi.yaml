@@ -458,11 +458,24 @@ paths:
       operationId: listMood
       tags: [mood]
       parameters: [{ name: limit, in: query, schema: { type: integer } }]
+      description: >
+        Rows carry source (user | agent, "" on rows written before the column
+        existed and read as user) and note. Clients that want to know how
+        someone has been doing should not average this list themselves — the
+        server derives a mood window (trend, decayed score, staleness) and
+        injects it into prompts; see docs/DATA.md.
       responses: { '200': { description: OK } }
     post:
       operationId: createMood
       tags: [mood]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mood], properties: { mood: { type: string }, aiResponse: { type: string }, exerciseOffered: { type: string }, theme: { type: string } } } } } }
+      description: >
+        source is NOT accepted from the body — a check-in posted here is always
+        recorded as source=user. The agent records its own (source=agent)
+        through its tool, and those weigh less in the derived mood window, so
+        letting a client pick would let it write check-ins the server quietly
+        discounts. note is whatever the user chose to add; it is never asked
+        for.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mood], properties: { mood: { type: string }, aiResponse: { type: string }, exerciseOffered: { type: string }, theme: { type: string }, note: { type: string } } } } } }
       responses: { '200': { description: OK } }
     patch:
       operationId: patchMood

@@ -87,6 +87,15 @@ func sessionColumnMigrations(textType string) []ColumnMigration {
 		// from the log itself.
 		ColumnMigration{Table: "operation_logs", Column: "domain",
 			DDL: `ALTER TABLE operation_logs ADD COLUMN domain ` + textType + ` NOT NULL DEFAULT ''`},
+		// '' reads as a user check-in: the agent could not record one before
+		// this column existed, so every pre-existing row is one the user
+		// entered themselves.
+		ColumnMigration{Table: "mood_checkins", Column: "source",
+			DDL: `ALTER TABLE mood_checkins ADD COLUMN source ` + textType + ` NOT NULL DEFAULT ''`},
+		// note has no DEFAULT: MySQL rejects a literal default on TEXT, and the
+		// three dialects share one migration list. Reads coalesce NULL to "".
+		ColumnMigration{Table: "mood_checkins", Column: "note",
+			DDL: `ALTER TABLE mood_checkins ADD COLUMN note TEXT`},
 	)
 	return migs
 }
