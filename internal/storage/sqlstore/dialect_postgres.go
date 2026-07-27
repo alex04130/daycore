@@ -37,6 +37,8 @@ func (postgresDialect) Migrations() []string {
 			current_theme TEXT NOT NULL DEFAULT 'sky',
 			language TEXT NOT NULL DEFAULT '',
 			import_token TEXT NOT NULL DEFAULT '',
+			persona_prompt TEXT,
+			preferences TEXT,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -64,6 +66,15 @@ func (postgresDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS mood_session_created ON mood_checkins(session_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS feedback_logs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			message_id TEXT NOT NULL DEFAULT '',
+			reason TEXT NOT NULL DEFAULT '',
+			useful INTEGER NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS feedback_session_created ON feedback_logs(session_id, created_at)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL UNIQUE,
@@ -98,6 +109,9 @@ func (postgresDialect) Migrations() []string {
 			email TEXT UNIQUE,
 			name TEXT,
 			avatar_url TEXT,
+			is_anonymous INTEGER NOT NULL DEFAULT 0,
+			data_session_id TEXT NOT NULL DEFAULT '',
+			token_version INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -199,6 +213,7 @@ func (postgresDialect) Migrations() []string {
 			session_id TEXT NOT NULL,
 			fact TEXT NOT NULL,
 			source TEXT NOT NULL DEFAULT 'chat',
+			type TEXT NOT NULL DEFAULT '',
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS memory_facts_session ON memory_facts(session_id)`,
@@ -297,6 +312,8 @@ func (postgresDialect) Migrations() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS temp_contexts_session_key_unique ON temp_contexts(session_id, key)`,
 	}
 }
+
+func (postgresDialect) Quote(ident string) string { return `"` + ident + `"` }
 
 func (postgresDialect) ColumnMigrations() []ColumnMigration { return sessionColumnMigrations("TEXT") }
 

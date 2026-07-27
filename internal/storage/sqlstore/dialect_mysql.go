@@ -18,8 +18,10 @@ func (mysqlDialect) Migrations() []string {
 			sign_in_prompted TINYINT(1) NOT NULL DEFAULT 0,
 			assistant_name VARCHAR(191) NOT NULL DEFAULT 'Leo',
 			current_theme VARCHAR(64) NOT NULL DEFAULT 'sky',
-			language VARCHAR(16) NOT NULL DEFAULT '',
+			language VARCHAR(64) NOT NULL DEFAULT '',
 			import_token VARCHAR(64) NOT NULL DEFAULT '',
+			persona_prompt TEXT,
+			preferences TEXT,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -42,10 +44,19 @@ func (mysqlDialect) Migrations() []string {
 			exercise_offered VARCHAR(64),
 			exercise_completed TINYINT(1) NOT NULL DEFAULT 0,
 			theme VARCHAR(64),
-			source VARCHAR(32) NOT NULL DEFAULT '',
+			source VARCHAR(64) NOT NULL DEFAULT '',
 			note TEXT,
 			created_at BIGINT NOT NULL,
 			KEY mood_session_created (session_id, created_at)
+		)`,
+		`CREATE TABLE IF NOT EXISTS feedback_logs (
+			id VARCHAR(191) PRIMARY KEY,
+			session_id VARCHAR(191) NOT NULL,
+			message_id VARCHAR(191) NOT NULL DEFAULT '',
+			reason VARCHAR(512) NOT NULL DEFAULT '',
+			useful TINYINT(1) NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			KEY feedback_session_created (session_id, created_at)
 		)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id VARCHAR(191) PRIMARY KEY,
@@ -66,10 +77,10 @@ func (mysqlDialect) Migrations() []string {
 			session_id VARCHAR(191) NOT NULL,
 			actor VARCHAR(16) NOT NULL DEFAULT 'user',
 			action VARCHAR(64) NOT NULL,
-			domain VARCHAR(16) NOT NULL DEFAULT '',
+			domain VARCHAR(64) NOT NULL DEFAULT '',
 			target_id VARCHAR(191) NOT NULL DEFAULT '',
 			date VARCHAR(16) NOT NULL DEFAULT '',
-			summary VARCHAR(512) NOT NULL DEFAULT '',
+			summary VARCHAR(1024) NOT NULL DEFAULT '',
 			detail LONGTEXT NOT NULL,
 			status VARCHAR(16) NOT NULL DEFAULT 'ok',
 			request_id VARCHAR(64) NOT NULL DEFAULT '',
@@ -81,6 +92,9 @@ func (mysqlDialect) Migrations() []string {
 			email VARCHAR(191) UNIQUE,
 			name VARCHAR(191),
 			avatar_url TEXT,
+			is_anonymous INTEGER NOT NULL DEFAULT 0,
+			data_session_id VARCHAR(191) NOT NULL DEFAULT '',
+			token_version INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -182,6 +196,7 @@ func (mysqlDialect) Migrations() []string {
 			session_id VARCHAR(191) NOT NULL,
 			fact TEXT NOT NULL,
 			source VARCHAR(16) NOT NULL DEFAULT 'chat',
+			type VARCHAR(64) NOT NULL DEFAULT '',
 			created_at BIGINT NOT NULL,
 			KEY memory_facts_session (session_id)
 		)`,
@@ -280,6 +295,8 @@ func (mysqlDialect) Migrations() []string {
 			)`,
 	}
 }
+
+func (mysqlDialect) Quote(ident string) string { return "`" + ident + "`" }
 
 func (mysqlDialect) ColumnMigrations() []ColumnMigration {
 	return sessionColumnMigrations("VARCHAR(64)")

@@ -13,7 +13,7 @@ import (
 type assignmentRepo struct{ *Store }
 
 const assignmentSelect = `SELECT id, session_id, course_id, canvas_id, title, due_at, points_possible,
-	submitted, graded, score, html_url, source, status, created_at, updated_at FROM assignments`
+	submitted, graded, score, COALESCE(html_url, ''), source, status, created_at, updated_at FROM assignments`
 
 func (r assignmentRepo) Get(ctx context.Context, sessionID, id string) (*domain.Assignment, error) {
 	row := r.queryRow(ctx, assignmentSelect+` WHERE session_id = ? AND id = ?`, sessionID, id)

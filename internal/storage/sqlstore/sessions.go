@@ -42,8 +42,13 @@ func (r sessionRepo) GetByImportToken(ctx context.Context, token string) (*domai
 	return scanSession(row)
 }
 
+// persona_prompt and preferences are TEXT and therefore nullable — MySQL
+// rejects a literal DEFAULT on TEXT, so they cannot be NOT NULL DEFAULT ”
+// there (dialect.go). COALESCE keeps the scan targets plain strings and works
+// on databases created before and after that change.
 const sessionSelect = `SELECT id, user_id, interaction_count, sign_in_prompted, assistant_name,
-	current_theme, language, import_token, persona_prompt, preferences, created_at, updated_at FROM sessions`
+	current_theme, language, import_token, COALESCE(persona_prompt, ''), COALESCE(preferences, ''),
+	created_at, updated_at FROM sessions`
 
 func (r sessionRepo) Update(ctx context.Context, id string, upd domain.SessionUpdate) (*domain.Session, error) {
 	set := []string{}

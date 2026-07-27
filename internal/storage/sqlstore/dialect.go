@@ -13,6 +13,14 @@ type Dialect interface {
 	DriverName() string
 	// Rebind converts `?`-placeholder SQL into this engine's placeholder style.
 	Rebind(query string) string
+	// Quote wraps an identifier so a column whose name is a reserved word still
+	// parses. Rebind only rewrites placeholders, so a bare `key` in a query is
+	// a syntax error on MySQL no matter how the DDL spelled it — which is
+	// exactly the bug temp_contexts shipped with.
+	//
+	// New tables should not need this: pick a column name that is not a
+	// keyword anywhere. It exists for the one table that already did.
+	Quote(ident string) string
 	// Migrations returns idempotent DDL statements (CREATE TABLE IF NOT EXISTS …).
 	Migrations() []string
 	// ColumnMigrations returns ALTER TABLE statements that Migrate runs only when
@@ -57,10 +65,20 @@ func sessionColumnMigrations(textType string) []ColumnMigration {
 			DDL: `ALTER TABLE sessions ADD COLUMN language ` + textType + ` NOT NULL DEFAULT ''`},
 		{Table: "sessions", Column: "import_token",
 			DDL: `ALTER TABLE sessions ADD COLUMN import_token ` + textType + ` NOT NULL DEFAULT ''`},
+		// Both are TEXT and therefore NULLABLE WITH NO DEFAULT — MySQL rejects a
+		// literal DEFAULT on TEXT/BLOB, and this list is shared by all three
+		// dialects. Reads coalesce NULL to "" (sessions.go).
+		//
+		// preferences used to be `TEXT NOT NULL DEFAULT '{}'`, which made every
+		// MySQL boot fail: the column is absent from CREATE TABLE, so the ALTER
+		// ran even on a fresh database, and MySQL refused it. persona_prompt
+		// used textType, which is VARCHAR(64) on MySQL — while the handler
+		// accepts 2000 runes, so any real persona prompt was a data-too-long
+		// error there.
 		{Table: "sessions", Column: "persona_prompt",
-			DDL: `ALTER TABLE sessions ADD COLUMN persona_prompt ` + textType + ` NOT NULL DEFAULT ''`},
+			DDL: `ALTER TABLE sessions ADD COLUMN persona_prompt TEXT`},
 		{Table: "sessions", Column: "preferences",
-			DDL: `ALTER TABLE sessions ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`},
+			DDL: `ALTER TABLE sessions ADD COLUMN preferences TEXT`},
 	}
 	intType := "INTEGER"
 	if strings.Contains(textType, "VARCHAR") {

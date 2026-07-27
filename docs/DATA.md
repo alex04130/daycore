@@ -33,6 +33,39 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 3. 同时改：三方言**建表 DDL** 也要加同列（新库直接建全）；sqlstore 实体文件的 SELECT/INSERT/Scan；mongostore doc struct（bson tag，mongo 无需迁移）。
 4. domain struct 加字段。
 
+## 三方言对等测试（`dialect_parity_test.go`，2026-07-26）
+
+**只有 sqlite 被真机测过，CI 也没有 pg/mysql 容器**，这个洞放跑过三次真事故（见下）。它们全都是 DDL 字符串自身的性质，不需要跑引擎就能查，所以这个测试直接读三个方言 `Migrations()` 的返回值做静态比对。它不能替代真机，它是原本只有 code review 这一道防线之下的地板。
+
+| 检查 | 挡住什么 |
+|---|---|
+| 三方言表集合相同、每表列集合相同 | 某张表只在一个引擎存在 = 另外两个引擎线上炸 |
+| 三方言索引集合相同（MySQL 内联 KEY 与 `CREATE INDEX` 归一比较） | 一个引擎少一个索引 = 那个引擎线上全表扫，本地永远看不出来 |
+| MySQL 的 TEXT/BLOB 列不带字面 DEFAULT | MySQL 直接拒绝 → 启动失败 |
+| `ColumnMigration` 不出现「NOT NULL 且无 DEFAULT」 | SQLite 直接拒绝，MySQL 严格模式也拒绝 |
+| `ColumnMigration` 的 Table/Column 全小写 | Postgres 的 `information_schema` 大小写折叠，大写会让守卫永不命中 → ALTER 每次启动重跑 → 第二次启动死于「列已存在」 |
+| 每个 `ColumnMigration` 的列必须**也在建表里**，且**类型逐字一致** | 类型不一致时守卫会在新库上跳过 ALTER —— 新库永远保留建表的类型，升级库拿到 ALTER 的类型，同一份代码跑出两种库 |
+| 索引名 ≤ 63 字节 | Postgres 静默截断，两个长名字撞成一个，第二条 `CREATE INDEX IF NOT EXISTS` 变成空操作 |
+| 仓库 SQL 里 `FROM/INSERT INTO/UPDATE/DELETE` 提到的每张表都有建表语句 | 就是 `feedback_logs` 那一类 |
+
+**失败时改 schema，不要放宽检查** —— 每一条都是因为它禁止的事已经发生过了。
+
+### 它一上来就抓到的既有事故（均已核实、已修）
+
+| 事故 | 后果 |
+|---|---|
+| `feedback_logs` 有完整 repository，**三方言都没有建表** | 三个引擎上每次写反馈都失败 |
+| `sessions.preferences` 的 ALTER 是 `TEXT NOT NULL DEFAULT '{}'`，而 `sessions` 建表里**根本没这列** | MySQL 拒绝 TEXT 的字面 DEFAULT，且因为列不在建表里，这条 ALTER 连全新库都要跑 → **MySQL 永远起不来** |
+| `temp_contexts.key` 在 MySQL 建表里加了反引号，**五条 DML 一条都没加** | `KEY` 是 MySQL 保留字，`Rebind` 只改占位符不改标识符 → 每次 temp context 读写都是语法错误（inbox 上传、Exchange 快照全废） |
+| `persona_prompt` 走 `textType` = MySQL `VARCHAR(64)`，而 handler 允许 2000 字 | MySQL 上任何像样的人设提示词都是 data-too-long |
+| MySQL 建表宽度与 ALTER 宽度不一致三处（`language` 16/64、`operation_logs.domain` 16/64、`mood_checkins.source` 32/64） | 新库与升级库永久分叉 |
+| `assignments.html_url` 在 MySQL 可空、另两个方言 NOT NULL，读侧却扫进 plain string | NULL 一旦出现就是 `converting NULL to string is unsupported` |
+
+修法确立了两条规则，新表一律照办：
+
+1. **要 `NOT NULL DEFAULT ''` 的列在 MySQL 上必须是 `VARCHAR(n)`**；凡是 `TEXT`/`LONGTEXT`，**三方言一律可空**、读侧 `COALESCE` —— 不允许「一个方言可空另一个不可空」。
+2. **新表不要用需要引号的列名**。`Dialect.Quote(ident)` 是为已经犯了这个错的那一张表加的，不是给新表用的许可。
+
 ## ConditionalMigration
 
 见上方「Material 搜索」一节——机制与 FTS 一起落地（2026-07-15）。新的可选特性 DDL 一律走它，不要放 Migrations()（那里失败会阻断启动）。

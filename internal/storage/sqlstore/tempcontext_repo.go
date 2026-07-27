@@ -13,10 +13,17 @@ import (
 
 type tempContextRepo struct{ *Store }
 
+// k is the quoted `key` column. KEY is a reserved word in MySQL, and Rebind
+// only rewrites placeholders — a bare `key` in a statement is a parse error
+// there regardless of how the DDL spelled it. Every statement in this file went
+// out unquoted, which made temp contexts (inbox uploads, Exchange snapshots)
+// fail outright on MySQL.
+func (r tempContextRepo) k() string { return r.d.Quote("key") }
+
 func (r tempContextRepo) Get(ctx context.Context, sid, key string) (*domain.TempContext, error) {
 	row := r.queryRow(ctx,
-		`SELECT id, session_id, key, payload, ttl, created_at FROM temp_contexts
-		 WHERE session_id = ? AND key = ? AND ttl > ?`, sid, key, nowMillis())
+		`SELECT id, session_id, `+r.k()+`, payload, ttl, created_at FROM temp_contexts
+		 WHERE session_id = ? AND `+r.k()+` = ? AND ttl > ?`, sid, key, nowMillis())
 	var (
 		tc  domain.TempContext
 		ttl int64
@@ -45,7 +52,7 @@ func (r tempContextRepo) Set(ctx context.Context, tc *domain.TempContext) error 
 		tc.CreatedAt = time.Now()
 	}
 	res, err := r.exec(ctx,
-		`UPDATE temp_contexts SET payload = ?, ttl = ? WHERE session_id = ? AND key = ?`,
+		`UPDATE temp_contexts SET payload = ?, ttl = ? WHERE session_id = ? AND `+r.k()+` = ?`,
 		tc.Payload, toMillis(tc.TTL), tc.SessionID, tc.Key)
 	if err != nil {
 		return err
@@ -54,7 +61,7 @@ func (r tempContextRepo) Set(ctx context.Context, tc *domain.TempContext) error 
 		return nil
 	}
 	_, err = r.exec(ctx,
-		`INSERT INTO temp_contexts (id, session_id, key, payload, ttl, created_at)
+		`INSERT INTO temp_contexts (id, session_id, `+r.k()+`, payload, ttl, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		tc.ID, tc.SessionID, tc.Key, tc.Payload, toMillis(tc.TTL), toMillis(tc.CreatedAt))
 	return err
@@ -62,7 +69,7 @@ func (r tempContextRepo) Set(ctx context.Context, tc *domain.TempContext) error 
 
 func (r tempContextRepo) Delete(ctx context.Context, sid, key string) error {
 	_, err := r.exec(ctx,
-		`DELETE FROM temp_contexts WHERE session_id = ? AND key = ?`, sid, key)
+		`DELETE FROM temp_contexts WHERE session_id = ? AND `+r.k()+` = ?`, sid, key)
 	return err
 }
 
