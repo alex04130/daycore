@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 	"daycore/internal/weather"
 )
 
@@ -157,31 +158,33 @@ func (p *Provider) get(ctx context.Context, rawURL string) ([]byte, error) {
 	return data, nil
 }
 
-// codeTexts maps WMO weather interpretation codes to {zh-CN, en-US} labels.
-var codeTexts = map[int][2]string{
-	0: {"晴", "Clear"}, 1: {"大致晴", "Mostly clear"}, 2: {"局部多云", "Partly cloudy"},
-	3: {"阴", "Overcast"}, 45: {"雾", "Fog"}, 48: {"冻雾", "Rime fog"},
-	51: {"细毛毛雨", "Light drizzle"}, 53: {"毛毛雨", "Drizzle"}, 55: {"浓毛毛雨", "Dense drizzle"},
-	56: {"冻毛毛雨", "Freezing drizzle"}, 57: {"强冻毛毛雨", "Dense freezing drizzle"},
-	61: {"小雨", "Light rain"}, 63: {"中雨", "Rain"}, 65: {"大雨", "Heavy rain"},
-	66: {"冻雨", "Freezing rain"}, 67: {"强冻雨", "Heavy freezing rain"},
-	71: {"小雪", "Light snow"}, 73: {"中雪", "Snow"}, 75: {"大雪", "Heavy snow"},
-	77: {"雪粒", "Snow grains"}, 80: {"小阵雨", "Light showers"}, 81: {"阵雨", "Showers"},
-	82: {"强阵雨", "Violent showers"}, 85: {"小阵雪", "Light snow showers"}, 86: {"阵雪", "Snow showers"},
-	95: {"雷暴", "Thunderstorm"}, 96: {"雷暴伴冰雹", "Thunderstorm with hail"}, 99: {"强雷暴伴冰雹", "Thunderstorm with heavy hail"},
+// wmo keeps the code table readable — it is 28 entries wide and a full
+// i18n.Text literal per row would bury the codes.
+func wmo(zh, en string) i18n.Text { return i18n.Text{"zh-CN": zh, "en-US": en} }
+
+// codeTexts maps WMO weather interpretation codes to their labels.
+var codeTexts = map[int]i18n.Text{
+	0: wmo("晴", "Clear"), 1: wmo("大致晴", "Mostly clear"), 2: wmo("局部多云", "Partly cloudy"),
+	3: wmo("阴", "Overcast"), 45: wmo("雾", "Fog"), 48: wmo("冻雾", "Rime fog"),
+	51: wmo("细毛毛雨", "Light drizzle"), 53: wmo("毛毛雨", "Drizzle"), 55: wmo("浓毛毛雨", "Dense drizzle"),
+	56: wmo("冻毛毛雨", "Freezing drizzle"), 57: wmo("强冻毛毛雨", "Dense freezing drizzle"), 61: wmo("小雨", "Light rain"),
+	63: wmo("中雨", "Rain"), 65: wmo("大雨", "Heavy rain"), 66: wmo("冻雨", "Freezing rain"),
+	67: wmo("强冻雨", "Heavy freezing rain"), 71: wmo("小雪", "Light snow"), 73: wmo("中雪", "Snow"),
+	75: wmo("大雪", "Heavy snow"), 77: wmo("雪粒", "Snow grains"), 80: wmo("小阵雨", "Light showers"),
+	81: wmo("阵雨", "Showers"), 82: wmo("强阵雨", "Violent showers"), 85: wmo("小阵雪", "Light snow showers"),
+	86: wmo("阵雪", "Snow showers"), 95: wmo("雷暴", "Thunderstorm"), 96: wmo("雷暴伴冰雹", "Thunderstorm with hail"),
+	99: wmo("强雷暴伴冰雹", "Thunderstorm with heavy hail"),
 }
+
+// wmoUnknown covers codes the WMO table does not define — providers do
+// occasionally send one, and a forecast is more useful with a blank condition
+// than with no forecast.
+var wmoUnknown = i18n.Text{"zh-CN": "未知", "en-US": "Unknown"}
 
 // WMOText returns the label for a WMO weather code in the given locale.
 func WMOText(code int, locale string) string {
-	idx := 0
-	if strings.HasPrefix(strings.ToLower(locale), "en") {
-		idx = 1
-	}
 	if t, ok := codeTexts[code]; ok {
-		return t[idx]
+		return i18n.Pick(t, locale)
 	}
-	if idx == 1 {
-		return "Unknown"
-	}
-	return "未知"
+	return i18n.Pick(wmoUnknown, locale)
 }

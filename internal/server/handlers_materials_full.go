@@ -237,12 +237,8 @@ func (s *Server) handleMaterialCategories(w http.ResponseWriter, r *http.Request
 	enabled := s.enabledMaterialCategories(r.Context(), sid)
 	out := make([]map[string]any, 0, len(enabled))
 	for _, c := range domain.MaterialCategories() {
-		name := c.NameEN
-		if strings.HasPrefix(locale, "zh") {
-			name = c.NameZH
-		}
 		out = append(out, map[string]any{
-			"id": c.ID, "name": name, "icon": c.Icon,
+			"id": c.ID, "name": c.Name(locale), "icon": c.Icon,
 			"enabled": enabled[c.ID], "default": c.DefaultOn,
 		})
 	}

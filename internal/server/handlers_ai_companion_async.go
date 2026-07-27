@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 
 	"github.com/google/uuid"
 )
@@ -190,9 +191,9 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-func asyncErrorText(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return "抱歉，这条消息处理失败了，请重试。"
-	}
-	return "Sorry, this message failed to process — please try again."
+var asyncErrorMsg = i18n.Text{
+	"zh-CN": "抱歉，这条消息处理失败了，请重试。",
+	"en-US": "Sorry, this message failed to process — please try again.",
 }
+
+func asyncErrorText(locale string) string { return i18n.Pick(asyncErrorMsg, locale) }

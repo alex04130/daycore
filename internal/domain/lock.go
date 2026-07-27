@@ -3,6 +3,8 @@ package domain
 import (
 	"regexp"
 	"strings"
+
+	"daycore/internal/i18n"
 )
 
 // ClassTitlePattern decides whether an appointment is a class. It is copied
@@ -35,26 +37,29 @@ func IsClassTitle(title string) bool {
 	return classTitleRe.MatchString(strings.TrimSpace(title))
 }
 
+// defaultLockReasons mirrors api/lock-rules.json's defaultReason map, which the
+// TypeScript side reads. Keep the two in step: the fixture is the contract, this
+// is one implementation of it.
+//
+// The en-US strings are placeholders pending final copy (the fixture marks them
+// the same way).
+var defaultLockReasons = map[LockLevel]i18n.Text{
+	LockHard: {
+		"zh-CN": "课程时间由课表决定",
+		"en-US": "Set by your class timetable",
+	},
+	LockSoft: {
+		"zh-CN": "和别人约好的时间",
+		"en-US": "Time you agreed with someone else",
+	},
+}
+
 // DefaultLockReason is the reason shown when the lock was inferred rather than
 // set by hand. Derived reasons are not the user's words, so they are looked up
 // per request locale instead of being frozen into the block at write time —
 // that is part of why LockSource exists.
 func DefaultLockReason(level LockLevel, locale string) string {
-	en := strings.HasPrefix(strings.ToLower(locale), "en")
-	switch level {
-	case LockHard:
-		if en {
-			return "Set by your class timetable"
-		}
-		return "课程时间由课表决定"
-	case LockSoft:
-		if en {
-			return "Time you agreed with someone else"
-		}
-		return "和别人约好的时间"
-	default:
-		return ""
-	}
+	return i18n.Pick(defaultLockReasons[level], locale)
 }
 
 // InferLock returns the lock level a block's type and title imply, ignoring

@@ -48,6 +48,14 @@ func New(httpc *http.Client, key string) *Provider {
 	}
 }
 
+// owmLangs maps our locales onto OpenWeatherMap's `lang` parameter, which uses
+// underscored codes for Chinese and plain two-letter codes elsewhere.
+// https://openweathermap.org/current#multi
+var owmLangs = map[string]string{
+	"zh": "zh_cn", "zh-cn": "zh_cn", "zh-tw": "zh_tw", "zh-hk": "zh_tw",
+	"en": "en",
+}
+
 func (p *Provider) Name() string { return "openweathermap" }
 
 func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
@@ -62,10 +70,7 @@ func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.F
 	if days > 5 {
 		days = 5
 	}
-	lang := "en"
-	if !strings.HasPrefix(strings.ToLower(q.Locale), "en") {
-		lang = "zh_cn"
-	}
+	lang := weather.Lang(q.Locale, owmLangs, "en")
 
 	lat, lon, name, err := p.geocode(ctx, location)
 	if err != nil {

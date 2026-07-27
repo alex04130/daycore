@@ -48,6 +48,15 @@ func New(httpc *http.Client, key string) *Provider {
 	}
 }
 
+// qweatherLangs maps our locales onto QWeather's `lang` parameter. QWeather
+// distinguishes simplified from traditional Chinese, so the regional tags are
+// listed explicitly and the bare "zh" falls through to simplified.
+// https://dev.qweather.com/docs/resource/language/
+var qweatherLangs = map[string]string{
+	"zh": "zh", "zh-cn": "zh", "zh-tw": "zh-hant", "zh-hk": "zh-hant",
+	"en": "en",
+}
+
 func (p *Provider) Name() string { return "qweather" }
 
 func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
@@ -62,10 +71,7 @@ func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.F
 	if days > 3 {
 		days = 3
 	}
-	lang := "en"
-	if !strings.HasPrefix(strings.ToLower(q.Locale), "en") {
-		lang = "zh"
-	}
+	lang := weather.Lang(q.Locale, qweatherLangs, "en")
 
 	id, name, err := p.geocode(ctx, location, lang)
 	if err != nil {

@@ -10,7 +10,7 @@
 | companion.go | Message, Role 常量(user/assistant/system/tool), CompanionMemory | |
 | courses.go | Course, Assignment{Source: canvas/manual; Status: pending/planned/done/dismissed} | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文 |
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
-| material_category.go | MaterialCategory 注册表（10 类，note/diet/health/academic/travel 默认开）+ MaterialCategoryByID | 加类别 = 此文件加一条目（含 PromptHint）；写侧枚举校验在 handlers_materials_full.go `normalizeCategory`（空→note，未知→400；读侧不拦 legacy 自由文本）；会话级开关在 SessionPrefs.MaterialCategories |
+| material_category.go | MaterialCategory 注册表（10 类，note/diet/health/academic/travel 默认开）+ MaterialCategoryByID | 加类别 = 此文件加一条目（含 `Names` 与 `Hints`，**两者都要每种 Supported locale 齐全**，见下「Go 侧显示名的多语言机制」）；写侧枚举校验在 handlers_materials_full.go `normalizeCategory`（空→note，未知→400；读侧不拦 legacy 自由文本）；会话级开关在 SessionPrefs.MaterialCategories |
 | plan.go | DayPlan, TimeBlock, BlockType, TimeMode(floating/fixed/local), Origin(auto/manual/rule), **LockLevel(""/none/soft/hard)** | 见下「块的锁定与重捞字段」 |
 | rules.go / memory.go / mood.go / session.go / user.go / theme.go / prompts.go | 同名实体 | user.TokenVersion json:"-" |
 | operations.go | OperationLog（**加 Domain 列**）, AICallLog, AdminStats, **OpDomain 常量 + OpDomainOf()** | 见下「操作域」 |
@@ -109,6 +109,52 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 ## 心情注册表（`domain/mood_kind.go`）
 
 12 种，集合/顺序/emoji 抄自设计原型（四端画的就是这张表）。**存 id 不存标签** —— 中文标签是给人看的，存它会让改名变成数据迁移，也会让英文界面为同一种感受存出不同的行。`Valence`（−2..+2）只为算趋势存在，从不展示，且刻意粗糙：疲惫与压力大是种类之差，细分是假精度。
+
+## Go 侧显示名的多语言机制（`i18n.Text` + `i18n.Pick`）
+
+提示词模板按 `prompts/<locale>/*.tmpl` 分目录，天然可扩展；**但结构体里的显示名此前是 `NameZH`/`NameEN` 两个具名字段** —— 加第三种语言要改每一个带这对字段的结构体和每一处 `if HasPrefix(locale,"en")` 分支，语言扩展变成了 schema 变更。已改为 locale map：
+
+```go
+type Text map[string]string          // {"zh-CN": "开心", "en-US": "Happy"}
+func Pick(t Text, locale string) string
+func Missing(t Text) []string        // 缺哪些 Supported locale
+```
+
+**回退链**（`Pick`，四步）：精确 tag → 同语言的其他地区（`zh-TW` 先找到 `zh-CN`，不会掉去英文）→ `Default`（en-US）→ 表里任意一条。
+
+- 第 2 步让「有这门语言但没这个地区」不掉到另一门语言。
+- 第 3 步落在 `i18n.Default`，与 `i18n.Resolve` 处理无法识别的 `Accept-Language` 是同一个终点 —— 走正常协商的调用方与直接传裸 tag 的调用方得到同一个答案。
+- 第 4 步是**半翻译的表宁可显示看不懂的语言也不显示空白**：缺翻译是内容缺口，不是渲染失败。最后一步按 `Supported` 顺序取，不吃 map 迭代随机性，同一个缺口每次渲染一致。
+
+**加一门语言的完整路径**：`i18n.Supported` 加一项 → 跑 `go test ./internal/domain/`，`TestRegistriesCoverEverySupportedLocale` 会把所有缺的条目一次列全 → 补完即止。这条测试是启动期硬校验（提示词双 locale）的测试期对应物：注册表缺一条只降级到别的语言，不该把服务器带下线，但也不该悄悄发出去。
+
+另有 `PickFrom[T](map[string]T, locale)` —— 同一条回退链，但键值是任意类型（一整套日期词汇、一组格式串）。`Pick` 额外把空串当作缺失，`PickFrom` 不判断值，因为只有调用方知道自己的类型里「空」是什么意思。
+
+**已改造的 16 处**（显示名全部 `json:"-"`，**API 形状不变**，端点仍按请求 locale 吐一个 `name` 字符串）：
+
+| 位置 | 内容 |
+|---|---|
+| `domain/mood_kind.go` | `MoodKind.Names` → `MoodName(locale)` |
+| `domain/material_category.go` | `Names`/`Hints` → `Name(locale)`/`Hint(locale)`。`Hints` 是给 inbox 分类器的提示词行 —— 中文提示塞进英文提示词，本身就是让分类器答错语言的常见原因 |
+| `domain/lock.go` | `defaultLockReasons`，与 `api/lock-rules.json` 的 `defaultReason` 对齐 |
+| `domain/weather.go` | `precipFormat`（`"降水%d%%"` / `"precip %d%%"`）—— 整段进表含空格：中文贴着数字、拉丁文要空格，这是译者的判断，不是运行时按 script 推的 |
+| `weather/openmeteo` | `codeTexts` 28 个 WMO 天气码 `[2]string` → `i18n.Text`，加 `wmoUnknown` |
+| `ai/datectx.go` | `dateTables`（星期名 / 明天后天 / 本周下周 / `shortFn` / 表格行格式）走 `PickFrom` |
+| `server/worker.go` | `gapSuggestionText` / `morningUserText` / `eveningUserText` / `replanUserText` / `deadlineTables` |
+| `server/agent.go` | `wrapUpNudgeText` |
+| `server/handlers_ai_companion.go` | `personaHeading` / `wishPoolHeading` |
+| `server/handlers_ai_companion_async.go` | `asyncErrorMsg` |
+| `server/handlers_inbox.go` | `categoryLine`（`- %s（%s）：%s` / `- %s (%s): %s`，全角标点属于翻译的一部分） |
+
+⚠️ 带 `%` 动词的条目（`precipFormat`、`categoryLine`、`replanUserText`、`deadlineTables`、`dateTables.rowFmt/relFmt`）：新语言必须保留同样的动词、同样的顺序。`TestPrecipFormatKeepsItsVerb` 挡住漏掉 `%d` 的翻译。
+
+**顺带修掉的既有缺陷**：`datectx` 的相对日期表在 en-US 下渲染成 `| ThisMonday | … |`（中文的 `本周` + `三` 是连写的，英文照抄就没了空格）。现在 `relFmt` 分 locale 给，`"%s%s"` / `"%s %s"`。
+
+**没有改、也不该改成 `Text` 的**：`ai/prompts.go` 的 `DefaultPersona`/`HardBoundaryReminder`、`worker.go` 的 `buildBriefSystemPrompt`/`buildReplanSystemPrompt` —— 这四段是多段落提示词，正确去处是 `prompts/<locale>/*.tmpl`（已有机制，已带启动期双 locale 硬校验，且落进 `prompt_overrides` 后控制台可改），塞进 map 只会把它们钉死在 Go 里。属计划里**批次 5 的「提示词一次性收口」**，与定稿语气那一遍合并做。
+
+**契约侧**：`api/lock-rules.json` 新增 `localeFallback`（`chain` + `defaultLocale`），四端实现同一条回退链；`lock_test.go` 从夹具读 `defaultLocale` 而不是写死，两侧改一处即可。
+
+**外部 provider 的语言参数是另一回事**（`internal/weather/lang.go` 的 `Lang(locale, codes, fallback)`）：每个上游有自己的语言代码空间（QWeather `zh`/`zh-hant`、OpenWeatherMap `zh_cn`/`zh_tw`、wttr.in 只有一种中文），表跟着 provider 走，只共享查表逻辑。上游没有的语言退回它自己的默认值 —— 语言不对的天气预报仍然告诉你会下雨。
 
 ## 操作域（OperationLog.Domain）
 

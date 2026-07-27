@@ -16,6 +16,10 @@ type lockRules struct {
 		Pattern   string `json:"pattern"`
 		TrimInput bool   `json:"trimInput"`
 	} `json:"classTitle"`
+	LocaleFallback struct {
+		Chain         []string `json:"chain"`
+		DefaultLocale string   `json:"defaultLocale"`
+	} `json:"localeFallback"`
 	DefaultReason map[string]map[string]string `json:"defaultReason"`
 	Cases         []struct {
 		Title string `json:"title"`
@@ -75,9 +79,19 @@ func TestLockRulesDefaultReasons(t *testing.T) {
 	if got := DefaultLockReason(LockNone, "zh-CN"); got != "" {
 		t.Errorf("an unlocked block should carry no derived reason, got %q", got)
 	}
-	// Unknown locales fall back to the design original rather than to English.
-	if got := DefaultLockReason(LockHard, "fr"); got != r.DefaultReason["hard"]["zh-CN"] {
-		t.Errorf("unknown locale should fall back to zh-CN, got %q", got)
+	// Unknown locales follow the fixture's declared chain, which ends at
+	// defaultLocale — the same place i18n.Resolve sends an unrecognised
+	// Accept-Language, so a raw tag and a negotiated one agree.
+	fallback := r.LocaleFallback.DefaultLocale
+	if fallback == "" {
+		t.Fatal("fixture must declare localeFallback.defaultLocale — it is what the TypeScript side implements")
+	}
+	if got := DefaultLockReason(LockHard, "fr"); got != r.DefaultReason["hard"][fallback] {
+		t.Errorf("unknown locale should fall back to %s, got %q", fallback, got)
+	}
+	// A region we do not carry stays inside its own language first.
+	if got := DefaultLockReason(LockHard, "zh-TW"); got != r.DefaultReason["hard"]["zh-CN"] {
+		t.Errorf("zh-TW should reach the Chinese entry, got %q", got)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 )
 
 // POST /api/ai/companion — the companion agent over SSE v2. Context is
@@ -136,6 +137,21 @@ func (s *Server) buildCompanionMessages(ctx context.Context, sid, threadID, loca
 	return s.maybeCompress(ctx, sid, threadID, locale, tz, name, messages), nil
 }
 
+// Section headings for the assembled system prompt. They are prompt structure
+// rather than user-visible copy, but the model reads them — a Chinese heading
+// over an English body is the kind of mixed signal that gets answered in the
+// wrong language.
+var (
+	personaHeading = i18n.Text{
+		"zh-CN": "## 你的个性化风格设定",
+		"en-US": "## Your personalized style",
+	}
+	wishPoolHeading = i18n.Text{
+		"zh-CN": "## 愿望池（用户想做但还没安排的事）",
+		"en-US": "## Wish pool (things the user wants to do but hasn't scheduled)",
+	}
+)
+
 // companionSystemPrompt assembles the layered system prompt:
 //
 //	L1_hard (pure boundaries, zero personality)
@@ -176,11 +192,7 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	// L2: role layer — user override or built-in "good buddy" default.
 	l2 := ""
 	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.PersonaPrompt != "" {
-		if strings.HasPrefix(locale, "zh") {
-			l2 = "\n\n## 你的个性化风格设定\n" + sess.PersonaPrompt
-		} else {
-			l2 = "\n\n## Your personalized style\n" + sess.PersonaPrompt
-		}
+		l2 = "\n\n" + i18n.Pick(personaHeading, locale) + "\n" + sess.PersonaPrompt
 	} else {
 		l2 = "\n\n" + ai.DefaultPersona(locale, name)
 	}
@@ -193,11 +205,7 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	// something from it (the wish ↔ mood linkage).
 	l3extra := ""
 	if wishesCtx := s.activeWishesContext(ctx, sid); wishesCtx != "" && wishesCtx != "[]" {
-		if strings.HasPrefix(locale, "zh") {
-			l3extra = "\n\n## 愿望池（用户想做但还没安排的事）\n" + wishesCtx
-		} else {
-			l3extra = "\n\n## Wish pool (things the user wants to do but hasn't scheduled)\n" + wishesCtx
-		}
+		l3extra = "\n\n" + i18n.Pick(wishPoolHeading, locale) + "\n" + wishesCtx
 	}
 
 	return l1 + "\n\n" + l3 + l3extra + l2 + reminder, nil

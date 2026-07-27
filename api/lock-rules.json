@@ -17,6 +17,11 @@
   ],
 
   "defaultReasonNote": "zh-CN is the design original, verbatim. en-US is a working translation and is NOT final — it needs sign-off before shipping (copy is frozen by project rule).",
+  "localeFallback": {
+    "$comment": "Every locale-keyed table in this file resolves the same way, and so must every implementation of it: try the exact tag, then any entry in the same base language (zh-TW finds zh-CN before it gives up), then defaultLocale, then any entry at all. The last step means a half-translated table shows text in a language the reader may not know rather than nothing — a missing translation is a content gap, not a rendering failure. Go: internal/i18n.Pick.",
+    "chain": ["exact", "baseLanguage", "defaultLocale", "any"],
+    "defaultLocale": "en-US"
+  },
   "defaultReason": {
     "hard": { "zh-CN": "课程时间由课表决定", "en-US": "Set by your class timetable" },
     "soft": { "zh-CN": "和别人约好的时间", "en-US": "Time you agreed with someone else" }

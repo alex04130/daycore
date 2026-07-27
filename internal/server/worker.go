@@ -463,26 +463,29 @@ func buildBriefSystemPrompt(locale, name, date, clock, tz, weather, planJSON str
 // gapSuggestionHint appends the GapSuggestions behavior to the morning brief so
 // the toggle actually does something (a full standalone gap-scan job is a later
 // optimization).
-func gapSuggestionHint(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return "\n另外：如果今天日程里有较长的空档，可以顺带建议用户安排一件小事（休息、复习或愿望池里的事），一句话即可。"
+var (
+	gapSuggestionText = i18n.Text{
+		"zh-CN": "\n另外：如果今天日程里有较长的空档，可以顺带建议用户安排一件小事（休息、复习或愿望池里的事），一句话即可。",
+		"en-US": "\nAlso: if today's schedule has a long open gap, suggest one small thing to slot in (a break, review, or a wish) — one sentence.",
 	}
-	return "\nAlso: if today's schedule has a long open gap, suggest one small thing to slot in (a break, review, or a wish) — one sentence."
-}
+	morningUserText = i18n.Text{
+		"zh-CN": "请给我生成一条早安简报，总结今天的日程和天气。",
+		"en-US": "Please generate a friendly morning brief summarizing today's schedule and weather.",
+	}
+	eveningUserText = i18n.Text{
+		"zh-CN": "请回顾一下今天的完成情况，并给出明天优先事项的建议。",
+		"en-US": "Please review today's accomplishments and suggest tomorrow's priorities.",
+	}
+	// %s is the overdue-block JSON.
+	replanUserText = i18n.Text{
+		"zh-CN": "以下是我今天超时未完成的时间块（JSON）：%s\n请帮我提出重排建议。",
+		"en-US": "Here are my overdue time blocks for today (JSON): %s\nPlease suggest a replan.",
+	}
+)
 
-func morningUserPrompt(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return "请给我生成一条早安简报，总结今天的日程和天气。"
-	}
-	return "Please generate a friendly morning brief summarizing today's schedule and weather."
-}
-
-func eveningUserPrompt(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return "请回顾一下今天的完成情况，并给出明天优先事项的建议。"
-	}
-	return "Please review today's accomplishments and suggest tomorrow's priorities."
-}
+func gapSuggestionHint(locale string) string { return i18n.Pick(gapSuggestionText, locale) }
+func morningUserPrompt(locale string) string { return i18n.Pick(morningUserText, locale) }
+func eveningUserPrompt(locale string) string { return i18n.Pick(eveningUserText, locale) }
 
 // buildReplanSystemPrompt constructs a system prompt for the rolling replan agent.
 func buildReplanSystemPrompt(locale, date, clock, tz string) string {
@@ -503,70 +506,81 @@ func buildReplanSystemPrompt(locale, date, clock, tz string) string {
 }
 
 func buildReplanUserPrompt(locale, overdueJSON string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return fmt.Sprintf("以下是我今天超时未完成的时间块（JSON）：%s\n请帮我提出重排建议。", overdueJSON)
-	}
-	return fmt.Sprintf("Here are my overdue time blocks for today (JSON): %s\nPlease suggest a replan.", overdueJSON)
+	return fmt.Sprintf(i18n.Pick(replanUserText, locale), overdueJSON)
 }
 
 // ─── Deadline formatting ─────────────────────────────────────────────────────
 
+// deadlineStrs is the vocabulary of a deadline warning. It is split this finely
+// because the two languages assemble the sentence differently — Chinese runs
+// the clauses together with 、and ：where English needs "and" and a colon —
+// and a single format string per language could not express both without one
+// of them reading as a translation.
+//
+// Counts are interpolated as %d. Note that neither language pluralises
+// properly: Chinese has no plural, and the English writes "assignment(s)".
+// That is the existing copy, kept verbatim; a locale with real plural rules
+// will need more than a format string, and this table is where that lands.
+type deadlineStrs struct {
+	prefix     string // "提醒：" / "Reminder: "
+	overdue    string // %d overdue
+	alsoSoon   string // %d more due within 48h, appended after overdue
+	onlySoon   string // %d due within 48h, when nothing is overdue
+	colon      string // "：\n" / ":\n"
+	noDue      string // "无截止日期" / "No due date"
+	overdueTag string // "%s（已逾期）" / "%s (overdue)"
+	item       string // "%d. %s — %s\n"
+}
+
+var deadlineTables = map[string]deadlineStrs{
+	"zh-CN": {
+		prefix:   "提醒：",
+		overdue:  "你有 %d 个已逾期的任务",
+		alsoSoon: "，还有 %d 个在 48 小时内截止",
+		onlySoon: "你有 %d 个任务在 48 小时内截止",
+		colon:    "：\n", noDue: "无截止日期",
+		overdueTag: "%s（已逾期）", item: "%d. %s — %s\n",
+	},
+	"en-US": {
+		prefix:   "Reminder: ",
+		overdue:  "you have %d overdue assignment(s)",
+		alsoSoon: " and %d due within 48 hours",
+		onlySoon: "you have %d assignment(s) due within 48 hours",
+		colon:    ":\n", noDue: "No due date",
+		overdueTag: "%s (overdue)", item: "%d. %s — %s\n",
+	},
+}
+
 // formatDeadlineWarning builds a human-readable deadline warning message.
 func formatDeadlineWarning(locale string, urgent []domain.Assignment, now time.Time) string {
+	s, ok := i18n.PickFrom(deadlineTables, locale)
+	if !ok {
+		s = deadlineTables[i18n.Default]
+	}
+	overdueCount, upcomingCount := partitionDeadlines(urgent, now)
+
 	var b strings.Builder
-
-	if strings.HasPrefix(locale, "zh") {
-		overdueCount, upcomingCount := partitionDeadlines(urgent, now)
-
-		b.WriteString("提醒：")
-		if overdueCount > 0 {
-			b.WriteString(fmt.Sprintf("你有 %d 个已逾期的任务", overdueCount))
-			if upcomingCount > 0 {
-				b.WriteString(fmt.Sprintf("，还有 %d 个在 48 小时内截止", upcomingCount))
-			}
-		} else {
-			b.WriteString(fmt.Sprintf("你有 %d 个任务在 48 小时内截止", upcomingCount))
-		}
-		b.WriteString("：\n")
-
-		for i, a := range urgent {
-			due := "无截止日期"
-			if a.DueAt != nil {
-				if a.DueAt.Before(now) {
-					due = fmt.Sprintf("%s（已逾期）", a.DueAt.Format("01-02 15:04"))
-				} else {
-					due = a.DueAt.Format("01-02 15:04")
-				}
-			}
-			b.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, a.Title, due))
+	b.WriteString(s.prefix)
+	if overdueCount > 0 {
+		fmt.Fprintf(&b, s.overdue, overdueCount)
+		if upcomingCount > 0 {
+			fmt.Fprintf(&b, s.alsoSoon, upcomingCount)
 		}
 	} else {
-		overdueCount, upcomingCount := partitionDeadlines(urgent, now)
-
-		b.WriteString("Reminder: ")
-		if overdueCount > 0 {
-			b.WriteString(fmt.Sprintf("you have %d overdue assignment(s)", overdueCount))
-			if upcomingCount > 0 {
-				b.WriteString(fmt.Sprintf(" and %d due within 48 hours", upcomingCount))
-			}
-		} else {
-			b.WriteString(fmt.Sprintf("you have %d assignment(s) due within 48 hours", upcomingCount))
-		}
-		b.WriteString(":\n")
-
-		for i, a := range urgent {
-			due := "No due date"
-			if a.DueAt != nil {
-				if a.DueAt.Before(now) {
-					due = fmt.Sprintf("%s (overdue)", a.DueAt.Format("01-02 15:04"))
-				} else {
-					due = a.DueAt.Format("01-02 15:04")
-				}
-			}
-			b.WriteString(fmt.Sprintf("%d. %s — %s\n", i+1, a.Title, due))
-		}
+		fmt.Fprintf(&b, s.onlySoon, upcomingCount)
 	}
+	b.WriteString(s.colon)
 
+	for i, a := range urgent {
+		due := s.noDue
+		if a.DueAt != nil {
+			due = a.DueAt.Format("01-02 15:04")
+			if a.DueAt.Before(now) {
+				due = fmt.Sprintf(s.overdueTag, due)
+			}
+		}
+		fmt.Fprintf(&b, s.item, i+1, a.Title, due)
+	}
 	return b.String()
 }
 

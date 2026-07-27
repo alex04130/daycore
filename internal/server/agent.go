@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"daycore/internal/ai"
+	"daycore/internal/i18n"
 
 	"github.com/google/uuid"
 )
@@ -316,9 +317,9 @@ func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid str
 	}
 }
 
-func wrapUpNudge(locale string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return "（系统：工具轮次已用尽，请直接用文字总结目前的进展并回答用户，不要再调用任何工具。）"
-	}
-	return "(System: tool rounds exhausted — summarize what happened and answer the user directly, without calling any more tools.)"
+var wrapUpNudgeText = i18n.Text{
+	"zh-CN": "（系统：工具轮次已用尽，请直接用文字总结目前的进展并回答用户，不要再调用任何工具。）",
+	"en-US": "(System: tool rounds exhausted — summarize what happened and answer the user directly, without calling any more tools.)",
 }
+
+func wrapUpNudge(locale string) string { return i18n.Pick(wrapUpNudgeText, locale) }

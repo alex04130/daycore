@@ -14,7 +14,15 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 )
+
+// categoryLine formats one material category for the inbox classifier prompt:
+// id, display name, hint.
+var categoryLine = i18n.Text{
+	"zh-CN": "- %s（%s）：%s\n",
+	"en-US": "- %s (%s): %s\n",
+}
 
 // inboxKey namespaces an uploaded file inside the session's temp-context store.
 func inboxKey(tempID string) string { return "inbox:" + tempID }
@@ -142,15 +150,14 @@ type inboxDraft struct {
 func (s *Server) classifyInbox(ctx context.Context, sid, locale, text string) (*inboxClassification, error) {
 	enabled := s.enabledMaterialCategories(ctx, sid)
 	var list strings.Builder
+	// The punctuation is part of the translation: full-width （）： belongs in a
+	// Chinese prompt and reads as a typo in an English one. Verbs are id, name,
+	// hint — in that order, in every locale.
 	for _, c := range domain.MaterialCategories() {
 		if !enabled[c.ID] {
 			continue
 		}
-		name := c.NameEN
-		if strings.HasPrefix(locale, "zh") {
-			name = c.NameZH
-		}
-		fmt.Fprintf(&list, "- %s（%s）：%s\n", c.ID, name, c.PromptHint)
+		fmt.Fprintf(&list, i18n.Pick(categoryLine, locale), c.ID, c.Name(locale), c.Hint(locale))
 	}
 	prompt, err := s.prompts.Render(ctx, ai.PromptInboxClassify, locale, ai.InboxClassifyData{
 		Text: text, Categories: list.String(), Date: time.Now().Format("2006-01-02"),

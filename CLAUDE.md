@@ -32,6 +32,7 @@
 - 构建验证：`go build ./... && go vet ./... && go test ./...`（或 `make test`，会先跑 i18n 校验）。
 - 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
 - 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。
+- **Go 里的用户可见文案一律走 `i18n.Text` 翻译表 + `i18n.Pick`，不要写 `if HasPrefix(locale,"en")`**。加一门语言 = `i18n.Supported` 加一项 + 跑 `go test ./internal/domain/`（`TestRegistriesCoverEverySupportedLocale` 会列全缺口）。回退链与外部 provider 语言映射见 `docs/DATA.md`。
 - 许可证：LGPL-3.0-or-later（`COPYING.LESSER` + `COPYING`）。引入新依赖前确认其协议兼容（Apache-2.0 / MIT / BSD / MPL-2.0 可以；GPL-only、SSPL、专有协议不行）。
 - CI：`.github/workflows/ci.yml` 四个 job —— backend（gofmt 门禁 + vet + test + 静态二进制）、frontend（i18n 校验 + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像）。**改动后本地先跑 `gofmt -l .` 确认为空**，否则 CI 直接红。
 - 历史：v1（Next.js + Eazo SDK）已于建库时移除，可从首个 commit 取回。代码中出现的 `v2` 字样如无特别说明均指外部 API 版本号（如 Google OAuth、QWeather），不要当作目录路径改写。

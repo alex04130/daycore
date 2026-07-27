@@ -37,6 +37,11 @@ func New(httpc *http.Client) *Provider {
 	return &Provider{http: httpc, base: "https://wttr.in"}
 }
 
+// wttrinLangs maps our locales onto wttr.in's `lang` parameter. wttr.in has one
+// Chinese translation and no regional variants, so a base-language key is the
+// whole story.
+var wttrinLangs = map[string]string{"zh": "zh", "en": "en"}
+
 func (p *Provider) Name() string { return "wttr" }
 
 func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
@@ -51,10 +56,7 @@ func (p *Provider) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.F
 	if days > 3 {
 		days = 3 // wttr.in returns 3 days
 	}
-	lang := "en"
-	if !strings.HasPrefix(strings.ToLower(q.Locale), "en") {
-		lang = "zh"
-	}
+	lang := weather.Lang(q.Locale, wttrinLangs, "en")
 	u := fmt.Sprintf("%s/%s?format=j1&lang=%s", p.base, url.PathEscape(location), lang)
 	data, err := p.get(ctx, u)
 	if err != nil {

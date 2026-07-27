@@ -93,8 +93,8 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 }
 
 // scanOpLogs reads the shared SELECT column list. Rows written before the
-// domain column existed carry '' and are classified on read — the log is
-// append-only, and OpDomainOf reproduces the same answer from the action.
+// domain column existed carry an empty string and are classified on read — the
+// log is append-only, and OpDomainOf reproduces the same answer from the action.
 func scanOpLogs(rows *sql.Rows) ([]domain.OperationLog, error) {
 	out := []domain.OperationLog{}
 	for rows.Next() {
