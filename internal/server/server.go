@@ -54,11 +54,9 @@ type Server struct {
 	decisions   *decisionRegistry
 	worker      *Worker // set by main.go after construction; nil when channels are off
 
-	// locales is the pair this deployment puts in front of users — one main
-	// language and one to fall back on, which is what the frontends render as
-	// a two-position switch. i18n.Supported is the wider capability; this is
-	// the product decision layered on it.
-	locales i18n.Offered
+	// defaultLocales is the language pair a user starts with before choosing
+	// their own. It is a default, not a restriction — see localePair.
+	defaultLocales i18n.Pair
 
 	// asyncWG tracks detached background goroutines (async companion turns,
 	// inbound channel handling) so graceful shutdown can wait for them.
@@ -103,8 +101,8 @@ func New(d Deps) *Server {
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
 		weather:     d.Weather, search: search.New(), searcher: d.Searcher,
-		decisions: newDecisionRegistry(),
-		locales:   d.Config.Locales,
+		decisions:      newDecisionRegistry(),
+		defaultLocales: d.Config.DefaultLocales,
 	}
 }
 
@@ -321,13 +319,22 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string,
 }
 
 func (s *Server) requestLocale(r *http.Request) string {
-	sessionLang := ""
-	if sid := sessionIDFrom(r.Context()); sid != "" {
-		if sess, err := s.store.Sessions().Get(r.Context(), sid); err == nil {
-			sessionLang = sess.Language
-		}
+	sid := sessionIDFrom(r.Context())
+	if sid == "" {
+		return s.defaultLocales.Resolve("", r.Header.Get("Accept-Language"))
 	}
-	return s.locales.Resolve(sessionLang, r.Header.Get("Accept-Language"))
+	sess, err := s.store.Sessions().Get(r.Context(), sid)
+	if err != nil {
+		return s.defaultLocales.Resolve("", r.Header.Get("Accept-Language"))
+	}
+	return s.localePair(r.Context(), sid).Resolve(sess.Language, r.Header.Get("Accept-Language"))
+}
+
+// localePair is the two languages this user's switch toggles between: their own
+// choice where they made one, the deployment default for the rest.
+func (s *Server) localePair(ctx context.Context, sid string) i18n.Pair {
+	prefs := s.sessionPrefs(ctx, sid)
+	return i18n.PairOr(prefs.PrimaryLocale, prefs.SecondaryLocale, s.defaultLocales)
 }
 
 // ─── response/request helpers ────────────────────────────────────────────────

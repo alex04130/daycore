@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"daycore/internal/ai"
+	"daycore/internal/i18n"
 	"daycore/internal/version"
 )
 
@@ -26,10 +27,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // version. Public: separated frontends and native clients call this first to
 // decide compatibility (matching rules in api/FRONTEND_HANDOFF.md).
 func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
-	// locales tells a frontend which language switch to draw before it has a
-	// session: primary first, secondary second, and a single entry meaning
-	// "this install speaks one language — hide the switch". Frontends must not
-	// hardcode the pair; the same binary is deployed with different ones.
+	// locales is what a client needs before it has a session: every language
+	// this installation can render (available), and the pair a brand-new user
+	// starts with (defaultPrimary / defaultSecondary). A signed-in user's own
+	// pair comes from GET /api/session — this is only the starting point.
+	//
+	// available is not a compile-time list. Dropping a <locale>.json into the
+	// locales directory or adding one from the console extends it, so clients
+	// must read it rather than hardcoding what they think exists.
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": version.APIVersion,
 		"apiMinor":   version.APIMinor,
@@ -37,9 +42,9 @@ func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 		"channel":    version.Channel,
 		"minClient":  version.MinClient,
 		"locales": map[string]any{
-			"primary":   s.locales.Primary,
-			"secondary": s.locales.Secondary,
-			"list":      s.locales.List(),
+			"available":        i18n.Available(),
+			"defaultPrimary":   s.defaultLocales.Primary,
+			"defaultSecondary": s.defaultLocales.Secondary,
 		},
 	})
 }

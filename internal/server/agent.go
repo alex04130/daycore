@@ -317,9 +317,9 @@ func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid str
 	}
 }
 
-var wrapUpNudgeText = i18n.Text{
+var wrapUpNudgeText = i18n.Reg("agent.wrapUpNudge", i18n.Text{
 	"zh-CN": "（系统：工具轮次已用尽，请直接用文字总结目前的进展并回答用户，不要再调用任何工具。）",
 	"en-US": "(System: tool rounds exhausted — summarize what happened and answer the user directly, without calling any more tools.)",
-}
+})
 
-func wrapUpNudge(locale string) string { return i18n.Pick(wrapUpNudgeText, locale) }
+func wrapUpNudge(locale string) string { return i18n.T(wrapUpNudgeText, locale) }

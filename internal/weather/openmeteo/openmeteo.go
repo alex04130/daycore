@@ -179,12 +179,21 @@ var codeTexts = map[int]i18n.Text{
 // wmoUnknown covers codes the WMO table does not define — providers do
 // occasionally send one, and a forecast is more useful with a blank condition
 // than with no forecast.
-var wmoUnknown = i18n.Text{"zh-CN": "未知", "en-US": "Unknown"}
+var wmoUnknown = i18n.Reg("weather.wmo.unknown", i18n.Text{"zh-CN": "未知", "en-US": "Unknown"})
+
+// wmoKey is the catalog key for one WMO code's label.
+func wmoKey(code int) string { return "weather.wmo." + strconv.Itoa(code) }
+
+func init() {
+	for code, t := range codeTexts {
+		i18n.Register(wmoKey(code), t)
+	}
+}
 
 // WMOText returns the label for a WMO weather code in the given locale.
 func WMOText(code int, locale string) string {
-	if t, ok := codeTexts[code]; ok {
-		return i18n.Pick(t, locale)
+	if _, ok := codeTexts[code]; ok {
+		return i18n.T(wmoKey(code), locale)
 	}
-	return i18n.Pick(wmoUnknown, locale)
+	return i18n.T(wmoUnknown, locale)
 }

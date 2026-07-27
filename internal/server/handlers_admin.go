@@ -45,7 +45,7 @@ func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	out := []adminPromptItem{}
 	for _, key := range s.prompts.Keys() {
-		for _, locale := range i18n.Supported {
+		for _, locale := range i18n.Embedded {
 			content, _, err := s.prompts.Get(ctx, key, locale)
 			if err != nil {
 				continue
@@ -54,7 +54,7 @@ func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
 			out = append(out, adminPromptItem{Key: key, Locale: locale, Content: content, HasOverride: content != def})
 		}
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"prompts": out, "locales": i18n.Supported})
+	s.writeJSON(w, http.StatusOK, map[string]any{"prompts": out, "locales": i18n.Embedded})
 }
 
 // GET /api/admin/prompts/{key}?locale= — one prompt's active content + built-in default.

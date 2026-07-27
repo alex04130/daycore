@@ -41,6 +41,17 @@ var moodKinds = []MoodKind{
 	{ID: "sleepless", Emoji: "🌙", Names: moodNames("失眠", "Sleepless"), Valence: -1},
 }
 
+// Mood labels join the catalog under mood.<id>, so a language pack can rename
+// them without a rebuild. Names stays on the struct as the embedded floor.
+func init() {
+	for _, k := range moodKinds {
+		i18n.Register(MoodNameKey(k.ID), k.Names)
+	}
+}
+
+// MoodNameKey is the catalog key for a mood's label.
+func MoodNameKey(id string) string { return "mood." + id }
+
 var moodByID = func() map[string]MoodKind {
 	m := make(map[string]MoodKind, len(moodKinds))
 	for _, k := range moodKinds {
@@ -58,14 +69,14 @@ func MoodKindByID(id string) (MoodKind, bool) {
 	return k, ok
 }
 
-// MoodName returns the label for a locale, using the shared fallback chain
-// (i18n.Pick): exact, then the same language in another region, then en-US.
+// MoodName returns the label for a locale. It goes through the catalog rather
+// than reading k.Names directly, so a translation installed from a file or the
+// console wins over the compiled-in text.
 //
-// Falling back to en-US rather than to zh-CN — the design original — matches
-// what i18n.Resolve already does to an unrecognised Accept-Language, so a
-// caller that goes through the normal negotiation and one that passes a raw tag
-// land in the same place.
-func (k MoodKind) MoodName(locale string) string { return i18n.Pick(k.Names, locale) }
+// The chain ends at en-US rather than at zh-CN — the design original — because
+// that is where i18n.Normalize sends an unrecognised tag, so a caller that went
+// through negotiation and one that passed a raw tag land in the same place.
+func (k MoodKind) MoodName(locale string) string { return i18n.T(MoodNameKey(k.ID), locale) }
 
 // Mood sources. An agent-recorded check-in is an inference from what the user
 // said; a user one is the user pressing a button. Both are real, but they do

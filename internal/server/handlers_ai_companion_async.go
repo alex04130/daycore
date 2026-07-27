@@ -191,9 +191,9 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-var asyncErrorMsg = i18n.Text{
+var asyncErrorMsg = i18n.Reg("companion.asyncError", i18n.Text{
 	"zh-CN": "抱歉，这条消息处理失败了，请重试。",
 	"en-US": "Sorry, this message failed to process — please try again.",
-}
+})
 
-func asyncErrorText(locale string) string { return i18n.Pick(asyncErrorMsg, locale) }
+func asyncErrorText(locale string) string { return i18n.T(asyncErrorMsg, locale) }

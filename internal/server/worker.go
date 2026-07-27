@@ -125,7 +125,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	}
 
 	prefs := parsePrefs(sess.Preferences)
-	locale := w.s.locales.Resolve(sess.Language, "")
+	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
 	name := sess.AssistantName
 	if name == "" {
 		name = "Daycore"
@@ -236,7 +236,7 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 		w.log.Warn("worker checkDeadlines: get session", "sid", sid, "err", err)
 		return
 	}
-	locale := w.s.locales.Resolve(sess.Language, "")
+	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
 
 	msg := formatDeadlineWarning(locale, urgent, now)
 	w.sendToChannels(ctx, sid, msg)
@@ -293,7 +293,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 		w.log.Warn("worker checkRollingReplan: get session", "sid", sid, "err", err)
 		return
 	}
-	locale := w.s.locales.Resolve(sess.Language, "")
+	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
 
 	// Call the agent to evaluate and suggest a replan.
 	overdueJSON, _ := json.Marshal(overdue)
@@ -464,28 +464,28 @@ func buildBriefSystemPrompt(locale, name, date, clock, tz, weather, planJSON str
 // the toggle actually does something (a full standalone gap-scan job is a later
 // optimization).
 var (
-	gapSuggestionText = i18n.Text{
+	gapSuggestionText = i18n.Reg("worker.gapSuggestion", i18n.Text{
 		"zh-CN": "\n另外：如果今天日程里有较长的空档，可以顺带建议用户安排一件小事（休息、复习或愿望池里的事），一句话即可。",
 		"en-US": "\nAlso: if today's schedule has a long open gap, suggest one small thing to slot in (a break, review, or a wish) — one sentence.",
-	}
-	morningUserText = i18n.Text{
+	})
+	morningUserText = i18n.Reg("worker.morningUser", i18n.Text{
 		"zh-CN": "请给我生成一条早安简报，总结今天的日程和天气。",
 		"en-US": "Please generate a friendly morning brief summarizing today's schedule and weather.",
-	}
-	eveningUserText = i18n.Text{
+	})
+	eveningUserText = i18n.Reg("worker.eveningUser", i18n.Text{
 		"zh-CN": "请回顾一下今天的完成情况，并给出明天优先事项的建议。",
 		"en-US": "Please review today's accomplishments and suggest tomorrow's priorities.",
-	}
+	})
 	// %s is the overdue-block JSON.
-	replanUserText = i18n.Text{
+	replanUserText = i18n.Reg("worker.replanUser", i18n.Text{
 		"zh-CN": "以下是我今天超时未完成的时间块（JSON）：%s\n请帮我提出重排建议。",
 		"en-US": "Here are my overdue time blocks for today (JSON): %s\nPlease suggest a replan.",
-	}
+	})
 )
 
-func gapSuggestionHint(locale string) string { return i18n.Pick(gapSuggestionText, locale) }
-func morningUserPrompt(locale string) string { return i18n.Pick(morningUserText, locale) }
-func eveningUserPrompt(locale string) string { return i18n.Pick(eveningUserText, locale) }
+func gapSuggestionHint(locale string) string { return i18n.T(gapSuggestionText, locale) }
+func morningUserPrompt(locale string) string { return i18n.T(morningUserText, locale) }
+func eveningUserPrompt(locale string) string { return i18n.T(eveningUserText, locale) }
 
 // buildReplanSystemPrompt constructs a system prompt for the rolling replan agent.
 func buildReplanSystemPrompt(locale, date, clock, tz string) string {
@@ -506,80 +506,77 @@ func buildReplanSystemPrompt(locale, date, clock, tz string) string {
 }
 
 func buildReplanUserPrompt(locale, overdueJSON string) string {
-	return fmt.Sprintf(i18n.Pick(replanUserText, locale), overdueJSON)
+	return i18n.Tf(replanUserText, locale, overdueJSON)
 }
 
 // ─── Deadline formatting ─────────────────────────────────────────────────────
 
-// deadlineStrs is the vocabulary of a deadline warning. It is split this finely
-// because the two languages assemble the sentence differently — Chinese runs
-// the clauses together with 、and ：where English needs "and" and a colon —
-// and a single format string per language could not express both without one
-// of them reading as a translation.
+// The deadline-warning vocabulary is split this finely because the two
+// languages assemble the sentence differently — Chinese runs the clauses
+// together with 、and ：where English needs "and" and a colon — and one format
+// string per language could not express both without one reading as a
+// translation. Flat keys also mean a translator edits JSON, not Go.
 //
-// Counts are interpolated as %d. Note that neither language pluralises
-// properly: Chinese has no plural, and the English writes "assignment(s)".
-// That is the existing copy, kept verbatim; a locale with real plural rules
-// will need more than a format string, and this table is where that lands.
-type deadlineStrs struct {
-	prefix     string // "提醒：" / "Reminder: "
-	overdue    string // %d overdue
-	alsoSoon   string // %d more due within 48h, appended after overdue
-	onlySoon   string // %d due within 48h, when nothing is overdue
-	colon      string // "：\n" / ":\n"
-	noDue      string // "无截止日期" / "No due date"
-	overdueTag string // "%s（已逾期）" / "%s (overdue)"
-	item       string // "%d. %s — %s\n"
-}
+// Counts interpolate as %d. Note that neither language pluralises properly:
+// Chinese has no plural and the English writes "assignment(s)". That is the
+// existing copy, kept verbatim; a language with real plural rules will need
+// more than a format string, and this is where that lands.
+const (
+	keyDeadlinePrefix     = "worker.deadline.prefix"
+	keyDeadlineOverdue    = "worker.deadline.overdue"
+	keyDeadlineAlsoSoon   = "worker.deadline.alsoSoon"
+	keyDeadlineOnlySoon   = "worker.deadline.onlySoon"
+	keyDeadlineColon      = "worker.deadline.colon"
+	keyDeadlineNoDue      = "worker.deadline.noDue"
+	keyDeadlineOverdueTag = "worker.deadline.overdueTag"
+	keyDeadlineItem       = "worker.deadline.item"
+)
 
-var deadlineTables = map[string]deadlineStrs{
-	"zh-CN": {
-		prefix:   "提醒：",
-		overdue:  "你有 %d 个已逾期的任务",
-		alsoSoon: "，还有 %d 个在 48 小时内截止",
-		onlySoon: "你有 %d 个任务在 48 小时内截止",
-		colon:    "：\n", noDue: "无截止日期",
-		overdueTag: "%s（已逾期）", item: "%d. %s — %s\n",
-	},
-	"en-US": {
-		prefix:   "Reminder: ",
-		overdue:  "you have %d overdue assignment(s)",
-		alsoSoon: " and %d due within 48 hours",
-		onlySoon: "you have %d assignment(s) due within 48 hours",
-		colon:    ":\n", noDue: "No due date",
-		overdueTag: "%s (overdue)", item: "%d. %s — %s\n",
-	},
+func init() {
+	i18n.Register(keyDeadlinePrefix, i18n.Text{"zh-CN": "提醒：", "en-US": "Reminder: "})
+	i18n.Register(keyDeadlineOverdue, i18n.Text{
+		"zh-CN": "你有 %d 个已逾期的任务",
+		"en-US": "you have %d overdue assignment(s)",
+	})
+	i18n.Register(keyDeadlineAlsoSoon, i18n.Text{
+		"zh-CN": "，还有 %d 个在 48 小时内截止",
+		"en-US": " and %d due within 48 hours",
+	})
+	i18n.Register(keyDeadlineOnlySoon, i18n.Text{
+		"zh-CN": "你有 %d 个任务在 48 小时内截止",
+		"en-US": "you have %d assignment(s) due within 48 hours",
+	})
+	i18n.Register(keyDeadlineColon, i18n.Text{"zh-CN": "：\n", "en-US": ":\n"})
+	i18n.Register(keyDeadlineNoDue, i18n.Text{"zh-CN": "无截止日期", "en-US": "No due date"})
+	i18n.Register(keyDeadlineOverdueTag, i18n.Text{"zh-CN": "%s（已逾期）", "en-US": "%s (overdue)"})
+	i18n.Register(keyDeadlineItem, i18n.Text{"zh-CN": "%d. %s — %s\n", "en-US": "%d. %s — %s\n"})
 }
 
 // formatDeadlineWarning builds a human-readable deadline warning message.
 func formatDeadlineWarning(locale string, urgent []domain.Assignment, now time.Time) string {
-	s, ok := i18n.PickFrom(deadlineTables, locale)
-	if !ok {
-		s = deadlineTables[i18n.Default]
-	}
 	overdueCount, upcomingCount := partitionDeadlines(urgent, now)
 
 	var b strings.Builder
-	b.WriteString(s.prefix)
+	b.WriteString(i18n.T(keyDeadlinePrefix, locale))
 	if overdueCount > 0 {
-		fmt.Fprintf(&b, s.overdue, overdueCount)
+		b.WriteString(i18n.Tf(keyDeadlineOverdue, locale, overdueCount))
 		if upcomingCount > 0 {
-			fmt.Fprintf(&b, s.alsoSoon, upcomingCount)
+			b.WriteString(i18n.Tf(keyDeadlineAlsoSoon, locale, upcomingCount))
 		}
 	} else {
-		fmt.Fprintf(&b, s.onlySoon, upcomingCount)
+		b.WriteString(i18n.Tf(keyDeadlineOnlySoon, locale, upcomingCount))
 	}
-	b.WriteString(s.colon)
+	b.WriteString(i18n.T(keyDeadlineColon, locale))
 
 	for i, a := range urgent {
-		due := s.noDue
+		due := i18n.T(keyDeadlineNoDue, locale)
 		if a.DueAt != nil {
 			due = a.DueAt.Format("01-02 15:04")
 			if a.DueAt.Before(now) {
-				due = fmt.Sprintf(s.overdueTag, due)
+				due = i18n.Tf(keyDeadlineOverdueTag, locale, due)
 			}
 		}
-		fmt.Fprintf(&b, s.item, i+1, a.Title, due)
+		b.WriteString(i18n.Tf(keyDeadlineItem, locale, i+1, a.Title, due))
 	}
 	return b.String()
 }
@@ -612,6 +609,19 @@ type SessionPrefs struct {
 	// on/off). A missing entry falls back to the registry's DefaultOn; "note"
 	// can never be turned off. See domain.MaterialCategories.
 	MaterialCategories map[string]bool `json:"materialCategories,omitempty"`
+
+	// PrimaryLocale and SecondaryLocale are the two languages this user's
+	// switch toggles between, chosen on the settings page from whatever the
+	// installation has available. Empty means "use the deployment default"
+	// (config.DefaultLocales) — the common case, since most people never open
+	// the language settings.
+	//
+	// These live in preferences rather than as columns on purpose: the sessions
+	// table already has a language column, and it holds a different thing —
+	// which of the two they are reading in *right now*, flipped by the home
+	// page switch. A pair is a preference; the current one is state.
+	PrimaryLocale   string `json:"primaryLocale,omitempty"`
+	SecondaryLocale string `json:"secondaryLocale,omitempty"`
 }
 
 // DefaultPrefs returns the default (all-on) preferences.

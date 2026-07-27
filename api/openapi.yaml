@@ -73,24 +73,25 @@ paths:
       tags: [session]
       summary: Update assistantName / theme / language / personaPrompt.
       description: >
-        language must be one of the two locales GET /api/version reports under
-        locales — the enum below is what the binary ships, which is a wider set
-        than any one deployment offers. A shipped-but-not-offered locale is
+        language is which of the user's two languages they are reading in right
+        now — what the home-page switch flips. It must be one of their pair
+        (GET /api/session/preferences); the pair itself is changed through
+        PATCH /api/session/preferences, not here. A value outside the pair is
         rejected with 400 unsupported_locale. Reads never fail this way: a
-        stored locale that is no longer offered silently resolves to the
-        primary, so changing a deployment's pair does not break existing users.
+        stored value that falls outside the pair resolves to the primary, so
+        changing your pair never breaks your settings page.
       requestBody: { content: { application/json: { schema: { type: object, properties: { assistantName: { type: string }, currentTheme: { type: string }, language: { type: string, enum: [zh-CN, en-US] }, personaPrompt: { type: string, maxLength: 2000 } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
   /api/session/preferences:
     get:
       operationId: getPreferences
       tags: [session]
-      summary: Get the 7 proactive-feature toggles.
+      summary: Get the proactive-feature toggles, category overrides and language pair.
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
     patch:
       operationId: setPreferences
       tags: [session]
-      summary: Partial update of proactive toggles.
+      summary: Partial update of toggles, category overrides and language pair.
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
   /api/auth/register:
@@ -621,12 +622,13 @@ paths:
         build (advisory). Matching rules in FRONTEND_HANDOFF.md.
 
 
-        locales is the language pair this deployment offers: primary first,
-        secondary second. Frontends draw their language switch from list and
-        must not hardcode the pair — the same binary is deployed with different
-        ones. A single-element list means the install speaks one language and
-        the switch should be hidden, not disabled. secondary is "" in that case.
-      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, locales: { type: object, properties: { primary: { type: string, example: "zh-CN" }, secondary: { type: string, example: "en-US" }, list: { type: array, items: { type: string }, minItems: 1, maxItems: 2 } } } } } } } } }
+        locales.available lists every language this installation can render. It
+        is NOT a compile-time list — only zh-CN and en-US are compiled in, and
+        a <locale>.json message pack or a console override extends it — so
+        clients must read it rather than hardcoding what they think exists.
+        defaultPrimary/defaultSecondary are what a brand-new user starts with;
+        a signed-in user's own pair comes from GET /api/session/preferences.
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
 
 components:
   securitySchemes:
@@ -731,6 +733,21 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        primaryLocale:
+          type: string
+          description: >
+            This user's main language. Empty means "use the deployment default"
+            (GET /api/version locales.defaultPrimary), which is the common case.
+            Any locale in locales.available is a legal choice.
+        secondaryLocale:
+          type: string
+          description: >
+            The language the home-page switch flips to. Send "" to drop the
+            switch entirely. Must differ from primaryLocale — a toggle between a
+            language and itself is a control that does nothing (400
+            unsupported_locale). The two are validated as a pair, so send both
+            when changing both. Changing the pair realigns
+            /api/session.language into it when the current value falls outside.
     ScheduleRule:
       type: object
       required: [id, title, type, time_mode, kind, active]

@@ -39,12 +39,12 @@ type Forecast struct {
 //
 // %d is the precipitation probability. A new locale must keep exactly that one
 // verb.
-var precipFormat = i18n.Text{"zh-CN": "降水%d%%", "en-US": "precip %d%%"}
+var precipFormat = i18n.Reg("weather.precip", i18n.Text{"zh-CN": "降水%d%%", "en-US": "precip %d%%"})
 
 // Summary renders a compact digest for prompt injection, e.g.
 // "北京: 07-12 阴 22~31°C 降水40%; 07-13 小雨 21~28°C 降水80%".
 func (f *Forecast) Summary(locale string) string {
-	precip := i18n.Pick(precipFormat, locale)
+	precip := i18n.T(precipFormat, locale)
 	var b strings.Builder
 	b.WriteString(f.Location)
 	b.WriteString(": ")

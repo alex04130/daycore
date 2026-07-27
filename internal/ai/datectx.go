@@ -9,55 +9,62 @@ import (
 	"daycore/internal/i18n"
 )
 
-// dateStrs carries the locale-dependent labels used by BuildDateContext.
+// The relative-date vocabulary lives in the message catalog, flat, one key per
+// string — a translator edits a JSON file, not a Go struct. The keys are:
 //
-// weekdays is indexed by time.Weekday, so Sunday is index 0 regardless of which
-// day the locale considers the start of the week — that is a rendering
-// question, and nextWeekdayDate handles it separately.
-type dateStrs struct {
-	tomorrow, dayAfter, dayAfter3 string // "明天"/"Tomorrow", etc.
-	thisWeek, nextWeek            string // "本周"/"This", "下周"/"Next"
-	weekdays                      []string
-	// shortFn trims a weekday down to the form used inside a relative phrase.
-	// Chinese drops the 星期 prefix ("星期三" → "三", giving 下周三); English has
-	// nothing to drop. A new locale supplies its own rule rather than having
-	// one guessed from the script.
-	shortFn func(w string) string
-	// rowFmt renders one row of the relative-date table: term, date, weekday.
-	// The brackets are part of the translation — full-width （） belongs in a
-	// Chinese table and reads as a typo in an English one.
-	rowFmt string
-	// relFmt joins a week qualifier to a short weekday: 下周 + 三 runs together,
-	// "Next" + "Monday" needs a space between them.
-	relFmt string
-}
+//	date.tomorrow  date.dayAfter  date.dayAfter3
+//	date.thisWeek  date.nextWeek
+//	date.weekday.0 … .6          full names, indexed by time.Weekday (Sunday = 0)
+//	date.weekdayShort.0 … .6     the form used inside 本周三 / "This Monday"
+//	date.row                     one table row: term, date, weekday
+//	date.rel                     week qualifier joined to a short weekday
+//
+// weekday indices follow time.Weekday rather than the locale's first day of the
+// week; which day a calendar starts on is nextWeekdayDate's business.
+func init() {
+	i18n.Register("date.tomorrow", i18n.Text{"zh-CN": "明天", "en-US": "Tomorrow"})
+	i18n.Register("date.dayAfter", i18n.Text{"zh-CN": "后天", "en-US": "The day after"})
+	i18n.Register("date.dayAfter3", i18n.Text{"zh-CN": "大后天", "en-US": "3 days later"})
+	i18n.Register("date.thisWeek", i18n.Text{"zh-CN": "本周", "en-US": "This"})
+	i18n.Register("date.nextWeek", i18n.Text{"zh-CN": "下周", "en-US": "Next"})
 
-var dateTables = map[string]dateStrs{
-	"zh-CN": {
-		tomorrow: "明天", dayAfter: "后天", dayAfter3: "大后天",
-		thisWeek: "本周", nextWeek: "下周",
-		weekdays: []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"},
-		shortFn:  func(w string) string { return strings.TrimPrefix(w, "星期") },
-		rowFmt:   "| %s | %s（%s） |",
-		relFmt:   "%s%s",
-	},
-	"en-US": {
-		tomorrow: "Tomorrow", dayAfter: "The day after", dayAfter3: "3 days later",
-		thisWeek: "This", nextWeek: "Next",
-		weekdays: []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"},
-		shortFn:  func(w string) string { return w },
-		rowFmt:   "| %s | %s (%s) |",
-		relFmt:   "%s %s",
-	},
-}
-
-func dateStringTable(locale string) dateStrs {
-	t, ok := i18n.PickFrom(dateTables, locale)
-	if !ok {
-		return dateTables[i18n.Default]
+	full := [7]i18n.Text{
+		{"zh-CN": "星期日", "en-US": "Sunday"},
+		{"zh-CN": "星期一", "en-US": "Monday"},
+		{"zh-CN": "星期二", "en-US": "Tuesday"},
+		{"zh-CN": "星期三", "en-US": "Wednesday"},
+		{"zh-CN": "星期四", "en-US": "Thursday"},
+		{"zh-CN": "星期五", "en-US": "Friday"},
+		{"zh-CN": "星期六", "en-US": "Saturday"},
 	}
-	return t
+	// The short form used inside a relative phrase. Chinese drops the 星期
+	// prefix (下周三); English has nothing to drop. Storing the短 forms as
+	// their own keys rather than deriving them with a per-locale function is
+	// what lets a translator add a language without writing Go.
+	short := [7]i18n.Text{
+		{"zh-CN": "日", "en-US": "Sunday"},
+		{"zh-CN": "一", "en-US": "Monday"},
+		{"zh-CN": "二", "en-US": "Tuesday"},
+		{"zh-CN": "三", "en-US": "Wednesday"},
+		{"zh-CN": "四", "en-US": "Thursday"},
+		{"zh-CN": "五", "en-US": "Friday"},
+		{"zh-CN": "六", "en-US": "Saturday"},
+	}
+	for i := 0; i < 7; i++ {
+		i18n.Register(weekdayKey(i), full[i])
+		i18n.Register(weekdayShortKey(i), short[i])
+	}
+
+	// Both carry format verbs. date.row is term, date, weekday — the brackets
+	// are part of the translation, since full-width （） belongs in a Chinese
+	// table and reads as a typo in an English one. date.rel joins a qualifier
+	// to a short weekday: 下周 + 三 runs together, "Next" + "Monday" does not.
+	i18n.Register("date.row", i18n.Text{"zh-CN": "| %s | %s（%s） |", "en-US": "| %s | %s (%s) |"})
+	i18n.Register("date.rel", i18n.Text{"zh-CN": "%s%s", "en-US": "%s %s"})
 }
+
+func weekdayKey(i int) string      { return "date.weekday." + strconv.Itoa(i) }
+func weekdayShortKey(i int) string { return "date.weekdayShort." + strconv.Itoa(i) }
 
 // DateContext is the fully-resolved date information injected into the planning
 // prompts. All relative date terms are pre-computed server-side so the model
@@ -75,7 +82,9 @@ type DateContext struct {
 // BuildDateContext computes the relative-date table from the client's local date.
 func BuildDateContext(clientDate, clientWeekday, clientTime, clientTimezone, locale string) DateContext {
 	base := parseLocalDate(clientDate)
-	lbl := dateStringTable(locale)
+	rowFmt := i18n.T("date.row", locale)
+	relFmt := i18n.T("date.rel", locale)
+	weekday := func(d time.Weekday) string { return i18n.T(weekdayKey(int(d)), locale) }
 
 	tomorrow := base.AddDate(0, 0, 1)
 	dayAfter := base.AddDate(0, 0, 2)
@@ -83,18 +92,18 @@ func BuildDateContext(clientDate, clientWeekday, clientTime, clientTimezone, loc
 
 	var rows []string
 	rows = append(rows,
-		fmt.Sprintf(lbl.rowFmt, lbl.tomorrow, fmtDate(tomorrow), lbl.weekdays[tomorrow.Weekday()]),
-		fmt.Sprintf(lbl.rowFmt, lbl.dayAfter, fmtDate(dayAfter), lbl.weekdays[dayAfter.Weekday()]),
-		fmt.Sprintf(lbl.rowFmt, lbl.dayAfter3, fmtDate(dayAfter3), lbl.weekdays[dayAfter3.Weekday()]),
+		fmt.Sprintf(rowFmt, i18n.T("date.tomorrow", locale), fmtDate(tomorrow), weekday(tomorrow.Weekday())),
+		fmt.Sprintf(rowFmt, i18n.T("date.dayAfter", locale), fmtDate(dayAfter), weekday(dayAfter.Weekday())),
+		fmt.Sprintf(rowFmt, i18n.T("date.dayAfter3", locale), fmtDate(dayAfter3), weekday(dayAfter3.Weekday())),
 	)
 	for dow := 0; dow < 7; dow++ {
-		label := lbl.weekdays[dow]
-		short := lbl.shortFn(label)
-		thisWeek := nextWeekdayDate(base, dow, false)
-		nextWeek := nextWeekdayDate(base, dow, true)
+		label := i18n.T(weekdayKey(dow), locale)
+		short := i18n.T(weekdayShortKey(dow), locale)
 		rows = append(rows,
-			fmt.Sprintf(lbl.rowFmt, fmt.Sprintf(lbl.relFmt, lbl.thisWeek, short), thisWeek, label),
-			fmt.Sprintf(lbl.rowFmt, fmt.Sprintf(lbl.relFmt, lbl.nextWeek, short), nextWeek, label),
+			fmt.Sprintf(rowFmt, fmt.Sprintf(relFmt, i18n.T("date.thisWeek", locale), short),
+				nextWeekdayDate(base, dow, false), label),
+			fmt.Sprintf(rowFmt, fmt.Sprintf(relFmt, i18n.T("date.nextWeek", locale), short),
+				nextWeekdayDate(base, dow, true), label),
 		)
 	}
 
@@ -126,7 +135,7 @@ func fmtDate(t time.Time) string { return t.Format("2006-01-02") }
 
 // WeekdayName renders t's weekday for the locale ("星期日" / "Sunday").
 func WeekdayName(t time.Time, locale string) string {
-	return dateStringTable(locale).weekdays[t.Weekday()]
+	return i18n.T(weekdayKey(int(t.Weekday())), locale)
 }
 
 // nextWeekdayDate resolves 本周X/下周X with Monday-start calendar weeks (the

@@ -55,7 +55,7 @@ type PromptService struct {
 // repo may be nil (defaults only).
 func NewPromptService(repo domain.PromptRepository) (*PromptService, error) {
 	s := &PromptService{repo: repo, defaults: map[string]map[string]string{}}
-	for _, locale := range i18n.Supported {
+	for _, locale := range i18n.Embedded {
 		s.defaults[locale] = map[string]string{}
 		for _, key := range promptKeys {
 			b, err := promptFS.ReadFile("prompts/" + locale + "/" + key + ".tmpl")
@@ -72,7 +72,7 @@ func NewPromptService(repo domain.PromptRepository) (*PromptService, error) {
 // instead of the embedded filesystem. Useful when DATA_DIR is set (no embed).
 func NewPromptServiceDisk(repo domain.PromptRepository, dataDir string) (*PromptService, error) {
 	s := &PromptService{repo: repo, defaults: map[string]map[string]string{}}
-	for _, locale := range i18n.Supported {
+	for _, locale := range i18n.Embedded {
 		s.defaults[locale] = map[string]string{}
 		for _, key := range promptKeys {
 			path := filepath.Join(dataDir, "prompts", locale, key+".tmpl")
@@ -134,7 +134,7 @@ func (s *PromptService) Set(ctx context.Context, key, locale, content string) er
 	if !s.known(key) {
 		return domain.ErrNotFound
 	}
-	if !i18n.IsSupported(locale) {
+	if !i18n.IsEmbedded(locale) {
 		return fmt.Errorf("unsupported locale %q", locale)
 	}
 	if _, err := template.New(key).Parse(content); err != nil {

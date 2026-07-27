@@ -23,11 +23,23 @@ type MaterialCategory struct {
 	DefaultOn bool      `json:"default"` // enabled unless the user opted out
 }
 
-// Name returns the display label for a locale (see i18n.Pick for the chain).
-func (c MaterialCategory) Name(locale string) string { return i18n.Pick(c.Names, locale) }
+// Catalog keys. Both the label and the classifier hint are translatable
+// without a rebuild.
+func CategoryNameKey(id string) string { return "category." + id }
+func CategoryHintKey(id string) string { return "category." + id + ".hint" }
+
+func init() {
+	for _, c := range materialCategories {
+		i18n.Register(CategoryNameKey(c.ID), c.Names)
+		i18n.Register(CategoryHintKey(c.ID), c.Hints)
+	}
+}
+
+// Name returns the display label for a locale.
+func (c MaterialCategory) Name(locale string) string { return i18n.T(CategoryNameKey(c.ID), locale) }
 
 // Hint returns the classifier guidance for a locale.
-func (c MaterialCategory) Hint(locale string) string { return i18n.Pick(c.Hints, locale) }
+func (c MaterialCategory) Hint(locale string) string { return i18n.T(CategoryHintKey(c.ID), locale) }
 
 func catNames(zh, en string) i18n.Text { return i18n.Text{"zh-CN": zh, "en-US": en} }
 

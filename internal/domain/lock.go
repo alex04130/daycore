@@ -54,12 +54,24 @@ var defaultLockReasons = map[LockLevel]i18n.Text{
 	},
 }
 
+// LockReasonKey is the catalog key for a derived lock reason.
+func LockReasonKey(level LockLevel) string { return "lock.reason." + string(level) }
+
+func init() {
+	for lvl, t := range defaultLockReasons {
+		i18n.Register(LockReasonKey(lvl), t)
+	}
+}
+
 // DefaultLockReason is the reason shown when the lock was inferred rather than
 // set by hand. Derived reasons are not the user's words, so they are looked up
 // per request locale instead of being frozen into the block at write time —
 // that is part of why LockSource exists.
 func DefaultLockReason(level LockLevel, locale string) string {
-	return i18n.Pick(defaultLockReasons[level], locale)
+	if _, ok := defaultLockReasons[level]; !ok {
+		return "" // an unlocked block carries no derived reason
+	}
+	return i18n.T(LockReasonKey(level), locale)
 }
 
 // InferLock returns the lock level a block's type and title imply, ignoring

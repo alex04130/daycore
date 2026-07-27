@@ -142,14 +142,14 @@ func (s *Server) buildCompanionMessages(ctx context.Context, sid, threadID, loca
 // over an English body is the kind of mixed signal that gets answered in the
 // wrong language.
 var (
-	personaHeading = i18n.Text{
+	personaHeading = i18n.Reg("companion.personaHeading", i18n.Text{
 		"zh-CN": "## 你的个性化风格设定",
 		"en-US": "## Your personalized style",
-	}
-	wishPoolHeading = i18n.Text{
+	})
+	wishPoolHeading = i18n.Reg("companion.wishPoolHeading", i18n.Text{
 		"zh-CN": "## 愿望池（用户想做但还没安排的事）",
 		"en-US": "## Wish pool (things the user wants to do but hasn't scheduled)",
-	}
+	})
 )
 
 // companionSystemPrompt assembles the layered system prompt:
@@ -192,7 +192,7 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	// L2: role layer — user override or built-in "good buddy" default.
 	l2 := ""
 	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.PersonaPrompt != "" {
-		l2 = "\n\n" + i18n.Pick(personaHeading, locale) + "\n" + sess.PersonaPrompt
+		l2 = "\n\n" + i18n.T(personaHeading, locale) + "\n" + sess.PersonaPrompt
 	} else {
 		l2 = "\n\n" + ai.DefaultPersona(locale, name)
 	}
@@ -205,7 +205,7 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	// something from it (the wish ↔ mood linkage).
 	l3extra := ""
 	if wishesCtx := s.activeWishesContext(ctx, sid); wishesCtx != "" && wishesCtx != "[]" {
-		l3extra = "\n\n" + i18n.Pick(wishPoolHeading, locale) + "\n" + wishesCtx
+		l3extra = "\n\n" + i18n.T(wishPoolHeading, locale) + "\n" + wishesCtx
 	}
 
 	return l1 + "\n\n" + l3 + l3extra + l2 + reminder, nil

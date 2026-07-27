@@ -62,8 +62,20 @@
 - `apiVersion` = API 契约大版本，只在破坏性变更时 +1，**独立于构建版本**。客户端硬编码自己期望的值，不等 → 硬阻断并提示升级（web 前端把它存 `state.apiMismatch`）。
 - `apiMinor` = 新增性变更（加端点/字段）+1；客户端可据此对可选功能降级。
 - `build`/`channel` = 构建版本展示用（"2.2.0-beta"）；`minClient` = 服务器认为兼容的最老客户端构建（提示更新用，不阻断）。
-- `locales` = **本部署给用户的一主一副**（`{primary, secondary, list}`，2026-07-26 加）。前端的语言开关从 `list` 画，**不许写死** —— 同一个二进制会被以不同配对部署。`list` 只有一项 = 单语言安装，**隐藏开关而不是禁用**（此时 `secondary` 为 `""`）。用户选中的那一个走 `PATCH /api/session` 的 `language`；写不在这对里的值返回 `400 unsupported_locale`，但读永远不失败（后端静默钳到 primary），所以换配对不会让老用户的设置页打不开。每端的开关要长成那一端自己的样子，见 `docs/EXPERIENCE_CORE.md` §1.1。
-- 老后端没有此端点 → 前端回退 `GET /api/healthz` 读 version/channel。老后端没有 `locales` 字段 → 前端按单语言处理，隐藏开关。
+- `locales` = `{available, defaultPrimary, defaultSecondary}`（2026-07-26 加）。`available` 是**这个安装能渲染的全部语言**，**不是编译期列表** —— 只有 zh-CN / en-US 编进二进制，丢一个 `<locale>.json` 进 `LOCALES_DIR` 或从控制台加一份就会多出来，所以前端必须读它而不是写死自己以为存在的那几种。后两个是**新用户的默认**一主一副。
+- 老后端没有此端点 → 前端回退 `GET /api/healthz` 读 version/channel。老后端没有 `locales` 字段 → 按单语言处理，隐藏开关。
+
+**语言开关怎么画**（每端首页必须有，且要长成那一端自己的样子，见 `docs/EXPERIENCE_CORE.md` §1.1）：
+
+| 要什么 | 从哪读 | 怎么写 |
+|---|---|---|
+| 能选哪些语言（设置页的列表） | `GET /api/version` → `locales.available` | — |
+| 我的一主一副 | `GET /api/session/preferences` → `primaryLocale` / `secondaryLocale`（空 = 用默认值） | `PATCH /api/session/preferences`，两个字段**一起校验**，改哪个都建议都发 |
+| 我现在读的是哪一种（首页开关翻的就是它） | `GET /api/session` → `language` | `PATCH /api/session` `{language}` |
+
+- `secondaryLocale` 为空 = 这个用户只要一种语言，**隐藏开关而不是禁用**。
+- 主副相同会被拒（`400 unsupported_locale`）—— 在自己和自己之间切换的按钮什么都不做。
+- 写 `language` 时值必须在用户自己那两种里，否则 `400`；但**读永远不失败** —— 落在配对外的存量值会被静默钳到主语言，换配对不会让谁的设置页打不开。改配对时后端顺手把 `language` 拉回配对内。
 
 > ⚠️ `locales` 是**新增性变更**，按规则该让 `apiMinor` +1，但**这一次没有升** —— 落地计划要求把散在各批次里的 APIMinor 提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。SPEC-FREEZE 时连同其余新增字段一起升。
 

@@ -49,7 +49,7 @@ func (s *Server) runChannelMessage(ctx context.Context, sid, text string) string
 	if err != nil {
 		return ""
 	}
-	locale := s.locales.Resolve(sess.Language, "")
+	locale := s.localePair(ctx, sid).Resolve(sess.Language, "")
 	name := sess.AssistantName
 	if name == "" {
 		name = "Leo"

@@ -84,14 +84,21 @@ type Config struct {
 	QWeatherKey       string
 	OpenWeatherMapKey string
 
-	// Locales is the language pair this deployment offers its users — one main
-	// language and one to fall back on. i18n.Supported is what the binary can
-	// speak; this is what a given install shows. Two rather than N so every
-	// frontend can render the switch as one button instead of a menu.
+	// DefaultLocales is the language pair a user starts with before they choose
+	// their own on the settings page: one main language and one to fall back
+	// on, which is what the switch on every frontend's home page toggles
+	// between. It is a *default*, not a restriction — a user may pick any two
+	// of i18n.Available().
 	//
-	// Set from PRIMARY_LOCALE / SECONDARY_LOCALE. Leaving SECONDARY_LOCALE empty
-	// makes this a single-language install and the frontends hide the switch.
-	Locales i18n.Offered
+	// Set from DEFAULT_PRIMARY_LOCALE / DEFAULT_SECONDARY_LOCALE. Leaving the
+	// secondary empty starts users with no switch; they can still add one.
+	DefaultLocales i18n.Pair
+
+	// LocalesDir holds <locale>.json message packs, read at startup and
+	// reloadable from the console. This is how a language is added without a
+	// rebuild — the two locales compiled into the binary are a floor, not the
+	// set of languages the product supports.
+	LocalesDir string
 
 	// UsingDevSecrets is true when JWT/Cookie secrets fell back to the insecure
 	// public dev defaults (no real secret configured). main.go warns on it.
@@ -181,17 +188,22 @@ func Load() (*Config, error) {
 	if _, ok := os.LookupEnv("HOST"); !ok && !c.IsProduction() {
 		c.Host = "127.0.0.1"
 	}
-	// A typo here would otherwise surface as every user silently seeing the
-	// wrong language, so it fails the boot instead.
-	def := i18n.DefaultOffer()
-	locales, err := i18n.Offer(
-		getEnv("PRIMARY_LOCALE", def.Primary),
-		getEnv("SECONDARY_LOCALE", def.Secondary),
+	// Message packs load before the pair is validated, because a pack is what
+	// makes a locale valid to pick in the first place.
+	c.LocalesDir = getEnv("LOCALES_DIR", "locales")
+	if err := i18n.Std().LoadDir(c.LocalesDir); err != nil {
+		return nil, err
+	}
+	// A typo here would otherwise surface as every new user silently starting
+	// in the wrong language, so it fails the boot instead.
+	pair, err := i18n.NewPair(
+		getEnv("DEFAULT_PRIMARY_LOCALE", "zh-CN"),
+		getEnv("DEFAULT_SECONDARY_LOCALE", "en-US"),
 	)
 	if err != nil {
 		return nil, err
 	}
-	c.Locales = locales
+	c.DefaultLocales = pair
 	return c, nil
 }
 

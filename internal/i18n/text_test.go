@@ -75,7 +75,7 @@ func TestMissing(t *testing.T) {
 	if got := Missing(Text{"zh": "中", "en": "en"}); len(got) != 0 {
 		t.Errorf("bare language keys should satisfy their regions, got %v", got)
 	}
-	if got := Missing(nil); len(got) != len(Supported) {
+	if got := Missing(nil); len(got) != len(Embedded) {
 		t.Errorf("Missing(nil) = %v, want every supported locale", got)
 	}
 }

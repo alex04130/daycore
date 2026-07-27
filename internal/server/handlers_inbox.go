@@ -19,10 +19,10 @@ import (
 
 // categoryLine formats one material category for the inbox classifier prompt:
 // id, display name, hint.
-var categoryLine = i18n.Text{
+var categoryLine = i18n.Reg("inbox.categoryLine", i18n.Text{
 	"zh-CN": "- %s（%s）：%s\n",
 	"en-US": "- %s (%s): %s\n",
-}
+})
 
 // inboxKey namespaces an uploaded file inside the session's temp-context store.
 func inboxKey(tempID string) string { return "inbox:" + tempID }
@@ -157,7 +157,7 @@ func (s *Server) classifyInbox(ctx context.Context, sid, locale, text string) (*
 		if !enabled[c.ID] {
 			continue
 		}
-		fmt.Fprintf(&list, i18n.Pick(categoryLine, locale), c.ID, c.Name(locale), c.Hint(locale))
+		list.WriteString(i18n.Tf(categoryLine, locale, c.ID, c.Name(locale), c.Hint(locale)))
 	}
 	prompt, err := s.prompts.Render(ctx, ai.PromptInboxClassify, locale, ai.InboxClassifyData{
 		Text: text, Categories: list.String(), Date: time.Now().Format("2006-01-02"),

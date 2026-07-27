@@ -142,51 +142,87 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 12 种，集合/顺序/emoji 抄自设计原型（四端画的就是这张表）。**存 id 不存标签** —— 中文标签是给人看的，存它会让改名变成数据迁移，也会让英文界面为同一种感受存出不同的行。`Valence`（−2..+2）只为算趋势存在，从不展示，且刻意粗糙：疲惫与压力大是种类之差，细分是假精度。
 
-## Go 侧显示名的多语言机制（`i18n.Text` + `i18n.Pick`）
+## 多语言机制（`i18n.Catalog` 三层 + 用户自选一主一副，2026-07-26）
 
-提示词模板按 `prompts/<locale>/*.tmpl` 分目录，天然可扩展；**但结构体里的显示名此前是 `NameZH`/`NameEN` 两个具名字段** —— 加第三种语言要改每一个带这对字段的结构体和每一处 `if HasPrefix(locale,"en")` 分支，语言扩展变成了 schema 变更。已改为 locale map：
+### 语言包三层：数据库 → 本地文件 → 内嵌
 
-```go
-type Text map[string]string          // {"zh-CN": "开心", "en-US": "Happy"}
-func Pick(t Text, locale string) string
-func Missing(t Text) []string        // 缺哪些 Supported locale
+```
+db        控制台改，多实例共享         ← 优先
+files     LOCALES_DIR/<locale>.json
+embedded  Go 字面量，只有 zh-CN / en-US  ← 兜底地板
 ```
 
-**回退链**（`Pick`，四步）：精确 tag → 同语言的其他地区（`zh-TW` 先找到 `zh-CN`，不会掉去英文）→ `Default`（en-US）→ 表里任意一条。
+**内嵌的两种是地板不是全集**。它们只需覆盖「没有数据库也没有文件时仍能把页面画出来并说清为什么」。加一门语言是丢一个 `ja-JP.json` 进 `LOCALES_DIR`（或从控制台粘一份），**不是一次发版**。形状照抄 `prompt_overrides` —— 文件作种子、DB 覆盖、立即生效，这个仓库唯一把配置做对的地方。
 
-- 第 2 步让「有这门语言但没这个地区」不掉到另一门语言。
-- 第 3 步落在 `i18n.Default`，与 `i18n.Resolve` 处理无法识别的 `Accept-Language` 是同一个终点 —— 走正常协商的调用方与直接传裸 tag 的调用方得到同一个答案。
-- 第 4 步是**半翻译的表宁可显示看不懂的语言也不显示空白**：缺翻译是内容缺口，不是渲染失败。最后一步按 `Supported` 顺序取，不吃 map 迭代随机性，同一个缺口每次渲染一致。
+```go
+type Text map[string]string                        // 一条消息的各语言版本
+func Register(key string, t Text)                  // 包 init 里注册内嵌兜底
+func Reg(key string, t Text) string                // 注册并返回 key，一行声明
+func T(key, locale string) string                  // 解析
+func Tf(key, locale string, args ...any) string    // 带 %verb 的
+func (c *Catalog) LoadDir(dir string) error        // 文件层，可重载
+func (c *Catalog) SetOverrides(map[string]Text)    // DB 层，store 喂进来
+func Available() []string                          // 装了哪些语言
+func (c *Catalog) Coverage(locale) (have, total int)
+func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→翻→存成 <locale>.json
+```
 
-**加一门语言的完整路径**：`i18n.Supported` 加一项 → 跑 `go test ./internal/domain/`，`TestRegistriesCoverEverySupportedLocale` 会把所有缺的条目一次列全 → 补完即止。这条测试是启动期硬校验（提示词双 locale）的测试期对应物：注册表缺一条只降级到别的语言，不该把服务器带下线，但也不该悄悄发出去。
+⚠️ **解析按 locale 逐层问，不是按层逐 locale**。回退链里每一个候选语言都先问 db、再问 files、最后问 embedded。反过来做（先挑「哪一层认识这个 key」，再在那层里跑回退链）会让 DB 里一条半成品的法语覆盖，盖住下面那条完整的英文。
 
-另有 `PickFrom[T](map[string]T, locale)` —— 同一条回退链，但键值是任意类型（一整套日期词汇、一组格式串）。`Pick` 额外把空串当作缺失，`PickFrom` 不判断值，因为只有调用方知道自己的类型里「空」是什么意思。
+**回退链四步**（`Pick`）：精确 tag → 同语言其他地区（`zh-TW` 先找到 `zh-CN`，不掉英文）→ `Default`（en-US）→ 表里任意一条。最后一步是**半翻译的表宁可显示看不懂的语言也不显示空白**：缺翻译是内容缺口，不是渲染失败。取值按 `Embedded` 顺序，不吃 map 迭代随机性。
 
-**已改造的 16 处**（显示名全部 `json:"-"`，**API 形状不变**，端点仍按请求 locale 吐一个 `name` 字符串）：
+- **未注册的 key 原样返回 key 本身**，不返回空串 —— 空按钮看起来像布局 bug，会把人引到错的地方找；编出来的文案更糟。
+- **同一 key 注册两次 panic** —— 两个包抢一个 key，文案会随链接顺序变，从「文字不对」这种 bug 报告几乎不可能查回来。
+- `Missing(t)` 只检查 `Embedded`：文件装进来的语言**允许不全**（`Coverage` 报告缺多少），回退链兜着；内嵌那两种是回退链要落到的地方，必须齐。
+- **不要直接 `i18n.Pick(someText, locale)`** —— 那会绕开 db/files 两层，让这条字符串悄悄变成不可翻译的。一律走 `T`/`Tf`。（`PickFrom` 泛型版已删除，正是因为它鼓励这种绕行。）
 
-| 位置 | 内容 |
-|---|---|
-| `domain/mood_kind.go` | `MoodKind.Names` → `MoodName(locale)` |
-| `domain/material_category.go` | `Names`/`Hints` → `Name(locale)`/`Hint(locale)`。`Hints` 是给 inbox 分类器的提示词行 —— 中文提示塞进英文提示词，本身就是让分类器答错语言的常见原因 |
-| `domain/lock.go` | `defaultLockReasons`，与 `api/lock-rules.json` 的 `defaultReason` 对齐 |
-| `domain/weather.go` | `precipFormat`（`"降水%d%%"` / `"precip %d%%"`）—— 整段进表含空格：中文贴着数字、拉丁文要空格，这是译者的判断，不是运行时按 script 推的 |
-| `weather/openmeteo` | `codeTexts` 28 个 WMO 天气码 `[2]string` → `i18n.Text`，加 `wmoUnknown` |
-| `ai/datectx.go` | `dateTables`（星期名 / 明天后天 / 本周下周 / `shortFn` / 表格行格式）走 `PickFrom` |
-| `server/worker.go` | `gapSuggestionText` / `morningUserText` / `eveningUserText` / `replanUserText` / `deadlineTables` |
-| `server/agent.go` | `wrapUpNudgeText` |
-| `server/handlers_ai_companion.go` | `personaHeading` / `wishPoolHeading` |
-| `server/handlers_ai_companion_async.go` | `asyncErrorMsg` |
-| `server/handlers_inbox.go` | `categoryLine`（`- %s（%s）：%s` / `- %s (%s): %s`，全角标点属于翻译的一部分） |
+### 用户自选一主一副（不是部署定死）
 
-⚠️ 带 `%` 动词的条目（`precipFormat`、`categoryLine`、`replanUserText`、`deadlineTables`、`dateTables.rowFmt/relFmt`）：新语言必须保留同样的动词、同样的顺序。`TestPrecipFormatKeepsItsVerb` 挡住漏掉 `%d` 的翻译。
+三层状态别混：
 
-**顺带修掉的既有缺陷**：`datectx` 的相对日期表在 en-US 下渲染成 `| ThisMonday | … |`（中文的 `本周` + `三` 是连写的，英文照抄就没了空格）。现在 `relFmt` 分 locale 给，`"%s%s"` / `"%s %s"`。
+| 层 | 存哪 | 是什么 | DDL |
+|---|---|---|---|
+| 装了哪些语言 | `i18n.Available()` | 这个安装能渲染什么 | — |
+| 我的一主一副 | `SessionPrefs.PrimaryLocale` / `SecondaryLocale` | 我的开关在哪两种之间切 | **零**（`preferences` JSON） |
+| 我现在读的是哪一种 | `sessions.language` 列（既有） | 首页开关翻的就是它 | — |
 
-**没有改、也不该改成 `Text` 的**：`ai/prompts.go` 的 `DefaultPersona`/`HardBoundaryReminder`、`worker.go` 的 `buildBriefSystemPrompt`/`buildReplanSystemPrompt` —— 这四段是多段落提示词，正确去处是 `prompts/<locale>/*.tmpl`（已有机制，已带启动期双 locale 硬校验，且落进 `prompt_overrides` 后控制台可改），塞进 map 只会把它们钉死在 Go 里。属计划里**批次 5 的「提示词一次性收口」**，与定稿语气那一遍合并做。
+第三层是**状态**不是偏好，所以留在原来的列上。部署只给默认值（`DEFAULT_PRIMARY_LOCALE` / `DEFAULT_SECONDARY_LOCALE`，`config.Load()` 里 `i18n.NewPair` 校验，值不对启动失败），**不限制用户能选什么**。
 
-**契约侧**：`api/lock-rules.json` 新增 `localeFallback`（`chain` + `defaultLocale`），四端实现同一条回退链；`lock_test.go` 从夹具读 `defaultLocale` 而不是写死，两侧改一处即可。
+- `PairOr(userP, userS, deploymentDefault)` 是读路径：大多数人从没打开过语言设置，只设了主语言的人不该因此丢掉开关。
+- **读时钳制、写时拒绝**：换配对后 `sessions.language` 可能落在配对外 —— 读（`Pair.Resolve`）静默落回主语言，设置页照常打得开；写返回 `400 unsupported_locale`。改配对时后端顺手把 `language` 拉回配对内。
+- 副语言为空 = 单语言用户，`List()` 只有一项，**前端隐藏开关而不是禁用**。
+- `NewPair` 拒绝主副相同：在自己和自己之间切换的按钮是个什么都不做的控件。
 
-**外部 provider 的语言参数是另一回事**（`internal/weather/lang.go` 的 `Lang(locale, codes, fallback)`）：每个上游有自己的语言代码空间（QWeather `zh`/`zh-hant`、OpenWeatherMap `zh_cn`/`zh_tw`、wttr.in 只有一种中文），表跟着 provider 走，只共享查表逻辑。上游没有的语言退回它自己的默认值 —— 语言不对的天气预报仍然告诉你会下雨。
+### 已进目录的 key（全部 `json:"-"`，**API 形状不变**）
+
+| 前缀 | 内容 | 位置 |
+|---|---|---|
+| `mood.<id>` | 12 个心情标签 | `domain/mood_kind.go` |
+| `category.<id>` / `.hint` | 10 个资料类别名 + 给 inbox 分类器的提示行 | `domain/material_category.go` |
+| `lock.reason.<level>` | 派生锁原因，与 `api/lock-rules.json` 对齐 | `domain/lock.go` |
+| `weather.precip` | `"降水%d%%"` / `"precip %d%%"`，整段含空格进表 | `domain/weather.go` |
+| `weather.wmo.<code>` / `.unknown` | 28 个 WMO 天气码 | `weather/openmeteo` |
+| `date.*` | 星期全名/短名各 7 条、明天后天大后天、本周下周、表格行格式、相对短语连接格式 | `ai/datectx.go` |
+| `worker.deadline.*` | 8 条，逾期提醒逐句拆开 | `server/worker.go` |
+| `worker.gapSuggestion` / `morningUser` / `eveningUser` / `replanUser` | 四条定时任务文案 | `server/worker.go` |
+| `agent.wrapUpNudge` · `companion.personaHeading` / `wishPoolHeading` / `asyncError` · `inbox.categoryLine` | 单句 | 各自文件 |
+
+⚠️ 带 `%` 动词的条目（`weather.precip`、`inbox.categoryLine`、`date.row`/`date.rel`、`worker.replanUser`、`worker.deadline.*`）：新语言必须保留同样的动词、同样的顺序。`TestPrecipFormatKeepsItsVerb` 挡住漏掉 `%d` 的翻译。
+
+**逾期提醒为什么拆成 8 条而不是一条格式串**：两种语言组句方式不同 —— 中文用「，」和「：」把子句连起来，英文要 `and` 和冒号。一种语言一条格式串表达不了两者，总有一边读着像翻译腔。拆开也让译者改 JSON 而不是改 Go。⚠️ 两种语言都没做复数：中文没有复数，英文写的是 `assignment(s)`。这是既有文案原样保留；真有复数规则的语言需要的不止一条格式串，这张表就是那时候要改的地方。
+
+**日期短星期为什么存成 key 而不是一个 `shortFn`**：中文要去掉「星期」前缀（下周三），英文没什么可去。存成 `date.weekdayShort.<0-6>` 让译者加语言时不必写 Go。
+
+**顺带修掉的既有缺陷**：`datectx` 的相对日期表在 en-US 下渲染成 `| ThisMonday | … |`（中文 `本周`+`三` 连写，英文照抄丢了空格）。现在 `date.rel` 分 locale 给，`"%s%s"` / `"%s %s"`。
+
+**没有改、也不该改成 key 的**：`ai/prompts.go` 的 `DefaultPersona`/`HardBoundaryReminder`、`worker.go` 的 `buildBriefSystemPrompt`/`buildReplanSystemPrompt`。这四段是多段落提示词，正确去处是 `prompts/<locale>/*.tmpl` —— 已有机制、已带启动期双 locale 硬校验、落 `prompt_overrides` 后控制台可改。属批次 5 的「提示词一次性收口」。
+
+**外部 provider 的语言参数是另一回事**（`internal/weather/lang.go` 的 `Lang(locale, codes, fallback)`）：每个上游有自己的代码空间（QWeather `zh`/`zh-hant`、OWM `zh_cn`/`zh_tw`、wttr.in 只有一种中文），表跟着 provider 走，只共享查表逻辑。上游没有的语言退回它自己的默认值 —— 语言不对的天气预报仍然告诉你会下雨。
+
+### 还没做的
+
+- **DB 覆盖层的表**：`SetOverrides` 的接口已就位，但 `locale_overrides` 表要跟**批次 C 的五张表一起建**（proposals / leases / job_runs / rapport / rhythm）—— 三方言 DDL 分两次改是计划明令避免的事，且作者不在本机跑 pg/mysql/mongo，方言分歧只能靠 review 抓。在那之前只有 files + embedded 两层生效。
+- **控制台的语言包分区**（列出已装语言 + 覆盖率、导出、粘贴导入、重载 `LOCALES_DIR`）：批次 F5，`Coverage`/`Export`/`Keys` 都已备好。
 
 ## 操作域（OperationLog.Domain）
 
