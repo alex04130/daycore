@@ -18,6 +18,7 @@
 | `internal/search/` | web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS 优先 + 子串兜底，见 DATA.md） |
 | `internal/weather/` | WeatherProvider registry（open-meteo/qweather/owm/wttr.in，30min 缓存） |
 | `internal/version/` | 版本唯一真源：Version="2.2.0" Channel="beta"；APIVersion 契约常量（阶段 1 加） |
+| `internal/rapport/` `internal/rhythm/` | 默契评分与主动性门控 / 节律学习 + 20h 关怀（均为纯函数，零存储，见 DATA.md） |
 | `internal/schedule/` `internal/ics/` `internal/i18n/` | 规则展开引擎 / ICS 解析 / locale 协商（默认 en-US，支持 zh-CN）+ `Text`/`Pick` 翻译表与回退链，见 DATA.md |
 
 ## 中间件链（server.go 底部，全局单链，无分组）
