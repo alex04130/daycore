@@ -352,5 +352,12 @@ type ProposalRepository interface {
 	// nothing at all — the one outcome consensus 15 does not allow, since
 	// throttling delivery is not the same as cancelling it. Comparing creation
 	// order makes the survivor the same card whichever daemon calls first.
+	//
+	// The order has to be TOTAL, and creation time alone is not: timestamps are
+	// millisecond-resolution and two instances reacting to one trigger land in
+	// the same millisecond routinely. On a tie neither card is older than the
+	// other, so a strict comparison retires nothing and BOTH are delivered —
+	// the same failure from the other direction. Ties break on id, which is
+	// arbitrary but identical from either caller's side.
 	Supersede(ctx context.Context, sessionID, mergeKey, keepID string) (int, error)
 }

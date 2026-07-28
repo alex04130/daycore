@@ -173,3 +173,47 @@ func TestProbeZeroPointerTimes(t *testing.T) {
 	got, _ := s.Proposals().Get(ctx, "s1", p.ID)
 	t.Logf("PROBE pointer-to-zero PushedAt came back %v / DeliveredAt %v", got.PushedAt, got.DeliveredAt)
 }
+
+func TestProbeSupersedeExactTie(t *testing.T) {
+	s, ctx := newStore(t)
+	a := pending("s1", "a")
+	a.MergeKey = "mk"
+	b := pending("s1", "b")
+	b.MergeKey = "mk"
+	_ = s.Proposals().Create(ctx, a)
+	_ = s.Proposals().Create(ctx, b)
+	// Force both into the same millisecond, which is what two daemons on two
+	// instances produce on a fast machine.
+	if _, err := s.exec(ctx, `UPDATE proposals SET created_at = 1000 WHERE session_id = ?`, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Proposals().Supersede(ctx, "s1", "mk", b.ID)
+	t.Logf("PROBE exact created_at tie -> Supersede retired %d err=%v (want 1)", n, err)
+	list, _ := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", State: domain.ProposalPending, Undelivered: true})
+	t.Logf("PROBE undelivered pending survivors = %d", len(list))
+}
+
+func TestProbeObserveMidnightZero(t *testing.T) {
+	s, ctx := newStore(t)
+	for _, m := range []int{0, 500, 300} {
+		if err := s.Rhythm().Observe(ctx, "s1", "2026-07-26", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d, _ := s.Rhythm().Days(ctx, "s1", 5)
+	t.Logf("PROBE first=%d last=%d signals=%d (want 0..500 over 3)", d[0].FirstMin, d[0].LastMin, d[0].Signals)
+}
+
+func TestProbeEmptyEnumStrings(t *testing.T) {
+	s, ctx := newStore(t)
+	p := pending("s1", "empty enums")
+	p.BType = ""
+	p.LockLevel = ""
+	p.Resolution = ""
+	p.Origin = ""
+	if err := s.Proposals().Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Proposals().Get(ctx, "s1", p.ID)
+	t.Logf("PROBE btype=%q lock=%q resolution=%q origin=%q", got.BType, got.LockLevel, got.Resolution, got.Origin)
+}

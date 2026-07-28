@@ -220,7 +220,12 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 	var keeper proposalDoc
 	if err := r.c("proposals").FindOne(ctx, bson.M{"_id": keepID, "session_id": sessionID}).Decode(&keeper); err != nil {
 		if notFound(err) {
-			return 0, domain.ErrNotFound
+			// A keeper that no longer exists is nothing to merge against — the
+			// same non-event as an empty merge key. The SQL side reaches the
+			// same conclusion by way of a NULL comparison; both must answer
+			// (0, nil) or a caller that aborts on ErrNotFound would abort on
+			// one backend and proceed on the other for identical data.
+			return 0, nil
 		}
 		return 0, err
 	}
@@ -231,7 +236,12 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 			"_id":          bson.M{"$ne": keepID},
 			"state":        string(domain.ProposalPending),
 			"delivered_at": bson.M{"$exists": false},
-			"created_at":   bson.M{"$lt": keeper.CreatedAt},
+			// A total order: older, or the same instant and a lower id. Strict
+			// "older" alone leaves two same-millisecond cards both alive.
+			"$or": []bson.M{
+				{"created_at": bson.M{"$lt": keeper.CreatedAt}},
+				{"created_at": keeper.CreatedAt, "_id": bson.M{"$lt": keepID}},
+			},
 		},
 		bson.M{
 			"$set": bson.M{

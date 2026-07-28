@@ -190,9 +190,11 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 	res, err := r.exec(ctx,
 		`UPDATE proposals SET state = ?, resolution = ?, rev = rev + 1, updated_at = ?
 		 WHERE session_id = ? AND merge_key = ? AND id <> ? AND state = ? AND delivered_at IS NULL
-		   AND created_at < (SELECT created_at FROM (SELECT created_at FROM proposals WHERE id = ?) AS keeper)`,
+		   AND (created_at < (SELECT created_at FROM (SELECT created_at FROM proposals WHERE id = ?) AS k1)
+			 OR (created_at = (SELECT created_at FROM (SELECT created_at FROM proposals WHERE id = ?) AS k2)
+				 AND id < ?))`,
 		string(domain.ProposalExpired), string(domain.ResolutionSuperseded), now,
-		sessionID, mergeKey, keepID, string(domain.ProposalPending), keepID)
+		sessionID, mergeKey, keepID, string(domain.ProposalPending), keepID, keepID, keepID)
 	if err != nil {
 		return 0, err
 	}

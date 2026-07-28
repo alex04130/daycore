@@ -97,8 +97,22 @@ func leaseFromDoc(d leaseDoc) *domain.Lease {
 
 // ── job runs ────────────────────────────────────────────────────────────────
 
+// _id is the OCCURRENCE, not the claim: "<session>:<job>:<runKey>". That makes
+// the insert-as-claim mechanism the primary key itself rather than a secondary
+// unique index, and — the reason it matters here — it lets a takeover rotate the
+// claim id inside one atomic update.
+//
+// The SQL side rotates the row's primary key in its takeover UPDATE, so a
+// previous owner waking up late calls Finish with an id that matches nothing and
+// its stale verdict is a no-op. Mongo cannot mutate _id, and delete-then-insert
+// is not the same thing: between the two statements the occurrence does not
+// exist, so a cancelled context there destroys the record of the attempts that
+// came before — including the "running" row that Prune deliberately keeps as the
+// only trace of a job that crashed and never came back.
 type jobRunDoc struct {
-	ID        string     `bson:"_id"`
+	Key string `bson:"_id"` // session:job:runKey
+	// ClaimID is what Finish matches on: the rotating half.
+	ClaimID   string     `bson:"claim_id"`
 	SessionID string     `bson:"session_id"`
 	Job       string     `bson:"job_name"`
 	RunKey    string     `bson:"run_key"`
@@ -110,11 +124,15 @@ type jobRunDoc struct {
 	Error     string     `bson:"error_text,omitempty"`
 }
 
+func jobRunKey(sessionID, job, runKey string) string {
+	return sessionID + ":" + job + ":" + runKey
+}
+
 type jobRunRepo struct{ *Store }
 
-// Claim relies on the unique index over (session_id, job_name, run_key) exactly
-// as the SQL side does: the insert IS the claim. Write first, work second — the
-// other order leaves open the window this exists to close.
+// Claim relies on _id being the occurrence: the insert IS the claim, and a
+// duplicate-key failure means somebody else already owns it. Write first, work
+// second — the other order leaves open the window this exists to close.
 func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error) {
 	if run.ID == "" {
 		run.ID = uuid.NewString()
@@ -127,7 +145,8 @@ func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error)
 	}
 
 	_, err := r.c("job_runs").InsertOne(ctx, jobRunDoc{
-		ID: run.ID, SessionID: run.SessionID, Job: run.Job, RunKey: run.RunKey,
+		Key: jobRunKey(run.SessionID, run.Job, run.RunKey), ClaimID: run.ID,
+		SessionID: run.SessionID, Job: run.Job, RunKey: run.RunKey,
 		Status: string(domain.JobRunning), Instance: run.Instance,
 		StartedAt: now, Attempts: run.Attempts,
 	})
@@ -136,43 +155,52 @@ func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error)
 	}
 
 	// Lost the race. Take over a claim stuck in "running" past when its owner
-	// could still be working, or a "failed" one with retries left — the same two
-	// cases the SQL side allows.
+	// could still be working, or one that failed with retries left — the same two
+	// branches, with the same two caps, as the SQL side.
 	//
-	// The takeover must ROTATE the id, as the SQL UPDATE does, and _id is
-	// immutable in Mongo — so this is a delete of the old document followed by
-	// an insert of ours. Keeping the old _id and handing it back would let the
-	// previous owner, waking up late, call Finish and stamp ITS verdict on OUR
-	// run: a job that is running fine gets marked failed by a zombie. Losing the
-	// delete race just means somebody else took over first, which is a refusal,
-	// not an error.
-	del := r.c("job_runs").FindOneAndDelete(ctx, bson.M{
-		"session_id": run.SessionID, "job_name": run.Job, "run_key": run.RunKey,
-		"$or": []bson.M{
-			{"status": string(domain.JobRunning), "started_at": bson.M{"$lt": now.Add(-domain.JobStaleAfter)}},
-			{"status": string(domain.JobFailed), "attempts": bson.M{"$lt": domain.JobMaxAttempts}},
+	// One atomic update, rotating claim_id. No delete: the occurrence row must
+	// never stop existing, because it carries the attempt history and, when a job
+	// dies for good, it is the only record that it ever ran.
+	res := r.c("job_runs").FindOneAndUpdate(ctx,
+		bson.M{
+			"_id": jobRunKey(run.SessionID, run.Job, run.RunKey),
+			"$or": []bson.M{
+				{
+					"status":     string(domain.JobRunning),
+					"started_at": bson.M{"$lt": now.Add(-domain.JobStaleAfter)},
+					"attempts":   bson.M{"$lt": domain.JobMaxCrashAttempts},
+				},
+				{
+					"status":   string(domain.JobFailed),
+					"attempts": bson.M{"$lt": domain.JobMaxAttempts},
+				},
+			},
 		},
-	})
-	var old jobRunDoc
-	if derr := del.Decode(&old); derr != nil {
+		bson.M{
+			"$set": bson.M{
+				"claim_id": run.ID, "instance": run.Instance,
+				"started_at": now, "status": string(domain.JobRunning),
+			},
+			"$inc":   bson.M{"attempts": 1},
+			"$unset": bson.M{"ended_at": "", "error_text": ""},
+		},
+		options.FindOneAndUpdate().SetReturnDocument(options.After))
+	var d jobRunDoc
+	if derr := res.Decode(&d); derr != nil {
 		if notFound(derr) {
 			return false, nil
 		}
 		return false, derr
 	}
-	run.Attempts = old.Attempts + 1
-	if _, ierr := r.c("job_runs").InsertOne(ctx, jobRunDoc{
-		ID: run.ID, SessionID: run.SessionID, Job: run.Job, RunKey: run.RunKey,
-		Status: string(domain.JobRunning), Instance: run.Instance,
-		StartedAt: now, Attempts: run.Attempts,
-	}); ierr != nil {
-		return false, ierr
-	}
+	run.Attempts = d.Attempts
 	return true, nil
 }
 
+// Finish matches on claim_id, not _id: a previous owner waking up late holds a
+// claim id that a takeover has since rotated away, so its stale verdict lands on
+// nothing instead of marking a healthy run failed.
 func (r jobRunRepo) Finish(ctx context.Context, id string, status domain.JobStatus, errText string, at time.Time) error {
-	_, err := r.c("job_runs").UpdateOne(ctx, bson.M{"_id": id},
+	_, err := r.c("job_runs").UpdateOne(ctx, bson.M{"claim_id": id},
 		bson.M{"$set": bson.M{"status": string(status), "ended_at": at, "error_text": errText}})
 	return err
 }
@@ -194,7 +222,7 @@ func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]do
 			return nil, err
 		}
 		out = append(out, domain.JobRun{
-			ID: d.ID, SessionID: d.SessionID, Job: d.Job, RunKey: d.RunKey,
+			ID: d.ClaimID, SessionID: d.SessionID, Job: d.Job, RunKey: d.RunKey,
 			Status: domain.JobStatus(d.Status), Instance: d.Instance,
 			StartedAt: d.StartedAt, EndedAt: d.EndedAt, Attempts: d.Attempts, Error: d.Error,
 		})

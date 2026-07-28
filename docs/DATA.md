@@ -282,7 +282,12 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 - **接管时轮换行的 id**。原持有者要是终于醒过来调 `Finish`，它手上的 id 已经匹配不到任何行，那次迟到的写入变成无害空操作，而不是对新持有者那次运行的判决。Mongo 侧因为 `_id` 不可变，用「删旧 + 插新」复现同一语义。
 - `failed` 可重试，上限 `JobMaxAttempts=3`：不重试则一次早报失败就赔掉一整天；无上限则一个必然失败的任务（密钥被吊销）每 tick 刷一条。
 - **被抑制的任务（关了开关 / 免打扰）不写行** —— 每半小时记一条「什么都没做」会把真正有信息的行埋掉。
-- ⚠️ **`started_at` 由占有方自己的时钟写，超时判定由读方的时钟做。** 跨机时钟偏差必须小于 `JobStaleAfter`（10 分钟），否则慢钟实例的占有会被立刻偷走。这是部署要求（NTP），不是代码能修的。
+- **停滞接管也有上限**（`JobMaxCrashAttempts=6`，比 `JobMaxAttempts=3` 大）：返回错误的任务走前者，**杀死自己实例的任务**（大上下文 OOM）什么都不返回、行停在 running、十分钟后被下一个实例接管、再 OOM 一次 —— 没有上限这个循环永不终止，而 attempts 列就在那里记着它已经发生七次了却没人读。
+- **接管成功后要把行里的 attempts 读回调用方的结构体**。留在 1 会让「这是不是最后一次尝试」永远答错，而 Mongo 侧返回的是真值 —— 两个后端对同一次调用给出不同答案比任何一个答案都糟。
+- ⚠️ **`started_at` 由占有方自己的时钟写，超时判定由读方的时钟做。** 跨机时钟偏差必须小于 `JobStaleAfter`（10 分钟），否则慢钟实例能偷走一个几毫秒前的占有、把同一场次跑两遍。**`Claim` 只应由 lease 持有者调用** —— lease 是「两个实例不会同时走到这里」的保证，但主机之间仍必须 NTP 同步在 `JobStaleAfter` 之内。这是部署要求，不是代码能修的。
+- **`Acquire` 的后像不能无条件返回。** 它用第二条语句读回行，而在这个间隙里，一个跑快的时钟能把 lease 抢走 —— 不加校验就会把「写着别人是持有者、带着别人 fence」的那一行交给我们，于是我们把别人的 fence 记成自己的、断定什么都没变。**那正是 fence 存在要抓的唯一那种失败**，不能在这里被打败。`confirm()` 校验行是否仍然指着我们。
+- **`Acquire` 的首次 INSERT 失败不能一律吞掉。** 「别人先插进去了」与「数据库连不上」在这里长得一样，全吞成落选会让一次故障看起来像一次普通交接：worker 静默变闲，任何地方都没有一句话说明原因。改成失败后读回行 —— 行在了就是真落选，读也失败就把错误抛出去。
+- **Mongo 侧 `_id` 是「场次」而不是「占有」**（`session:job:runKey`），另有一个轮换的 `claim_id`，`Finish` 匹配后者。SQL 在一条 UPDATE 里轮换主键，Mongo 的 `_id` 不可变 —— 而「删了再插」不是同一回事：两条语句之间那个场次**根本不存在**，此时 ctx 被取消就永久毁掉了此前的尝试记录，包括 `Prune` 特意保留的那条「崩溃后再没回来」的 running 行。现在是一条原子 `FindOneAndUpdate`。
 
 **UPDATE-then-INSERT 的 upsert 必须处理 INSERT 输掉。** 并发首写时两边 UPDATE 都影响 0 行、都 INSERT、一个撞唯一键。此时**重试 UPDATE**：赢家的行已经在了，我们的值照样写进去，那个约束错误本来就不该给调用方看见。`leaseRepo.Acquire` 与 `jobRunRepo.Claim` 一直是这么做的，另外三处（rapport / rhythm_days / locale_overrides）漏了。
 
@@ -305,6 +310,8 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 ### 其余设计要点
 
 - `proposals` 的 `rows_json`/`ops_json`/`applied_op_ids`/`accept_op_ids` 都是 JSON 列不建子表，`rev` 做乐观锁。行级接受要同时改「这一行的状态」与「父卡是否全部落定」，无事务下 JSON 列 + CAS 是一次单行 UPDATE。
+- **`Supersede` 的顺序必须是全序**。按 `created_at` 严格比较不够：时间戳是毫秒精度，两个 daemon 响应同一个触发落在同一毫秒里是常态，此时谁都不比谁旧，于是**一张都不退休、两张都投递** —— 与互相消灭同一个失败的另一面。并列时按 id 破 —— 任意，但从任一调用方看都一样。
+- **keeper 不存在时两侧都返回 `(0, nil)`**：没有 keeper 就是没有东西可合并，与 mergeKey 为空是同一个非事件。一侧返回 `ErrNotFound` 会让「遇到 ErrNotFound 就中止本轮投递」的调用方在一个后端中止、在另一个继续。
 - `ProposalFilter.DeliverableAt` 让「现在可投递」进 WHERE。**`Undelivered` 单独用不是待发池**：它会带上池子里已过期的、和压后再投的，两者用户都不该看见；取回来再在 Go 里筛会让 `LIMIT` 先于筛选生效，一池过期卡能让本该有内容的一页返回空。
 - `rhythm_days` **一人一天一行，不是一个信号一行**。心跳每分钟一次就是每人每天约 1400 行，而 `Learn` 只读每天的首尾；`CurrentRun` 只要「这段连续清醒从何时开始」，那是 `rhythm_profiles` 上两列的 O(1) 维护。`internal/rhythm/incremental.go` 的 `Day`/`Live` 是这一对，与原始信号版本共用同一个核（`LearnDays`），有测试逐步比对两者。
 - `rapport_states` 的 `scores_json` 用 JSON 不用四对具名列：域列表今天是闭的，但一域一列会让加一个域变成三方言迁移，而且没有任何跨会话查询能从「可查询」里得到好处。

@@ -136,10 +136,37 @@ const JobStaleAfter = 10 * time.Minute
 // permanent one stops being a story after a minute.
 const JobMaxAttempts = 3
 
+// JobMaxCrashAttempts bounds takeovers of an occurrence stuck in "running".
+//
+// A job that fails returns an error and is capped at JobMaxAttempts. A job that
+// kills its instance — OOM on a large context, say — returns nothing, leaves the
+// row "running", and gets taken over ten minutes later by the next instance,
+// which OOMs the same way. Without a bound here that loop never ends, and the
+// attempts column sits there recording that it has happened seven times while
+// nothing reads it.
+//
+// Higher than JobMaxAttempts because a crash is likelier to be circumstantial
+// than a returned error is, and because the ten-minute wait already throttles it
+// hard.
+const JobMaxCrashAttempts = 6
+
 type JobRunRepository interface {
 	// Claim tries to take ownership of one occurrence. ok is false when someone
 	// else already holds it and their claim is neither finished nor stale, and
-	// when a failed occurrence has already used up JobMaxAttempts.
+	// when the occurrence has used up its attempts (JobMaxAttempts after a
+	// returned error, JobMaxCrashAttempts after a claim that never came back).
+	//
+	// On success run.ID and run.Attempts reflect the row, including after a
+	// takeover — a caller that decides "this was the last try, tell the user the
+	// integration is broken" reads Attempts, so it has to be the row's value and
+	// not the one the caller passed in.
+	//
+	// ⚠️ Only the lease holder should call this. Staleness compares started_at,
+	// written by the previous claimant's clock, against the caller's own — so a
+	// caller whose clock runs more than JobStaleAfter fast can steal a claim that
+	// is milliseconds old and run the occurrence twice. The lease is what keeps
+	// two instances from reaching here at once; hosts still have to be within
+	// JobStaleAfter of each other.
 	//
 	// A suppressed job — the user turned that toggle off, or Do Not Disturb is
 	// on — should never reach here. Writing a row every half hour to record

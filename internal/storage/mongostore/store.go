@@ -132,10 +132,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "state", Value: 1}, {Key: "ttl_policy", Value: 1}, {Key: "expires_at", Value: 1}}}},
 		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "merge_key", Value: 1}}}},
 		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "date", Value: 1}}}},
-		// job_runs' unique index is not an optimisation — it IS the mutual
-		// exclusion. Claim inserts and reads the duplicate-key failure as
-		// "someone else owns this occurrence".
-		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "job_name", Value: 1}, {Key: "run_key", Value: 1}}, Options: uniq}},
+		// job_runs needs no unique index over (session_id, job_name, run_key):
+		// _id IS that tuple, so the primary key already is the mutual exclusion
+		// Claim relies on. A second index over the same thing would cost writes
+		// and enforce nothing new.
+		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "claim_id", Value: 1}}}},
 		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "started_at", Value: -1}}}},
 		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "started_at", Value: 1}}}},
 		{"rhythm_days", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "day", Value: -1}}}},

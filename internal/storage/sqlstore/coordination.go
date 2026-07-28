@@ -35,7 +35,7 @@ func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Du
 		return nil, false, err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		return r.get(ctx, name)
+		return r.confirm(ctx, name, holder, now)
 	}
 
 	// Take-over: unheld or expired. Bumping the fence in the same statement is
@@ -48,7 +48,7 @@ func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Du
 		return nil, false, err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		return r.get(ctx, name)
+		return r.confirm(ctx, name, holder, now)
 	}
 
 	// First time this lease has ever been claimed. A concurrent insert loses on
@@ -56,13 +56,36 @@ func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Du
 	_, err = r.exec(ctx,
 		`INSERT INTO leases (lease_name, holder, acquired_at, expires_at, fence) VALUES (?, ?, ?, ?, 1)`,
 		name, holder, nowMS, expires)
-	if err != nil {
-		// Somebody inserted first, or it is held and unexpired. Either way we
-		// do not have it; report that rather than the driver's error, which
-		// differs per engine and says nothing useful.
-		return nil, false, nil
+	if err == nil {
+		return r.confirm(ctx, name, holder, now)
 	}
-	return r.get(ctx, name)
+	// The insert failed. Distinguishing "somebody inserted first" from "the
+	// database is unreachable" matters: swallowing both as a lost election means
+	// an outage looks like an ordinary hand-over, the worker goes quiet, and
+	// nothing anywhere says why. Reading the row back is dialect-free — a row
+	// that now exists means we simply lost.
+	if l, _, gerr := r.get(ctx, name); gerr == nil {
+		return l, l.Held(holder, now), nil
+	}
+	return nil, false, err
+}
+
+// confirm re-reads the row after a statement claimed to have won it, and reports
+// ok only if the row still names us.
+//
+// The post-image cannot come from the acquiring statement on every engine, so it
+// comes from a follow-up SELECT — and in the gap between the two, an instance
+// whose clock runs fast can see our fresh expires_at as already lapsed and take
+// the lease. Returning the row unchecked would then hand US the row that says
+// somebody ELSE is the holder, with THEIR fence, so we would record their fence
+// as our own and conclude nothing had changed. That is the one failure the fence
+// exists to catch (domain/coordination.go), so it cannot be defeated here.
+func (r leaseRepo) confirm(ctx context.Context, name, holder string, now time.Time) (*domain.Lease, bool, error) {
+	l, _, err := r.get(ctx, name)
+	if err != nil {
+		return nil, false, err
+	}
+	return l, l.Held(holder, now), nil
 }
 
 func (r leaseRepo) Release(ctx context.Context, name, holder string) error {
@@ -145,18 +168,27 @@ func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error)
 		`UPDATE job_runs SET id = ?, status = ?, instance = ?, started_at = ?, ended_at = NULL,
 			attempts = attempts + 1, error_text = NULL
 		 WHERE session_id = ? AND job_name = ? AND run_key = ?
-		   AND ((status = ? AND started_at < ?) OR (status = ? AND attempts < ?))`,
+		   AND ((status = ? AND started_at < ? AND attempts < ?)
+			 OR (status = ? AND attempts < ?))`,
 		run.ID, string(domain.JobRunning), run.Instance, now,
 		run.SessionID, run.Job, run.RunKey,
-		string(domain.JobRunning), stale,
+		string(domain.JobRunning), stale, domain.JobMaxCrashAttempts,
 		string(domain.JobFailed), domain.JobMaxAttempts)
 	if uerr != nil {
 		return false, uerr
 	}
-	if n, _ := res.RowsAffected(); n > 0 {
-		return true, nil
+	if n, _ := res.RowsAffected(); n == 0 {
+		return false, nil
 	}
-	return false, nil
+	// The UPDATE incremented attempts in the database; read it back so the
+	// caller's struct agrees with the row. Leaving it at 1 would tell a caller
+	// that checks "was this the last try?" the wrong thing forever, and the
+	// Mongo implementation returns the real count — two backends answering the
+	// same call differently is worse than either answer.
+	if err := r.queryRow(ctx, `SELECT attempts FROM job_runs WHERE id = ?`, run.ID).Scan(&run.Attempts); err != nil {
+		return true, nil // we hold it; the count is cosmetic next to that
+	}
+	return true, nil
 }
 
 func (r jobRunRepo) Finish(ctx context.Context, id string, status domain.JobStatus, errText string, at time.Time) error {

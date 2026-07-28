@@ -913,3 +913,139 @@ func TestOnlyPostgresTakesAMigrationLock(t *testing.T) {
 		}
 	}
 }
+
+// ── what the adversarial concurrency pass reproduced ─────────────────────────
+
+// Acquire reads its post-image with a second statement, and in the gap an
+// instance whose clock runs fast can take the lease. Returning that row
+// unchecked handed US the row naming somebody ELSE as holder, with THEIR fence —
+// so we would record their fence as our own and conclude nothing had changed.
+// That is precisely the failure the fence exists to catch.
+func TestLeaseAcquireDoesNotClaimSomeoneElsesRow(t *testing.T) {
+	s, ctx := newStore(t)
+	base := time.Now()
+
+	if _, ok, err := s.Leases().Acquire(ctx, domain.LeaseWorker, "a", time.Minute, base); err != nil || !ok {
+		t.Fatalf("first acquire: %v %v", ok, err)
+	}
+	// B's clock runs a minute fast, so it sees A's fresh lease as lapsed and
+	// legitimately takes over.
+	if _, ok, err := s.Leases().Acquire(ctx, domain.LeaseWorker, "b", time.Minute, base.Add(2*time.Minute)); err != nil || !ok {
+		t.Fatalf("skewed takeover: %v %v", ok, err)
+	}
+	// Now A renews, believing it still holds it. Its renewal UPDATE cannot match
+	// (holder is B), its takeover UPDATE cannot match (B's lease is live by A's
+	// clock), so it must come back false — and must not report B's fence as its
+	// own.
+	l, ok, err := s.Leases().Acquire(ctx, domain.LeaseWorker, "a", time.Minute, base.Add(30*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("A came back holding a lease that B owns")
+	}
+	if l != nil && l.Holder != "b" {
+		t.Errorf("the row should name B, got %q", l.Holder)
+	}
+}
+
+// Two daemons reacting to one trigger land in the same millisecond routinely.
+// With a strict created_at comparison neither is older than the other, so
+// nothing is retired and BOTH are delivered — the same failure as mutual
+// annihilation, from the other direction.
+func TestSupersedeBreaksTiesSoExactlyOneSurvives(t *testing.T) {
+	s, ctx := newStore(t)
+	a := pending("s1", "daemon A 的卡")
+	a.MergeKey = "gap"
+	b := pending("s1", "daemon B 的卡")
+	b.MergeKey = "gap"
+	for _, p := range []*domain.Proposal{a, b} {
+		if err := s.Proposals().Create(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Force the tie the millisecond clock produces on its own.
+	if _, err := s.exec(ctx, `UPDATE proposals SET created_at = 1750000000000 WHERE session_id = ?`, "s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.Proposals().Supersede(ctx, "s1", "gap", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Proposals().Supersede(ctx, "s1", "gap", b.ID); err != nil {
+		t.Fatal(err)
+	}
+	live, err := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", State: domain.ProposalPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(live) != 1 {
+		var got []string
+		for _, p := range live {
+			got = append(got, p.Title)
+		}
+		t.Fatalf("%d survivors (%v), want exactly 1 even on a tie", len(live), got)
+	}
+}
+
+// A missing keeper is nothing to merge against — the same non-event as an empty
+// merge key. Both stores must say so identically, or a caller that aborts the
+// delivery pass on ErrNotFound aborts on one backend and proceeds on the other.
+func TestSupersedeWithAMissingKeeperIsANonEvent(t *testing.T) {
+	s, ctx := newStore(t)
+	p := pending("s1", "孤零零一张")
+	p.MergeKey = "gap"
+	if err := s.Proposals().Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.Proposals().Supersede(ctx, "s1", "gap", "an-id-that-never-existed")
+	if err != nil {
+		t.Errorf("want (0, nil), got err %v", err)
+	}
+	if n != 0 {
+		t.Errorf("retired %d against a keeper that does not exist", n)
+	}
+}
+
+// A job that kills its instance leaves the row "running", gets taken over ten
+// minutes later, and kills the next instance the same way. Without a bound on
+// the crash branch that loop never ends, while the attempts column sits there
+// recording that it has happened seven times.
+func TestJobRunCrashTakeoverIsBounded(t *testing.T) {
+	s, ctx := newStore(t)
+	mk := func(inst string) *domain.JobRun {
+		return &domain.JobRun{SessionID: "s1", Job: domain.JobAutoPlan, RunKey: "k", Instance: inst}
+	}
+	first := mk("i0")
+	if ok, err := s.JobRuns().Claim(ctx, first); err != nil || !ok {
+		t.Fatal(err)
+	}
+	steals := 0
+	for i := 0; i < domain.JobMaxCrashAttempts+3; i++ {
+		// The claimant died: backdate its claim past the staleness window.
+		if _, err := s.exec(ctx, `UPDATE job_runs SET started_at = ? WHERE session_id = ?`,
+			toMillis(time.Now().Add(-domain.JobStaleAfter-time.Minute)), "s1"); err != nil {
+			t.Fatal(err)
+		}
+		run := mk("i" + string(rune('1'+i)))
+		ok, err := s.JobRuns().Claim(ctx, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			break
+		}
+		steals++
+		// The caller's struct must carry the row's attempt count, not the 1 it
+		// went in with — a caller deciding "was this the last try?" reads it.
+		if run.Attempts != steals+1 {
+			t.Errorf("steal %d reported attempts=%d, want %d", steals, run.Attempts, steals+1)
+		}
+	}
+	if steals >= domain.JobMaxCrashAttempts+3 {
+		t.Errorf("crash takeover never stopped: %d steals", steals)
+	}
+	if steals == 0 {
+		t.Error("a genuinely dead claim should be recoverable at least once")
+	}
+}
