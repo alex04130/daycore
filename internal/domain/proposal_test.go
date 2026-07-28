@@ -10,6 +10,10 @@ func validProposal() *Proposal {
 	return &Proposal{
 		SessionID: "sid", Title: "把复习挪到晚上",
 		Level: LevelL2, Kind: KindCard, TTLPolicy: TTLSilenceRejects,
+		// Every proposal has a deadline. Without one the first expiry sweep
+		// resolves it as silence, so a card with no ExpiresAt is born dead —
+		// which is why Validate refuses it.
+		ExpiresAt: time.Now().Add(time.Hour),
 	}
 }
 
@@ -59,6 +63,10 @@ func TestProposalValidate(t *testing.T) {
 		{"distinct rows", func(p *Proposal) {
 			p.Rows = []ProposalRow{{ID: "r1", Label: "a"}, {ID: "r2", Label: "b"}}
 		}, true},
+		// A card with no deadline is born expired: the first sweep sees the zero
+		// time, decides it lapsed, and resolves it as silence — so it is
+		// rejected at construction instead. ProposalExpiry exists to compute one.
+		{"no deadline", func(p *Proposal) { p.ExpiresAt = time.Time{} }, false},
 	}
 	for _, c := range cases {
 		p := validProposal()

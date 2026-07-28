@@ -129,6 +129,21 @@ const (
 	ActionRevert         = "revert"
 )
 
+// Origin reports the actor and domain of an operation the folder has not seen
+// for itself.
+//
+// A catch-up that resumes from a cursor starts with an empty seen map, so a
+// revert whose original lies before that cursor has nothing to score against.
+// Skipping it would make the incremental result disagree with a full replay —
+// and the cache is only allowed to exist because it is reproducible from the
+// ledger, so a disagreement means the cache has quietly become authoritative
+// over the ledger. That is exactly backwards.
+//
+// The storage layer supplies this (OperationLogRepository.Get). Passing nil
+// restores the old skip-and-hope behaviour and is only correct when every
+// operation is already in the window, which is to say: for a full replay.
+type Origin func(id string) (actor, domain string, ok bool)
+
 // Folder folds operations into scores one at a time, so the same logic serves
 // both a full replay and an incremental catch-up from a cursor.
 //
@@ -137,8 +152,9 @@ const (
 // doing — and it is scored against the domain of that original operation, not
 // the revert's own.
 type Folder struct {
-	scores Scores
-	seen   map[string]seenOp
+	scores  Scores
+	seen    map[string]seenOp
+	resolve Origin
 }
 
 type seenOp struct {
@@ -146,14 +162,19 @@ type seenOp struct {
 	domain string
 }
 
-// NewFolder starts from the cold-start baseline.
+// NewFolder starts from the cold-start baseline. A full replay needs no Origin:
+// every operation a revert can name has already passed through Fold.
 func NewFolder() *Folder {
 	return &Folder{scores: Cold(), seen: map[string]seenOp{}}
 }
 
 // NewFolderFrom resumes from a cached snapshot, for catching up rather than
 // replaying from the beginning.
-func NewFolderFrom(s Scores) *Folder {
+//
+// resolve is not optional in practice. Without it this folder cannot score a
+// revert of anything older than its window, and the cache it produces will
+// differ from a replay — see Origin.
+func NewFolderFrom(s Scores, resolve Origin) *Folder {
 	cp := make(Scores, len(s))
 	for k, v := range s {
 		cp[k] = v
@@ -163,7 +184,7 @@ func NewFolderFrom(s Scores) *Folder {
 			cp[d] = cold
 		}
 	}
-	return &Folder{scores: cp, seen: map[string]seenOp{}}
+	return &Folder{scores: cp, seen: map[string]seenOp{}, resolve: resolve}
 }
 
 // Fold applies one operation. Operations must arrive oldest-first; a revert
@@ -182,11 +203,23 @@ func (f *Folder) Fold(op domain.OperationLog) {
 		f.bump(d, DeltaReject, false)
 	case ActionRevert:
 		orig, ok := f.seen[op.TargetID]
+		if !ok && f.resolve != nil {
+			// The original is behind this folder's window. Look it up rather
+			// than skip, or a catch-up would score fewer reverts than a replay
+			// and the cache would stop matching the ledger. Cache the answer:
+			// a card undone twice must not cost two queries.
+			if actor, dom, found := f.resolve(op.TargetID); found {
+				orig = seenOp{actor: actor, domain: dom}
+				f.seen[op.TargetID] = orig
+				ok = true
+			}
+		}
 		if !ok {
-			// The original is outside this window. Scoring it against the
-			// revert's own domain would attribute the penalty to the wrong
-			// place, and guessing the actor would penalise the agent for the
-			// user undoing their own edit. Skipping is the honest option.
+			// Genuinely unknown — the original has been pruned, or no resolver
+			// was supplied. Scoring it against the revert's own domain would
+			// put the penalty in the wrong place, and guessing the actor would
+			// penalise the agent for the user undoing their own edit. Skipping
+			// is the honest option.
 			return
 		}
 		if orig.actor != domain.ActorAgent {

@@ -293,3 +293,96 @@ func TestRunIsEmptyWhenStale(t *testing.T) {
 		t.Errorf("no signals at all should produce an empty run, got %+v", r2)
 	}
 }
+
+// The incremental state and the reference implementation must agree, or storage
+// would be answering a different question from the one the package documents.
+// This drives the same signal sequence through both and compares at every step.
+func TestLiveAgreesWithCurrentRun(t *testing.T) {
+	cfg := DefaultConfig()
+	base := time.Date(2026, 7, 20, 7, 0, 0, 0, shanghai)
+	gaps := []time.Duration{
+		0, 40 * time.Minute, 2 * time.Hour, 30 * time.Minute, // one stretch
+		5 * time.Hour, // slept
+		time.Hour, 2*time.Hour + 50*time.Minute, 20 * time.Minute,
+		3 * time.Hour, // exactly IdleBreak — breaks
+		time.Minute,
+	}
+	var at time.Time = base
+	var seen []Signal
+	var live Live
+	for i, g := range gaps {
+		at = at.Add(g)
+		seen = append(seen, Signal{At: at, Kind: KindUI})
+		live = live.Observe(at, cfg)
+
+		now := at.Add(10 * time.Minute)
+		want := CurrentRun(seen, now, cfg)
+		got := live.Run(now, cfg)
+		if !got.Since.Equal(want.Since) || got.Continuous != want.Continuous {
+			t.Fatalf("step %d: incremental %+v vs reference %+v", i, got, want)
+		}
+	}
+	// And once they have clearly gone to sleep, both must go quiet.
+	late := at.Add(9 * time.Hour)
+	if got, want := live.Run(late, cfg), CurrentRun(seen, late, cfg); !got.Since.IsZero() || !want.Since.IsZero() {
+		t.Errorf("after a long silence both should be empty: %+v / %+v", got, want)
+	}
+}
+
+// A signal that predates the last one is a retry or a clock that stepped back.
+// Letting it rewrite RunSince would cut short a stretch that in fact continued.
+func TestLiveIgnoresOutOfOrderSignals(t *testing.T) {
+	cfg := DefaultConfig()
+	base := time.Date(2026, 7, 20, 8, 0, 0, 0, shanghai)
+	live := Live{}.Observe(base, cfg).Observe(base.Add(time.Hour), cfg)
+	before := live
+	if got := live.Observe(base.Add(30*time.Minute), cfg); got != before {
+		t.Errorf("an out-of-order signal changed the state: %+v → %+v", before, got)
+	}
+}
+
+// Day aggregation must produce exactly what the reference path learns from.
+func TestLearnDaysMatchesLearnFromSignals(t *testing.T) {
+	cfg := DefaultConfig()
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, shanghai)
+	var sigs []Signal
+	for d := 14; d <= 19; d++ {
+		sigs = append(sigs, at(d, 8, 0), at(d, 13, 0), at(d, 23, 0))
+	}
+	fromSignals := Learn(Profile{}, sigs, now, shanghai, cfg)
+
+	// Now the storage path: fold each signal into a per-day row as it arrives.
+	rows := map[string]Day{}
+	for _, s := range sigs {
+		key, minute := DayOf(s.At, shanghai, cfg)
+		rows[key] = rows[key].Extend(key, minute)
+	}
+	days := make([]Day, 0, len(rows))
+	for _, d := range rows {
+		days = append(days, d)
+	}
+	fromDays := LearnDays(Profile{}, days, cfg)
+
+	if fromSignals != fromDays {
+		t.Errorf("signals → %+v but days → %+v", fromSignals, fromDays)
+	}
+	if fromDays.Wake != "08:00" || fromDays.Sleep != "23:00" {
+		t.Errorf("learned %s/%s", fromDays.Wake, fromDays.Sleep)
+	}
+}
+
+// One signal in a day says nothing about when it began or ended, and the stored
+// row has to reject it for the same reason the reference path does.
+func TestSingleSignalDayIsNotUsable(t *testing.T) {
+	d := Day{}.Extend("2026-07-20", 900)
+	if d.Usable() {
+		t.Error("one signal should not be usable evidence")
+	}
+	if d2 := d.Extend("2026-07-20", 1300); !d2.Usable() || d2.FirstMin != 900 || d2.LastMin != 1300 || d2.Signals != 2 {
+		t.Errorf("two signals should bound the day: %+v", d2)
+	}
+	// Extending must widen in both directions, not just forward.
+	if d3 := d.Extend("2026-07-20", 400); d3.FirstMin != 400 || d3.LastMin != 900 {
+		t.Errorf("earlier signal should move the start: %+v", d3)
+	}
+}

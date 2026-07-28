@@ -199,6 +199,48 @@ func TestDialectsDeclareTheSameIndexes(t *testing.T) {
 	}
 }
 
+// Comma placement inside a CREATE TABLE body: every element but the last needs
+// a trailing comma, and the last must not have one.
+//
+// This is here because it is exactly what the batch C generator got wrong —
+// three MySQL tables came out with no comma before their first inline KEY and a
+// stray one before the closing paren, which is two syntax errors per table and a
+// MySQL that will not boot. The index-parity check could not see it: it matches
+// each KEY line on its own and never looks at the punctuation joining them.
+func TestCreateTableCommasAreWellFormed(t *testing.T) {
+	for name, d := range dialects {
+		for _, stmt := range d.Migrations() {
+			m := reCreateTable.FindStringSubmatch(strings.TrimSpace(stmt))
+			if m == nil {
+				continue
+			}
+			tbl := m[1]
+			var lines []string
+			for _, l := range strings.Split(m[2], "\n") {
+				if strings.TrimSpace(l) != "" {
+					lines = append(lines, strings.TrimSpace(l))
+				}
+			}
+			for i, l := range lines {
+				last := i == len(lines)-1
+				// A multi-line element (none today, but a CHECK or a long
+				// expression could be one) would make this too strict; flag it
+				// rather than guess.
+				if strings.HasSuffix(l, "(") {
+					t.Errorf("%s: %s has a line ending in '(' — the comma check assumes one element per line", name, tbl)
+					continue
+				}
+				if last && strings.HasSuffix(l, ",") {
+					t.Errorf("%s: %s's last element %q has a trailing comma before the closing paren — syntax error", name, tbl, l)
+				}
+				if !last && !strings.HasSuffix(l, ",") {
+					t.Errorf("%s: %s element %q is missing its trailing comma — the next line gets parsed as part of it", name, tbl, l)
+				}
+			}
+		}
+	}
+}
+
 // MySQL rejects a literal DEFAULT on TEXT/BLOB. Postgres and SQLite accept one,
 // so this is invisible until a MySQL box refuses to start.
 func TestMySQLTextColumnsHaveNoLiteralDefault(t *testing.T) {

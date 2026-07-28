@@ -86,6 +86,14 @@ func (s *Store) Feedback() domain.FeedbackLogRepository           { return feedb
 func (s *Store) TempContexts() domain.TempContextRepository       { return tempContextRepo{s} }
 func (s *Store) Wishes() domain.WishRepository                    { return wishRepo{s} }
 
+// Batch C — multi-instance coordination and cached derivations.
+func (s *Store) Proposals() domain.ProposalRepository { return proposalRepo{s} }
+func (s *Store) Leases() domain.LeaseRepository       { return leaseRepo{s} }
+func (s *Store) JobRuns() domain.JobRunRepository     { return jobRunRepo{s} }
+func (s *Store) Rapport() domain.RapportRepository    { return rapportRepo{s} }
+func (s *Store) Rhythm() domain.RhythmRepository      { return rhythmRepo{s} }
+func (s *Store) Locales() domain.LocaleRepository     { return localeRepo{s} }
+
 func (s *Store) Ping(ctx context.Context) error { return s.client.Ping(ctx, nil) }
 func (s *Store) Close() error                   { return s.client.Disconnect(context.Background()) }
 
@@ -116,6 +124,23 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"materials", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "updated_at", Value: -1}}}},
 		{"materials", mongo.IndexModel{Keys: bson.D{{Key: "title", Value: "text"}, {Key: "summary", Value: "text"}, {Key: "body", Value: "text"}}}},
 		{"wishes", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "status", Value: 1}}}},
+
+		// Batch C. These mirror the SQL indexes one for one; a uniqueness
+		// invariant that holds on three engines and not the fourth is not an
+		// invariant (dialect_parity_test.go enforces the SQL half).
+		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "state", Value: 1}, {Key: "expires_at", Value: 1}}}},
+		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "state", Value: 1}, {Key: "ttl_policy", Value: 1}, {Key: "expires_at", Value: 1}}}},
+		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "merge_key", Value: 1}}}},
+		{"proposals", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "date", Value: 1}}}},
+		// job_runs' unique index is not an optimisation — it IS the mutual
+		// exclusion. Claim inserts and reads the duplicate-key failure as
+		// "someone else owns this occurrence".
+		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "job_name", Value: 1}, {Key: "run_key", Value: 1}}, Options: uniq}},
+		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "started_at", Value: -1}}}},
+		{"job_runs", mongo.IndexModel{Keys: bson.D{{Key: "status", Value: 1}, {Key: "started_at", Value: 1}}}},
+		{"rhythm_days", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "day", Value: -1}}}},
+		{"locale_overrides", mongo.IndexModel{Keys: bson.D{{Key: "message_key", Value: 1}, {Key: "locale", Value: 1}}, Options: uniq}},
+		{"locale_overrides", mongo.IndexModel{Keys: bson.D{{Key: "locale", Value: 1}}}},
 	}
 	for _, sp := range specs {
 		if _, err := s.c(sp.coll).Indexes().CreateOne(ctx, sp.model); err != nil {

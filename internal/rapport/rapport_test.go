@@ -122,7 +122,7 @@ func TestIncrementalMatchesReplay(t *testing.T) {
 	for _, o := range ops[:3] {
 		f1.Fold(o)
 	}
-	f2 := NewFolderFrom(f1.Scores())
+	f2 := NewFolderFrom(f1.Scores(), originOf(ops))
 	for _, o := range ops[3:] {
 		f2.Fold(o)
 	}
@@ -226,4 +226,84 @@ func TestMoodKindRegistry(t *testing.T) {
 	}
 	// Label coverage per locale is enforced in internal/domain; here we only
 	// care that a mood can be named at all.
+}
+
+// originOf is the test stand-in for what the storage layer supplies: a lookup
+// of any operation by id, however far back it is.
+func originOf(ops []domain.OperationLog) Origin {
+	return func(id string) (string, string, bool) {
+		for _, o := range ops {
+			if o.ID == id {
+				d := o.Domain
+				if d == "" {
+					d = domain.OpDomainOf(o.Action)
+				}
+				return o.Actor, d, true
+			}
+		}
+		return "", "", false
+	}
+}
+
+// The invariant the whole cache rests on, at the boundary where it actually
+// broke: the agent acts, the cursor advances past that operation, and only THEN
+// does the user undo it.
+//
+// Before Origin existed, the catch-up folder started with an empty seen map,
+// found nothing for the revert's target, and skipped it — so the cached score
+// stayed higher than a replay of the same ledger. A cache that disagrees with
+// the ledger has quietly become authoritative over it.
+func TestIncrementalMatchesReplayAcrossTheCursor(t *testing.T) {
+	ops := []domain.OperationLog{
+		op("a1", "plan_add", domain.OpDomainSchedule, domain.ActorAgent, ""),
+		op("a2", "material_create", domain.OpDomainArchive, domain.ActorAgent, ""),
+		// …cursor sits here…
+		op("r1", ActionRevert, domain.OpDomainSystem, domain.ActorUser, "a1"),
+		op("r2", ActionRevert, domain.OpDomainSystem, domain.ActorUser, "a1"), // same target twice
+	}
+	full := Replay(ops)
+
+	f1 := NewFolder()
+	for _, o := range ops[:2] {
+		f1.Fold(o)
+	}
+	f2 := NewFolderFrom(f1.Scores(), originOf(ops))
+	for _, o := range ops[2:] {
+		f2.Fold(o)
+	}
+	for _, d := range Domains {
+		a, b := full.Get(d), f2.Scores().Get(d)
+		if !near(a.Value, b.Value) || a.Evidence != b.Evidence {
+			t.Errorf("%s: replay %+v vs catch-up %+v — the cache disagrees with the ledger", d, a, b)
+		}
+	}
+}
+
+// Without a resolver the folder cannot see past its own window. That is a
+// documented limitation rather than a silent one, and this pins it so nobody
+// "simplifies" NewFolderFrom back to one argument.
+func TestCatchUpWithoutOriginSkipsOldReverts(t *testing.T) {
+	ops := []domain.OperationLog{
+		op("a1", "plan_add", domain.OpDomainSchedule, domain.ActorAgent, ""),
+		op("r1", ActionRevert, domain.OpDomainSystem, domain.ActorUser, "a1"),
+	}
+	f1 := NewFolder()
+	f1.Fold(ops[0])
+	f2 := NewFolderFrom(f1.Scores(), nil)
+	f2.Fold(ops[1])
+
+	if got := f2.Scores().Get(domain.OpDomainSchedule).Value; near(got, Replay(ops).Get(domain.OpDomainSchedule).Value) {
+		t.Error("a nil Origin should NOT silently match a replay — if it does, the resolver has become pointless")
+	}
+}
+
+// A resolver that cannot find the original (pruned log) must skip rather than
+// guess, exactly as if there were no resolver.
+func TestUnresolvableOriginIsSkipped(t *testing.T) {
+	base := Cold()[domain.OpDomainSchedule].Value
+	f := NewFolderFrom(Cold(), func(string) (string, string, bool) { return "", "", false })
+	f.Fold(op("r1", ActionRevert, domain.OpDomainSchedule, domain.ActorUser, "long-gone"))
+	if got := f.Scores().Get(domain.OpDomainSchedule).Value; !near(got, base) {
+		t.Errorf("value = %v, want untouched %v", got, base)
+	}
 }

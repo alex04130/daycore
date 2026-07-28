@@ -26,6 +26,8 @@
 
 domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文件 + 三方言 DDL → mongostore 加 repo 文件 + accessor → （如需）index specs。
 
+⚠️ `domain.Store` 组合接口是唯一强制两个 store 同步的东西：漏一个 accessor 是编译错误，不是运行时错误。加接口时先加进 `Store`，让编译器把两边都逼出来。三方言 DDL 写完跑 `go test ./internal/storage/sqlstore/` —— `dialect_parity_test.go` 会静态比对三份 schema，见下。
+
 ## 给已有表加列（ColumnMigration 机制）
 
 1. `sqlstore/dialect.go`：`ColumnMigration{Table, Column, DDL}`；共享清单函数 `sessionColumnMigrations(textType)`——名字带 session 但**实际覆盖 sessions/memory_facts/users（阶段 2 起含 chat_messages）**，直接往里 append 即可，三方言自动获得（只有类型 token 不同：sqlite/pg "TEXT"，mysql "VARCHAR(64)"）。
@@ -256,6 +258,57 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 - **DB 覆盖层的表**：`SetOverrides` 的接口已就位，但 `locale_overrides` 表要跟**批次 C 的五张表一起建**（proposals / leases / job_runs / rapport / rhythm）—— 三方言 DDL 分两次改是计划明令避免的事，且作者不在本机跑 pg/mysql/mongo，方言分歧只能靠 review 抓。在那之前只有 files + embedded 两层生效。
 - **控制台的语言包分区**（列出已装语言 + 覆盖率、导出、粘贴导入、重载 `LOCALES_DIR`）：批次 F5，`Coverage`/`Export`/`Keys` 都已备好。
+
+## 多实例与派生缓存的六张表（批次 C，2026-07-27）
+
+一次性给三方言加完，因为分两次改 `dialect_*.go` 是计划明令避免的事，而作者不在本机跑 pg/mysql/mongo。
+
+| 表 | 作用 | 现在接了吗 |
+|---|---|---|
+| `proposals` | 提案统一资源持久化 —— 取代 `agent.go` 的进程内 `map`，那是水平扩展的直接阻碍 | **未接线**，批次 D |
+| `leases` | 选主，只让一个实例跑后台任务 | **未接线**，批次 5 |
+| `job_runs` | 每个任务「场次」的占有与审计 | **未接线**，批次 5 |
+| `rapport_states` | 默契评分缓存 + 账本游标 | **未接线**，批次 D |
+| `rhythm_profiles` / `rhythm_days` | 节律画像 + 每日首尾 | **未接线**，批次 5 |
+| `locale_overrides` | 消息目录的 DB 层（`i18n.Catalog.SetOverrides` 的接口早就在） | **未接线**，批次 F |
+
+**六张表今天全部是死重量** —— 建了、能 round-trip、有测试，但没有任何调用方。别以为提案已经在落库了。
+
+### 两条贯穿性设计
+
+**`job_runs` 是正确性机制，`leases` 只是节流。** 唯一索引 `(session_id, job_name, run_key)` 是四个后端唯一共有的互斥手段（sqlstore 全包无事务），所以**先写行再干活**：INSERT 成功即占有，撞唯一键即别人已占。反过来「干完再记」会留下这张表本来要关掉的窗口。lease 只是省掉「N 个实例各自醒来、建上下文、然后 N−1 个白干」。**正确性不能压在 lease 上，因为 lease 压在时钟上，而不同机器的时钟不一致。**
+
+- lease 的 `fence` 只在**交接**时 +1，续期不动。停顿过久的持有者靠比对 fence 就能发现自己已经不是 leader —— 这是时间戳给不了的，因为它自己的时钟正是不能信的那个东西。
+- **接管时轮换行的 id**。原持有者要是终于醒过来调 `Finish`，它手上的 id 已经匹配不到任何行，那次迟到的写入变成无害空操作，而不是对新持有者那次运行的判决。Mongo 侧因为 `_id` 不可变，用「删旧 + 插新」复现同一语义。
+- `failed` 可重试，上限 `JobMaxAttempts=3`：不重试则一次早报失败就赔掉一整天；无上限则一个必然失败的任务（密钥被吊销）每 tick 刷一条。
+- **被抑制的任务（关了开关 / 免打扰）不写行** —— 每半小时记一条「什么都没做」会把真正有信息的行埋掉。
+- ⚠️ **`started_at` 由占有方自己的时钟写，超时判定由读方的时钟做。** 跨机时钟偏差必须小于 `JobStaleAfter`（10 分钟），否则慢钟实例的占有会被立刻偷走。这是部署要求（NTP），不是代码能修的。
+
+**UPDATE-then-INSERT 的 upsert 必须处理 INSERT 输掉。** 并发首写时两边 UPDATE 都影响 0 行、都 INSERT、一个撞唯一键。此时**重试 UPDATE**：赢家的行已经在了，我们的值照样写进去，那个约束错误本来就不该给调用方看见。`leaseRepo.Acquire` 与 `jobRunRepo.Claim` 一直是这么做的，另外三处（rapport / rhythm_days / locale_overrides）漏了。
+
+### 一次对抗式审查抓到的（全部已修，每条都留了回归测试）
+
+| 缺陷 | 后果 |
+|---|---|
+| MySQL 三张新表内联 `KEY` 前缺逗号、末尾多逗号 | 每张两个 1064 语法错误，**MySQL 起不来**。对等测试当时看不见 —— `reInlineKey` 逐行匹配，不看邻行标点。已补 `TestCreateTableCommasAreWellFormed` |
+| `Supersede` 退休「不是 keepID 的全部」 | 两个 daemon 各建一张同 mergeKey 的卡、各自 supersede 对方 → **存活 0 张**，用户什么都看不到。改成按 `created_at` 比较，谁先调用结果都一样 |
+| `Validate()` 不要求 `ExpiresAt` | 无死线的卡**出生即过期**：第一次清扫看到零值时间，判定已过期、按沉默结案 |
+| `rapportRepo.Get` 丢弃坏缓存后又把游标写回 | 之后**永久跳过**游标之前的全部账本，重建出的读数一直偏低且不会自愈 |
+| `Proposal.Update` 两侧字段清单不一致 | SQL 不写 level/kind/origin/threadID，Mongo 的 `ReplaceOne` 会写。改成同一份清单的 `$set` —— 那五个字段是身份，要改就是新卡 |
+| Mongo 接管不轮换 id | 僵尸实例的 `Finish` 会把新持有者那次运行标成 failed |
+| MySQL 的 `RowsAffected` 是 CHANGED 行 | 23 处调用点依赖它，其中三处把 0 变成 `ErrNotFound` —— **原样保存主题/规则/愿望在 MySQL 上返回 404**；upsert 写同样内容会掉进 INSERT 然后撞自己的唯一键。`mysqlDialect.NormalizeDSN` 强制 `clientFoundRows=true` |
+| SQLite 缺 `busy_timeout` 就立刻 `SQLITE_BUSY` | 两个请求一重叠，`Observe`（每个 awake 信号都跑）就开始失败。`sqliteDialect.NormalizeDSN` 强制 `busy_timeout(5000)` + `journal_mode(WAL)` |
+| Postgres 的 `IF NOT EXISTS` **不是并发原语** | 两个实例同时启动会互相打断迁移（`pg_type` 唯一键冲突）—— 而「两个实例」正是这六张表存在的理由。`postgresDialect.MigrationLock()` 给出 `pg_advisory_lock`，`Migrate` 在**单独一条连接**上持有它（在池化的 `*sql.DB` 上取会话级锁，等于锁在一条没人用的连接上） |
+
+**`NormalizeDSN` 这条模式值得单说**：代码依赖的连接参数不要写进文档等运维抄全 —— DSN 是运维给的，从旧 README 复制一份就静默失去了。方言自己补。
+
+### 其余设计要点
+
+- `proposals` 的 `rows_json`/`ops_json`/`applied_op_ids`/`accept_op_ids` 都是 JSON 列不建子表，`rev` 做乐观锁。行级接受要同时改「这一行的状态」与「父卡是否全部落定」，无事务下 JSON 列 + CAS 是一次单行 UPDATE。
+- `ProposalFilter.DeliverableAt` 让「现在可投递」进 WHERE。**`Undelivered` 单独用不是待发池**：它会带上池子里已过期的、和压后再投的，两者用户都不该看见；取回来再在 Go 里筛会让 `LIMIT` 先于筛选生效，一池过期卡能让本该有内容的一页返回空。
+- `rhythm_days` **一人一天一行，不是一个信号一行**。心跳每分钟一次就是每人每天约 1400 行，而 `Learn` 只读每天的首尾；`CurrentRun` 只要「这段连续清醒从何时开始」，那是 `rhythm_profiles` 上两列的 O(1) 维护。`internal/rhythm/incremental.go` 的 `Day`/`Live` 是这一对，与原始信号版本共用同一个核（`LearnDays`），有测试逐步比对两者。
+- `rapport_states` 的 `scores_json` 用 JSON 不用四对具名列：域列表今天是闭的，但一域一列会让加一个域变成三方言迁移，而且没有任何跨会话查询能从「可查询」里得到好处。
+- `rapport.NewFolderFrom(scores, resolve)` 的 `resolve` 不是可选的 —— 没有它，增量追赶会跳过「原 op 在游标之前」的 revert，缓存与重放分叉，而缓存唯一的存在理由就是它能靠重放重建。存储层用 `OperationLogRepository.Get` 填它。
 
 ## 心情窗口（`internal/mood/`，体验内核 §12.6，2026-07-26）
 

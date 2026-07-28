@@ -155,79 +155,53 @@ func Pin(wake, sleep string) (Profile, error) {
 	return Profile{Wake: wake, Sleep: sleep, Source: SourcePinned}, nil
 }
 
-// Learn folds observations into a profile. signals need not be sorted.
+// Learn folds raw observations into a profile. signals need not be sorted.
 //
-// A pinned profile is returned untouched — that is what pinning means, and the
-// check is here rather than at every call site so there is one place to be
-// right about it.
+// This is the reference path — a one-off recompute, and what the tests drive.
+// The live path aggregates as it goes and calls LearnDays; both go through the
+// same core so the two cannot drift.
 func Learn(prev Profile, signals []Signal, now time.Time, loc *time.Location, cfg Config) Profile {
+	return LearnDays(prev, DaysFrom(signals, now, loc, cfg), cfg)
+}
+
+// LearnDays folds pre-aggregated rhythm days into a profile — what the storage
+// layer calls, since it keeps one row per day rather than one per signal.
+//
+// A pinned profile is returned untouched. That check is here rather than at
+// every call site so there is one place to be right about it.
+func LearnDays(prev Profile, days []Day, cfg Config) Profile {
 	if prev.Source == SourcePinned {
 		return prev
 	}
-	days := groupByRhythmDay(signals, now, loc, cfg)
-	if len(days) < cfg.MinDays {
+	usable := make([]Day, 0, len(days))
+	for _, d := range days {
+		if d.Usable() {
+			usable = append(usable, d)
+		}
+	}
+	if len(usable) < cfg.MinDays {
 		// Report progress towards being learned, but keep the scheduler on the
 		// defaults — two days of evidence is an anecdote.
 		cold := Cold()
-		cold.Days = len(days)
+		cold.Days = len(usable)
 		return cold
 	}
 
-	wakes := make([]int, 0, len(days))
-	sleeps := make([]int, 0, len(days))
-	for _, d := range days {
-		wakes = append(wakes, d.firstMin)
+	wakes := make([]int, 0, len(usable))
+	sleeps := make([]int, 0, len(usable))
+	for _, d := range usable {
+		wakes = append(wakes, d.FirstMin)
 		// Sleep is expressed as minutes from the day cut so that 02:00 sorts
 		// after 23:00 instead of before it. Taking a median of raw wall-clock
 		// minutes would put a night owl's bedtime at lunchtime.
-		sleeps = append(sleeps, d.lastMin)
+		sleeps = append(sleeps, d.LastMin)
 	}
-
 	return Profile{
 		Wake:   hmFromCutOffset(medianInt(wakes), cfg.DayCutHour),
 		Sleep:  hmFromCutOffset(medianInt(sleeps), cfg.DayCutHour),
-		Days:   len(days),
+		Days:   len(usable),
 		Source: SourceLearned,
 	}
-}
-
-// dayBounds is the first and last awake moment of one rhythm day, in minutes
-// from that day's cut.
-type dayBounds struct {
-	firstMin, lastMin int
-}
-
-func groupByRhythmDay(signals []Signal, now time.Time, loc *time.Location, cfg Config) map[string]dayBounds {
-	out := map[string]dayBounds{}
-	cutoff := now.Add(-time.Duration(cfg.WindowDays) * 24 * time.Hour)
-	for _, s := range signals {
-		if !s.Kind.Awake() || s.At.Before(cutoff) || s.At.After(now) {
-			continue
-		}
-		local := s.At.In(loc)
-		key := DayKey(local, cfg.DayCutHour)
-		off := minutesFromCut(local, cfg.DayCutHour)
-		b, seen := out[key]
-		if !seen {
-			out[key] = dayBounds{firstMin: off, lastMin: off}
-			continue
-		}
-		if off < b.firstMin {
-			b.firstMin = off
-		}
-		if off > b.lastMin {
-			b.lastMin = off
-		}
-		out[key] = b
-	}
-	// A day with a single signal says nothing about when it started or ended —
-	// one 15:00 check-in is not evidence of waking at 15:00.
-	for k, b := range out {
-		if b.firstMin == b.lastMin {
-			delete(out, k)
-		}
-	}
-	return out
 }
 
 // DayKey names the rhythm day an instant belongs to, as YYYY-MM-DD of the day

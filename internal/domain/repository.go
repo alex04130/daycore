@@ -29,6 +29,17 @@ type Store interface {
 
 	ChannelBindings() ChannelBindingRepository
 
+	// Added with the multi-instance work (batch C). Proposals replaces the
+	// process-local decision-card map; Leases and JobRuns make two servers safe
+	// to run at once; Rapport and Rhythm cache read-time derivations; Locales is
+	// the database layer of the message catalog.
+	Proposals() ProposalRepository
+	Leases() LeaseRepository
+	JobRuns() JobRunRepository
+	Rapport() RapportRepository
+	Rhythm() RhythmRepository
+	Locales() LocaleRepository
+
 	Migrate(ctx context.Context) error
 	Ping(ctx context.Context) error
 	Close() error

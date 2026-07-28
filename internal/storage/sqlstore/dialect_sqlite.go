@@ -2,6 +2,8 @@ package sqlstore
 
 // ─── SQLite (modernc.org/sqlite, pure Go, no CGO) ───────────────────────────
 
+import "strings"
+
 type sqliteDialect struct{}
 
 func (sqliteDialect) Name() string           { return "sqlite" }
@@ -56,6 +58,102 @@ func (sqliteDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS feedback_session_created ON feedback_logs(session_id, created_at)`,
+
+		// ── multi-instance + derived-state tables (batch C) ─────────────────
+		`CREATE TABLE IF NOT EXISTS proposals (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending',
+			level TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT '',
+			title TEXT,
+			summary TEXT,
+			reason TEXT,
+			evidence TEXT,
+			date TEXT NOT NULL DEFAULT '',
+			start_time TEXT NOT NULL DEFAULT '',
+			duration_min INTEGER,
+			block_type TEXT NOT NULL DEFAULT '',
+			lock_level TEXT NOT NULL DEFAULT '',
+			lock_reason TEXT,
+			rows_json TEXT,
+			ops_json TEXT,
+			applied_op_ids TEXT,
+			accept_op_ids TEXT,
+			merge_key TEXT NOT NULL DEFAULT '',
+			deliver_after BIGINT,
+			delivered_at BIGINT,
+			pushed_at BIGINT,
+			ttl_policy TEXT NOT NULL DEFAULT '',
+			expires_at BIGINT NOT NULL,
+			resolution TEXT NOT NULL DEFAULT '',
+			origin TEXT NOT NULL DEFAULT '',
+			thread_id TEXT NOT NULL DEFAULT '',
+			owner_instance TEXT NOT NULL DEFAULT '',
+			rev INTEGER NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS leases (
+			lease_name TEXT PRIMARY KEY,
+			holder TEXT NOT NULL DEFAULT '',
+			acquired_at BIGINT NOT NULL DEFAULT 0,
+			expires_at BIGINT NOT NULL DEFAULT 0,
+			fence BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_runs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			job_name TEXT NOT NULL,
+			run_key TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			started_at BIGINT NOT NULL,
+			ended_at BIGINT,
+			attempts INTEGER NOT NULL DEFAULT 1,
+			error_text TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS rapport_states (
+			session_id TEXT PRIMARY KEY,
+			scores_json TEXT,
+			cursor_created_at BIGINT NOT NULL DEFAULT 0,
+			cursor_id TEXT NOT NULL DEFAULT '',
+			fold_version INTEGER NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_profiles (
+			session_id TEXT PRIMARY KEY,
+			wake_hm TEXT NOT NULL DEFAULT '',
+			sleep_hm TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'default',
+			learned_days INTEGER NOT NULL DEFAULT 0,
+			run_since BIGINT,
+			last_signal_at BIGINT,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_days (
+			session_id TEXT NOT NULL,
+			day TEXT NOT NULL,
+			first_min INTEGER NOT NULL DEFAULT 0,
+			last_min INTEGER NOT NULL DEFAULT 0,
+			signals INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, day)
+		)`,
+		`CREATE TABLE IF NOT EXISTS locale_overrides (
+			message_key TEXT NOT NULL,
+			locale TEXT NOT NULL,
+			content TEXT,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (message_key, locale)
+		)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_state ON proposals(session_id, state, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS proposals_sweep ON proposals(state, ttl_policy, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_merge ON proposals(session_id, merge_key)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_date ON proposals(session_id, date)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS job_runs_occurrence ON job_runs(session_id, job_name, run_key)`,
+		`CREATE INDEX IF NOT EXISTS job_runs_session_started ON job_runs(session_id, started_at)`,
+		`CREATE INDEX IF NOT EXISTS job_runs_status_started ON job_runs(status, started_at)`,
+		`CREATE INDEX IF NOT EXISTS locale_overrides_locale ON locale_overrides(locale)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL UNIQUE,
@@ -292,6 +390,40 @@ func (sqliteDialect) Migrations() []string {
 		`CREATE INDEX IF NOT EXISTS temp_contexts_session_key ON temp_contexts(session_id, key)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS temp_contexts_session_key_unique ON temp_contexts(session_id, key)`,
 	}
+}
+
+// SQLite needs no migration lock: one writer at a time is the engine's own
+// guarantee, and a second connection sees the committed table.
+func (sqliteDialect) MigrationLock() (acquire, release []string) { return nil, nil }
+
+// NormalizeDSN forces the two pragmas this package's write patterns depend on.
+//
+// SQLite allows one writer at a time. Without busy_timeout a second writer gets
+// SQLITE_BUSY immediately instead of waiting, and every UPDATE-then-INSERT in
+// this package — plus rhythmRepo.Observe, which runs on every awake signal —
+// starts failing the moment two requests overlap. Without WAL, readers block
+// writers as well.
+//
+// Both are in the documented DSN, which is exactly the problem: a DSN is
+// operator-supplied, and a deployment that wrote its own connection string, or
+// copied one from an older README, silently loses them. mysqlDialect forces
+// clientFoundRows for the same reason.
+func (sqliteDialect) NormalizeDSN(dsn string) string {
+	if dsn == "" {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	if !strings.Contains(dsn, "busy_timeout") {
+		dsn += sep + "_pragma=busy_timeout(5000)"
+		sep = "&"
+	}
+	if !strings.Contains(dsn, "journal_mode") {
+		dsn += sep + "_pragma=journal_mode(WAL)"
+	}
+	return dsn
 }
 
 func (sqliteDialect) Quote(ident string) string { return `"` + ident + `"` }

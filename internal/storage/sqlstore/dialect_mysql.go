@@ -4,6 +4,8 @@ package sqlstore
 // MySQL can't index TEXT without a prefix and lacks CREATE INDEX IF NOT EXISTS,
 // so keys use VARCHAR and indexes are declared inline in CREATE TABLE.
 
+import "strings"
+
 type mysqlDialect struct{}
 
 func (mysqlDialect) Name() string           { return "mysql" }
@@ -57,6 +59,102 @@ func (mysqlDialect) Migrations() []string {
 			useful TINYINT(1) NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			KEY feedback_session_created (session_id, created_at)
+		)`,
+
+		// ── multi-instance + derived-state tables (batch C) ─────────────────
+		`CREATE TABLE IF NOT EXISTS proposals (
+			id VARCHAR(191) PRIMARY KEY,
+			session_id VARCHAR(191) NOT NULL,
+			state VARCHAR(64) NOT NULL DEFAULT 'pending',
+			level VARCHAR(64) NOT NULL DEFAULT '',
+			kind VARCHAR(64) NOT NULL DEFAULT '',
+			title TEXT,
+			summary TEXT,
+			reason TEXT,
+			evidence TEXT,
+			date VARCHAR(64) NOT NULL DEFAULT '',
+			start_time VARCHAR(64) NOT NULL DEFAULT '',
+			duration_min INT,
+			block_type VARCHAR(64) NOT NULL DEFAULT '',
+			lock_level VARCHAR(64) NOT NULL DEFAULT '',
+			lock_reason TEXT,
+			rows_json LONGTEXT,
+			ops_json LONGTEXT,
+			applied_op_ids LONGTEXT,
+			accept_op_ids LONGTEXT,
+			merge_key VARCHAR(191) NOT NULL DEFAULT '',
+			deliver_after BIGINT,
+			delivered_at BIGINT,
+			pushed_at BIGINT,
+			ttl_policy VARCHAR(64) NOT NULL DEFAULT '',
+			expires_at BIGINT NOT NULL,
+			resolution VARCHAR(64) NOT NULL DEFAULT '',
+			origin VARCHAR(64) NOT NULL DEFAULT '',
+			thread_id VARCHAR(191) NOT NULL DEFAULT '',
+			owner_instance VARCHAR(191) NOT NULL DEFAULT '',
+			rev INT NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			KEY proposals_session_state (session_id, state, expires_at),
+			KEY proposals_sweep (state, ttl_policy, expires_at),
+			KEY proposals_session_merge (session_id, merge_key),
+			KEY proposals_session_date (session_id, date)
+		)`,
+		`CREATE TABLE IF NOT EXISTS leases (
+			lease_name VARCHAR(64) PRIMARY KEY,
+			holder VARCHAR(191) NOT NULL DEFAULT '',
+			acquired_at BIGINT NOT NULL DEFAULT 0,
+			expires_at BIGINT NOT NULL DEFAULT 0,
+			fence BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_runs (
+			id VARCHAR(191) PRIMARY KEY,
+			session_id VARCHAR(191) NOT NULL,
+			job_name VARCHAR(64) NOT NULL,
+			run_key VARCHAR(64) NOT NULL,
+			status VARCHAR(64) NOT NULL DEFAULT '',
+			instance VARCHAR(191) NOT NULL DEFAULT '',
+			started_at BIGINT NOT NULL,
+			ended_at BIGINT,
+			attempts INT NOT NULL DEFAULT 1,
+			error_text TEXT,
+			UNIQUE KEY job_runs_occurrence (session_id, job_name, run_key),
+			KEY job_runs_session_started (session_id, started_at),
+			KEY job_runs_status_started (status, started_at)
+		)`,
+		`CREATE TABLE IF NOT EXISTS rapport_states (
+			session_id VARCHAR(191) PRIMARY KEY,
+			scores_json LONGTEXT,
+			cursor_created_at BIGINT NOT NULL DEFAULT 0,
+			cursor_id VARCHAR(191) NOT NULL DEFAULT '',
+			fold_version INT NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_profiles (
+			session_id VARCHAR(191) PRIMARY KEY,
+			wake_hm VARCHAR(64) NOT NULL DEFAULT '',
+			sleep_hm VARCHAR(64) NOT NULL DEFAULT '',
+			source VARCHAR(64) NOT NULL DEFAULT 'default',
+			learned_days INT NOT NULL DEFAULT 0,
+			run_since BIGINT,
+			last_signal_at BIGINT,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_days (
+			session_id VARCHAR(191) NOT NULL,
+			day VARCHAR(64) NOT NULL,
+			first_min INT NOT NULL DEFAULT 0,
+			last_min INT NOT NULL DEFAULT 0,
+			signals INT NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, day)
+		)`,
+		`CREATE TABLE IF NOT EXISTS locale_overrides (
+			message_key VARCHAR(191) NOT NULL,
+			locale VARCHAR(64) NOT NULL,
+			content LONGTEXT,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (message_key, locale),
+			KEY locale_overrides_locale (locale)
 		)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id VARCHAR(191) PRIMARY KEY,
@@ -294,6 +392,36 @@ func (mysqlDialect) Migrations() []string {
 				UNIQUE KEY temp_contexts_session_key_unique (session_id, ` + "`key`" + `)
 			)`,
 	}
+}
+
+// NormalizeDSN forces clientFoundRows=true.
+//
+// Without it MySQL reports rows CHANGED from an UPDATE, where SQLite and
+// Postgres both report rows MATCHED. Twenty-three places in this package branch
+// on RowsAffected() — every UPDATE-then-INSERT upsert, and three that turn a
+// zero into ErrNotFound — so on MySQL, saving a theme or a rule without altering
+// a single value returns "not found" to the user, and an upsert that rewrites
+// identical content falls through to an INSERT that then violates its own unique
+// key.
+//
+// It is enforced here rather than written into the documented DSN because the
+// DSN is operator-supplied: a deployment that copied the string from an older
+// README would silently get the broken semantics back.
+// MySQL's metadata locking makes a concurrent identical CREATE TABLE IF NOT
+// EXISTS a no-op rather than an error, so no explicit lock is needed. Using
+// GET_LOCK would also tie the lock to a connection this pool may hand back
+// between statements.
+func (mysqlDialect) MigrationLock() (acquire, release []string) { return nil, nil }
+
+func (mysqlDialect) NormalizeDSN(dsn string) string {
+	if strings.Contains(dsn, "clientFoundRows") {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + "clientFoundRows=true"
 }
 
 func (mysqlDialect) Quote(ident string) string { return "`" + ident + "`" }

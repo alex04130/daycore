@@ -42,7 +42,7 @@ type Store struct {
 
 // Open connects using the dialect's driver and tunes the connection pool.
 func Open(d Dialect, dsn string) (*Store, error) {
-	db, err := sql.Open(d.DriverName(), dsn)
+	db, err := sql.Open(d.DriverName(), d.NormalizeDSN(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", d.Name(), err)
 	}
@@ -60,6 +60,35 @@ func Open(d Dialect, dsn string) (*Store, error) {
 // installs are missing (ALTER TABLE … ADD COLUMN guarded by an existence check,
 // since the ALTER itself is not idempotent on SQLite/MySQL).
 func (s *Store) Migrate(ctx context.Context) error {
+	// Serialise against another instance booting at the same instant. The whole
+	// point of the batch C tables is that two instances can run, so two of them
+	// reaching Migrate together is ordinary rather than exceptional.
+	//
+	// The lock must be held on ONE connection for the duration, so this takes a
+	// connection out of the pool and runs everything on it. Acquiring on a
+	// pooled *sql.DB would let the pool hand the next statement to a different
+	// connection, which for a session-level advisory lock means the lock is held
+	// by a connection nobody is using.
+	acquire, release := s.d.MigrationLock()
+	if len(acquire) > 0 {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("migrate lock (%s): %w", s.d.Name(), err)
+		}
+		defer conn.Close()
+		for _, stmt := range acquire {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
+				return fmt.Errorf("migrate lock (%s): %w", s.d.Name(), err)
+			}
+		}
+		defer func() {
+			for _, stmt := range release {
+				// A failed unlock is not worth failing the boot over: the lock
+				// is session-level and dies with the connection we are closing.
+				_, _ = conn.ExecContext(ctx, stmt)
+			}
+		}()
+	}
 	for _, stmt := range s.d.Migrations() {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate (%s): %w", s.d.Name(), err)
@@ -133,6 +162,12 @@ func (s *Store) Themes() domain.ThemeRepository                   { return theme
 func (s *Store) Memory() domain.MemoryRepository                  { return memoryRepo{s} }
 func (s *Store) Materials() domain.MaterialRepository             { return materialRepo{s} }
 func (s *Store) ChannelBindings() domain.ChannelBindingRepository { return channelBindingRepo{s} }
+func (s *Store) Proposals() domain.ProposalRepository             { return proposalRepo{s} }
+func (s *Store) Leases() domain.LeaseRepository                   { return leaseRepo{s} }
+func (s *Store) JobRuns() domain.JobRunRepository                 { return jobRunRepo{s} }
+func (s *Store) Rapport() domain.RapportRepository                { return rapportRepo{s} }
+func (s *Store) Rhythm() domain.RhythmRepository                  { return rhythmRepo{s} }
+func (s *Store) Locales() domain.LocaleRepository                 { return localeRepo{s} }
 func (s *Store) Wishes() domain.WishRepository                    { return wishRepo{s} }
 func (s *Store) Feedback() domain.FeedbackLogRepository           { return feedbackRepo{s} }
 func (s *Store) TempContexts() domain.TempContextRepository       { return tempContextRepo{s} }
@@ -164,6 +199,24 @@ func boolToInt(b bool) int {
 }
 
 // nullString returns *string as a driver arg (nil → SQL NULL).
+// nullMillis and ptrMillis are the two halves of a nullable timestamp. Before
+// them every caller open-coded the same `var x any` / `if v.Valid { t := ... }`
+// dance, which is how assignments.go ended up with three copies of it.
+func nullMillis(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return toMillis(*t)
+}
+
+func ptrMillis(ms sql.NullInt64) *time.Time {
+	if !ms.Valid {
+		return nil
+	}
+	t := fromMillis(ms.Int64)
+	return &t
+}
+
 func nullString(p *string) any {
 	if p == nil {
 		return nil

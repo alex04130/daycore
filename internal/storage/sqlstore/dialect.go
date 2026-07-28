@@ -13,6 +13,20 @@ type Dialect interface {
 	DriverName() string
 	// Rebind converts `?`-placeholder SQL into this engine's placeholder style.
 	Rebind(query string) string
+	// MigrationLock returns statements that serialise Migrate against another
+	// instance running it at the same moment, and the statements to undo that.
+	// Both may be empty for an engine that does not need it.
+	//
+	// This exists because IF NOT EXISTS is not a concurrency primitive. On
+	// Postgres two processes can both pass the catalog check for the same
+	// CREATE TABLE and one then loses the insert into pg_type with a duplicate
+	// key — and running two instances is precisely what the batch C tables are
+	// for, so "both boot at once" is the normal case, not the edge one.
+	MigrationLock() (acquire, release []string)
+	// NormalizeDSN lets a dialect enforce connection settings the code depends on,
+	// rather than documenting them and hoping the operator copied the whole
+	// string. MySQL needs one; the others return the DSN unchanged.
+	NormalizeDSN(dsn string) string
 	// Quote wraps an identifier so a column whose name is a reserved word still
 	// parses. Rebind only rewrites placeholders, so a bare `key` in a query is
 	// a syntax error on MySQL no matter how the DDL spelled it — which is

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -204,6 +205,9 @@ func startOfNextDay(now time.Time, loc *time.Location) time.Time {
 // anything to undo.
 var ErrActFirstNeedsUndo = errors.New("proposal: silence_accepts requires appliedOpIds")
 
+// ErrNoExpiry rejects a proposal with no deadline. See Validate.
+var ErrNoExpiry = errors.New("proposal: expiresAt required (see ProposalExpiry)")
+
 // Validate enforces the invariants that cannot be allowed to fail at runtime.
 //
 // The load-bearing one is the act-first rule: a card whose silence counts as
@@ -239,6 +243,14 @@ func (p *Proposal) Validate() error {
 	if p.Kind == KindTimed && (p.Date == "" || p.Start == "") {
 		return errors.New("proposal: a timed proposal needs date and start")
 	}
+	// A card with no deadline is born expired: the very first sweep sees
+	// expires_at at the zero time, decides it lapsed, and resolves it as
+	// silence. Every proposal has a TTL (consensus 14) — ProposalExpiry exists
+	// to compute one, so an absent deadline is a caller that forgot to call it,
+	// not a proposal that lives forever.
+	if p.ExpiresAt.IsZero() {
+		return ErrNoExpiry
+	}
 	for i, r := range p.Rows {
 		if r.ID == "" || r.Label == "" {
 			return errors.New("proposal: every row needs an id and a label")
@@ -271,4 +283,74 @@ func (p Proposal) ResolveExpiry() (ProposalState, ProposalResolution) {
 		return ProposalAccepted, ResolutionSilence
 	}
 	return ProposalExpired, ResolutionSilence
+}
+
+// ── storage ─────────────────────────────────────────────────────────────────
+
+// ProposalFilter selects proposals. A zero filter matches every proposal in the
+// session, which is the console's view; the outbox is this filter with State
+// pending and Undelivered set.
+type ProposalFilter struct {
+	SessionID string
+	State     ProposalState // "" matches any
+	Kind      ProposalKind  // "" matches any
+	Date      string        // "" matches any; a day's L1 ghosts
+	// Undelivered restricts to proposals still in the pool — generated but
+	// never shown. Consensus 15: generation is unthrottled and delivery is the
+	// only gate, so this is the distinction the whole outbox rests on.
+	Undelivered bool
+	// DeliverableAt, when set, additionally requires that the proposal has not
+	// lapsed and that its deliverAfter has arrived — the rest of what
+	// Proposal.Deliverable checks.
+	//
+	// Undelivered on its own is NOT the outbox: it returns cards that expired
+	// in the pool and cards held back for later, both of which the user must
+	// never see. Filtering those in Go after the fact would mean the LIMIT is
+	// applied before the filter, so a pool full of lapsed cards could return an
+	// empty page while deliverable ones waited behind it.
+	DeliverableAt time.Time
+	Limit         int
+}
+
+// ProposalRepository persists the one resource that ghosts, cards, decision
+// cards and channel approvals all are.
+//
+// It exists mostly to unblock horizontal scaling: decision cards live in a
+// process-local map today (internal/server/agent.go), so a restart loses every
+// pending card and a second instance cannot see the first one's. A table makes
+// the card durable and readable from anywhere; waking the goroutine that is
+// blocked on it is a separate problem, and not this layer's.
+type ProposalRepository interface {
+	Create(ctx context.Context, p *Proposal) error
+	Get(ctx context.Context, sessionID, id string) (*Proposal, error)
+	List(ctx context.Context, f ProposalFilter) ([]Proposal, error)
+
+	// Update writes a proposal back, refusing the write when Rev has moved.
+	//
+	// Optimistic concurrency rather than a transaction, because sqlstore has
+	// none: accepting one row of a compound card is a read-modify-write of the
+	// rows JSON, and two accepts racing would otherwise lose one. The caller
+	// re-reads and retries on ErrConflict.
+	Update(ctx context.Context, p *Proposal) error
+
+	// Expire moves lapsed pending proposals to their terminal state in one
+	// statement per policy, and returns how many moved. Act-first cards land
+	// accepted, ask-first ones expired — see ResolveExpiry.
+	//
+	// It is cross-session on purpose: whichever instance holds the worker lease
+	// sweeps for everyone, rather than every session waiting for its owner to
+	// wake up.
+	Expire(ctx context.Context, now time.Time) (int, error)
+
+	// Supersede retires undelivered proposals that share a merge key and are
+	// OLDER than keepID, so only the newest survives to be shown. Returns how
+	// many were retired.
+	//
+	// "Older than" rather than "not keepID" is load-bearing. Two daemons that
+	// each produce a card for the same merge key and each call this with their
+	// own id would otherwise retire each other, and the user would be shown
+	// nothing at all — the one outcome consensus 15 does not allow, since
+	// throttling delivery is not the same as cancelling it. Comparing creation
+	// order makes the survivor the same card whichever daemon calls first.
+	Supersede(ctx context.Context, sessionID, mergeKey, keepID string) (int, error)
 }

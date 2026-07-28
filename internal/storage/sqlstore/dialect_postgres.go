@@ -7,6 +7,8 @@ import (
 
 // ─── PostgreSQL (pgx stdlib) ────────────────────────────────────────────────
 
+import "fmt"
+
 type postgresDialect struct{}
 
 func (postgresDialect) Name() string       { return "postgres" }
@@ -75,6 +77,102 @@ func (postgresDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS feedback_session_created ON feedback_logs(session_id, created_at)`,
+
+		// ── multi-instance + derived-state tables (batch C) ─────────────────
+		`CREATE TABLE IF NOT EXISTS proposals (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			state TEXT NOT NULL DEFAULT 'pending',
+			level TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT '',
+			title TEXT,
+			summary TEXT,
+			reason TEXT,
+			evidence TEXT,
+			date TEXT NOT NULL DEFAULT '',
+			start_time TEXT NOT NULL DEFAULT '',
+			duration_min INTEGER,
+			block_type TEXT NOT NULL DEFAULT '',
+			lock_level TEXT NOT NULL DEFAULT '',
+			lock_reason TEXT,
+			rows_json TEXT,
+			ops_json TEXT,
+			applied_op_ids TEXT,
+			accept_op_ids TEXT,
+			merge_key TEXT NOT NULL DEFAULT '',
+			deliver_after BIGINT,
+			delivered_at BIGINT,
+			pushed_at BIGINT,
+			ttl_policy TEXT NOT NULL DEFAULT '',
+			expires_at BIGINT NOT NULL,
+			resolution TEXT NOT NULL DEFAULT '',
+			origin TEXT NOT NULL DEFAULT '',
+			thread_id TEXT NOT NULL DEFAULT '',
+			owner_instance TEXT NOT NULL DEFAULT '',
+			rev INTEGER NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS leases (
+			lease_name TEXT PRIMARY KEY,
+			holder TEXT NOT NULL DEFAULT '',
+			acquired_at BIGINT NOT NULL DEFAULT 0,
+			expires_at BIGINT NOT NULL DEFAULT 0,
+			fence BIGINT NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS job_runs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			job_name TEXT NOT NULL,
+			run_key TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT '',
+			instance TEXT NOT NULL DEFAULT '',
+			started_at BIGINT NOT NULL,
+			ended_at BIGINT,
+			attempts INTEGER NOT NULL DEFAULT 1,
+			error_text TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS rapport_states (
+			session_id TEXT PRIMARY KEY,
+			scores_json TEXT,
+			cursor_created_at BIGINT NOT NULL DEFAULT 0,
+			cursor_id TEXT NOT NULL DEFAULT '',
+			fold_version INTEGER NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_profiles (
+			session_id TEXT PRIMARY KEY,
+			wake_hm TEXT NOT NULL DEFAULT '',
+			sleep_hm TEXT NOT NULL DEFAULT '',
+			source TEXT NOT NULL DEFAULT 'default',
+			learned_days INTEGER NOT NULL DEFAULT 0,
+			run_since BIGINT,
+			last_signal_at BIGINT,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS rhythm_days (
+			session_id TEXT NOT NULL,
+			day TEXT NOT NULL,
+			first_min INTEGER NOT NULL DEFAULT 0,
+			last_min INTEGER NOT NULL DEFAULT 0,
+			signals INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (session_id, day)
+		)`,
+		`CREATE TABLE IF NOT EXISTS locale_overrides (
+			message_key TEXT NOT NULL,
+			locale TEXT NOT NULL,
+			content TEXT,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (message_key, locale)
+		)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_state ON proposals(session_id, state, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS proposals_sweep ON proposals(state, ttl_policy, expires_at)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_merge ON proposals(session_id, merge_key)`,
+		`CREATE INDEX IF NOT EXISTS proposals_session_date ON proposals(session_id, date)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS job_runs_occurrence ON job_runs(session_id, job_name, run_key)`,
+		`CREATE INDEX IF NOT EXISTS job_runs_session_started ON job_runs(session_id, started_at)`,
+		`CREATE INDEX IF NOT EXISTS job_runs_status_started ON job_runs(status, started_at)`,
+		`CREATE INDEX IF NOT EXISTS locale_overrides_locale ON locale_overrides(locale)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL UNIQUE,
@@ -312,6 +410,21 @@ func (postgresDialect) Migrations() []string {
 		`CREATE UNIQUE INDEX IF NOT EXISTS temp_contexts_session_key_unique ON temp_contexts(session_id, key)`,
 	}
 }
+
+// migrationLockKey is an arbitrary constant identifying Daycore's schema lock.
+// It only has to be stable and not collide with another application's advisory
+// lock in the same database.
+const migrationLockKey = 8410740326
+
+// Postgres needs the lock: see Dialect.MigrationLock. Session-level rather than
+// transaction-level, because Migrate is a sequence of separate statements with no
+// transaction around them.
+func (postgresDialect) MigrationLock() (acquire, release []string) {
+	return []string{fmt.Sprintf("SELECT pg_advisory_lock(%d)", migrationLockKey)},
+		[]string{fmt.Sprintf("SELECT pg_advisory_unlock(%d)", migrationLockKey)}
+}
+
+func (postgresDialect) NormalizeDSN(dsn string) string { return dsn }
 
 func (postgresDialect) Quote(ident string) string { return `"` + ident + `"` }
 
