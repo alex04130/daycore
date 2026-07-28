@@ -96,6 +96,15 @@ type OperationLogRepository interface {
 	// the order it happened. List cannot do that — it is newest-first and
 	// capped.
 	Scan(ctx context.Context, sessionID string, after OpLogCursor, limit int) ([]OperationLog, error)
+	// RevertedBy returns the revert entry that already undid targetID, or
+	// ErrNotFound when nothing has.
+	//
+	// The check used to be a scan of the most recent 200 entries, which meant a
+	// session busy enough to push a revert past the 200th row could undo the
+	// same operation twice — applying a compensation twice is not idempotent
+	// (adding a block back twice adds two), so the window was a real hole and
+	// not a theoretical one.
+	RevertedBy(ctx context.Context, sessionID, targetID string) (*OperationLog, error)
 }
 
 type UserRepository interface {

@@ -36,11 +36,19 @@ func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.Opera
 	row := r.queryRow(ctx,
 		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
 		 FROM operation_logs WHERE id = ? AND session_id = ?`, id, sessionID)
+	return scanOpLog(row.Scan)
+}
+
+// scanOpLog reads one row of the shared column list. Rows written before the
+// domain column existed carry an empty string and are classified on read —
+// the log is append-only, and OpDomainOf reproduces the same answer from the
+// action.
+func scanOpLog(scan func(dest ...any) error) (*domain.OperationLog, error) {
 	var (
 		l         domain.OperationLog
 		createdAt int64
 	)
-	err := row.Scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.Domain, &l.TargetID, &l.Date,
+	err := scan(&l.ID, &l.SessionID, &l.Actor, &l.Action, &l.Domain, &l.TargetID, &l.Date,
 		&l.Summary, &l.Detail, &l.Status, &l.RequestID, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
@@ -48,8 +56,6 @@ func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.Opera
 	if err != nil {
 		return nil, err
 	}
-	// Rows written before the column existed carry ''; derive rather than
-	// backfill, so the log stays append-only.
 	if l.Domain == "" {
 		l.Domain = domain.OpDomainOf(l.Action)
 	}
@@ -90,6 +96,14 @@ func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]dom
 	}
 	defer rows.Close()
 	return scanOpLogs(rows)
+}
+
+func (r opLogRepo) RevertedBy(ctx context.Context, sessionID, targetID string) (*domain.OperationLog, error) {
+	row := r.queryRow(ctx,
+		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
+		 FROM operation_logs WHERE session_id = ? AND action = ? AND target_id = ?
+		 ORDER BY created_at ASC LIMIT 1`, sessionID, "revert", targetID)
+	return scanOpLog(row.Scan)
 }
 
 // scanOpLogs reads the shared SELECT column list. Rows written before the

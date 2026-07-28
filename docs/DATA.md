@@ -363,6 +363,19 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - `note`：**MySQL 的 TEXT 不允许字面 DEFAULT**，三方言共用一份迁移清单，所以 ALTER 与建表都不带 `NOT NULL DEFAULT ''`，读时把 NULL 归一成 `""`。
 - 回归测试：`sqlstore/store_test.go` 的 `TestMoodSourceAndNoteRoundTrip`（含「没写 source 的行读回来是空」）。
 
+## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
+
+`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`，各特性在自己文件的 `init()` 里注册。
+
+**为什么**：switch 是错的形状 —— 每加一个写操作都要回到同一个文件改同一个函数，于是一批本来不相干的并行工作全撞在这里（计划里 `handlers_ops.go` 被 8 个工作项争）。映射表让逆操作住在**写这条 op 的代码旁边**，那也是别人会去找它的地方。
+
+- 注册同一个 action 两次 **panic** —— 两个逆操作意味着有一个是死代码，而谁赢取决于链接顺序。
+- 没注册不是静默的缺口：`handleOpRevert` 明确返回 `irreversible` 并说出是哪个 action。铁律 3 说一切可撤，这里就是这句话被守住或被打破的地方。
+- `revert` 自己永不可注册为可撤销：撤销一次撤销是一笔新的正向操作，不是回滚（共识 23，账本 append-only，后悔是新的一笔而不是橡皮擦）。
+- 测试 `handlers_ops_test.go`：注册表非空、12 个已知写操作都有逆、重复注册 panic。
+
+**同批修掉一个真 bug**：防重复撤销原来是扫最近 200 条 op —— 会话忙到把 revert 挤出第 200 行之后，同一操作可以被撤销两次，而**补偿不是幂等的**（「把块加回去」执行两次就加了两个块）。改成 `OperationLogRepository.RevertedBy(sid, targetID)` 精确查询。
+
 ## 操作域（OperationLog.Domain）
 
 `schedule` / `habit` / `archive` / `care` / `system` 五个值，`OpDomainOf(action)` 按 action 前缀派生。两个消费者：河流按域上色、**默契（rapport）按域计分**（前四个域计分，system 不计）。

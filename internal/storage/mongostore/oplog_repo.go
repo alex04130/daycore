@@ -127,3 +127,18 @@ func (r opLogRepo) Get(ctx context.Context, sessionID, id string) (*domain.Opera
 	l := d.toDomain()
 	return &l, nil
 }
+
+func (r opLogRepo) RevertedBy(ctx context.Context, sessionID, targetID string) (*domain.OperationLog, error) {
+	var d opLogDoc
+	err := r.c("operation_logs").FindOne(ctx,
+		bson.M{"session_id": sessionID, "action": "revert", "target_id": targetID},
+		options.FindOne().SetSort(bson.D{{Key: "created_at", Value: 1}})).Decode(&d)
+	if err != nil {
+		if notFound(err) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	out := d.toDomain()
+	return &out, nil
+}
