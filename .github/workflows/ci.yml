@@ -17,6 +17,27 @@ jobs:
   backend:
     name: Backend (Go)
     runs-on: ubuntu-latest
+    # A real MongoDB, because the storage conformance suite
+    # (internal/storage/storagetest) is the only thing asserting that the four
+    # backends BEHAVE the same, and until this service existed the Mongo half of
+    # it never ran anywhere except by hand. An adversarial review pass found
+    # about fifteen divergences between the two shipped stores precisely because
+    # mongostore had no integration coverage at all.
+    services:
+      mongo:
+        image: mongo:8
+        ports: ['27017:27017']
+        # mongo:8 has no HEALTHCHECK of its own, so wait on a real ping rather
+        # than on the container merely being up — a test that connects too early
+        # fails in a way that looks like a code bug.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 10s
+    env:
+      MONGO_TEST_DSN: mongodb://127.0.0.1:27017
     steps:
       - uses: actions/checkout@v4
 
@@ -76,7 +97,26 @@ jobs:
         run: go vet ./...
 
       - name: go test
+        # MONGO_TEST_DSN is set at the job level, so the conformance suite runs
+        # against both SQLite and the real MongoDB in one pass. Without it the
+        # Mongo half skips itself silently, which is how it went untested for
+        # months.
         run: go test ./...
+
+      - name: assert the Mongo conformance suite actually ran
+        # A skipped suite reads as a passing one, and MONGO_TEST_DSN is exactly
+        # the kind of thing that quietly stops being set. Fail loudly instead.
+        run: |
+          out=$(go test -count=1 -run TestConformance -v ./internal/storage/mongostore/ 2>&1)
+          echo "$out" | tail -40
+          if echo "$out" | grep -q 'SKIP'; then
+            echo "::error::the MongoDB conformance suite skipped itself — MONGO_TEST_DSN is not reaching the test"
+            exit 1
+          fi
+          if ! echo "$out" | grep -qE 'PASS: TestConformance/Lease'; then
+            echo "::error::the MongoDB conformance suite did not run its cases"
+            exit 1
+          fi
 
       - name: Build static binary
         run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/daycore ./cmd/daycore

@@ -48,96 +48,38 @@
 
 **前端是开放的。** 不只是我们这四端 —— 别的开发者可以做更多前端、更多平台的前端。这不是一个「以后也许」，它决定了下面每一条的信任模型：**前端上报的东西是第三方数据，不是我们自己的代码。**
 
-#### 一、两层身份：build 与 family
+**实现契约在 [`docs/specs/frontend-manifest.md`](specs/frontend-manifest.md)** —— 握手载荷、`kind` 的封闭集合、主题读写端点、给第三方前端的三条硬要求。以下只留裁决与理由。
 
-同一系列的前端会有多个 build —— 琉璃可以有 web、app、嵌入式。它们该共享主题，所以身份要分两层：
+#### 一、存储形状本来就够，不需要换数据库
 
-| | 是什么 | 谁定 |
-|---|---|---|
-| **build id** | 一次构建的指纹（manifest 的哈希） | 派生，不可改 |
-| **family id** | 主题兼容组（`liuli`） | build 自己声明；**运维可在控制台改** |
+`custom_themes.variables` 已经是 JSON 列，四个引擎都存得下自由文档（先例 `day_plans.blocks`、`proposals.rows_json`）。MongoDB 做这件事更自然，也**推荐**用它，但**不能成为要求** —— 否则等于把「支持四个后端」悄悄降级成「推荐 Mongo」。要搬走的是校验规则，它现在写死在 Go 里。
 
-主题、按端偏好、`ThemeSwitch` 全部按 **family** 存 —— 那才是一套主题有意义的单位。build id 存在，是为了让控制台看得见「琉璃 有三个 build 在连：web 4.2、app 1.0、嵌入式 0.9」，也是为了让运维把一个新 build 归到已有 family 里去。
+#### 二、两层身份，token 空间取并集
 
-#### 二、family 的 token 空间是**并集**，不是子集检查
+`buildHash`（构建指纹，派生不可改）+ `familyId`（主题兼容组，build 声明、**运维可在控制台改**）。主题、按端偏好、`ThemeSwitch` 全部按 **family** 存 —— 那才是一套主题有意义的单位，琉璃可以有 web/app/嵌入式三个 build 共享一套。
 
-琉璃-app 用到的和琉璃-web 不必一致。所以后端存的是**并集**，兼容性不做拦截：
-
-- **build 声明了 family 没有的新 token** → family 的 token 空间扩一条。此时**已存的主题全都缺这一条**，运维在控制台跑一次**补算**：对每个缺 token 的主题做一次 AI 调用，按它现有的配色把新 token 补上。这是要花钱的动作，所以是运维显式触发，不是自动跑。
-- **build 用不到 family 里的某些 token** → 不用管。**前端自己丢弃**是前端的责任，后端不为此做任何裁剪。
-- **补算之后若两套主题的变量完全一致** → 合并，减少存储（保留一条，把指向旧条的会话偏好改指过来）。
-
-控制台因此要显示的是**差异**而不是「通过/不通过」：这个 build 带来了哪几个新 token、有多少主题待补算、补算大约多少次调用。
+**并集不是子集检查**：新 build 带来新 token 就扩一条，已存主题因此缺那一条 → 运维触发一次**补算**（每个缺 token 的主题一次 AI 调用，按它现有配色补上；要花钱所以是显式动作），补完变量完全一致的**合并**。build 用不到的 token 由**前端自己丢弃**，后端不裁剪。控制台显示**差异**而不是通过／不通过。
 
 #### 三、握手集成进 version API
 
-前端必须先握手、先自我介绍，否则后端根本分不清连上来的是哪个前端。既然版本协商已经在那儿了，就放一起：
+前端必须先握手、先自我介绍，否则后端分不清连上来的是哪个前端。既然版本协商已经在那儿，就放一起：`POST /api/version` 带自我介绍，响应带后端裁决（`assignedFamilyId` / `rulesAccepted` / `newTokens` / `pendingThemeBackfill`）。`GET /api/version` 保持原样给匿名与老客户端。
 
-```
-POST /api/version    握手。body 是前端的自我介绍：
-                     familyId / buildHash / displayName / version / minApi
-                     + theme{ tokens[], builtins[], rules? }
-                     响应 = 原来 GET 的那套 + 后端的裁决：
-                     assignedFamilyId（运维可能改过）、
-                     rulesAccepted、pendingThemeBackfill(N)、newTokens[]
-GET  /api/version    保持原样，给匿名/老客户端读
-```
+#### 四、两条安全边界
 
-`buildHash` 一致就是空操作，每次启动调一次很便宜。
+**前端是开放的** —— 第三方与多平台前端是一等场景，不是「以后也许」。所以前端上报的东西按**第三方数据**对待，不按「我们自己的代码」对待。
 
-#### 四、`theme.rules`：前端可以主张，后端可以改，默认不采信
+1. **`kind` 是服务端已知的封闭集合**（color / length / number / ratio / duration / enum），校验器归后端，前端不能自带正则、没有 `raw` 档。`themeColorRe`（`handlers_themes.go:34`）现有的注释点明它守的是「通过变量值注入 CSS/HTML 不可能」，放开 token 空间时这条不能丢。加一种 kind 是**改后端** —— 这个不便利就是那颗钉子。AI 生成的主题落地前逐 token 校验 key 与 kind。
+2. **`theme.rules` 未经运维批准不进 LLM**。前端可以主张一段、运维可以改并决定是否采用；没主张或没批准 → 后端按 token 清单机械生成，前端照样能用 AI 配主题，只是提示词是后端写的。**注入面默认为零**，批准是「我读过这段文字」的显式动作。
 
-「怎么给这一端设计主题」这段提示词片段：
+#### 五、每个前端必须有首次安装配置界面
 
-- 前端**可以**主动发一段。
-- 运维在控制台**可以改它、决定是否采用**。
-- **没有主张、或运维没同意 → 后端按 token 清单机械生成**（token 名 + kind + 描述），前端照样能用 AI 配主题，只是提示词是后端写的。
+`/setting` 或同等结构，至少能配「连哪个后端」。理由直接来自开放前端：把后端地址写死的前端只能对着一个部署用，而自部署是这个项目的常态。这个界面同时是语言开关（§1.1）与主题选择的落点。
 
-这条顺序是有意的：**未经批准的客户端文本不进 LLM，注入面默认为零**。第三方前端一上来就能用完整功能，代价只是主题提示词平淡一点；想要自己那段有个性的规则，走一次运维批准。批准是「我读过这段文字」的显式动作。
+#### 六、落地归属（批次 F7）
 
-#### 五、`kind` 是服务端已知的封闭集合 —— 值层面的注入边界
+两张新表（`frontend_builds` / `frontend_families`）+ 两处加列（`custom_themes.family_id` / `theme_switch_log.family_id`）+ 按端当前主题进 `SessionPrefs`（零 DDL）+ 主题补算作业走 `job_runs`。⚠️ **与 F 的其它 DDL 同批做**，不要第四次单独去动方言文件。
 
-`themeColorRe`（`handlers_themes.go:34`）现在的注释点明了它守的东西：**收窄的字符集让「通过变量值注入 CSS/HTML」不可能**。放开 token 空间时这条不能丢。
-
-**`kind` 从后端的封闭集合里挑，每种的校验器归后端。前端不能自带正则，也没有 `raw` 这一档。**
-
-| kind | 值形状 | 例 |
-|---|---|---|
-| `color` | 现有 `themeColorRe` 原样保留 | `#f472b6` · `rgba(255,255,255,0.72)` |
-| `length` | 数字 + 白名单单位 | `12px` · `1.5rem` · `0.5ch` |
-| `number` | 纯数字 | `1.6` |
-| `ratio` | 0..1 | `0.75` |
-| `duration` | 数字 + `ms`/`s` | `200ms` |
-| `enum` | 前端列出字面允许值，后端只比对 | `blur` / `none` |
-
-新增一种 kind 是**改后端**（加一个校验器），不是前端在 manifest 里塞一段正则。这个不便利是刻意的 —— 它是把注入面钉在后端的那颗钉子。同名 token 在两个 build 里 kind 不同，是真冲突（`--accent` 一边是颜色一边是长度，主题就没意义了），控制台必须报出来让人处理。
-
-AI 生成的主题落地前**逐 token 校验**：key 必须在 family 的 token 空间里，value 必须过该 token 的 kind 校验器。模型被诱导输出别的东西，进不了库。
-
-#### 六、每个前端必须有首次安装配置界面
-
-**强制要求**：每个前端都要实现 `/setting`（或同等结构）的**首次安装配置界面** —— 至少能配「连哪个后端」。
-
-理由直接来自开放前端：一个第三方前端如果把后端地址写死，它就只能对着一个部署用。而自部署是这个项目的常态。配置界面同时是语言开关（§1.1）和主题选择的落点。
-
-#### 七、存储形状不用换数据库
-
-`custom_themes.variables` 已经是 JSON 列，四个引擎都存得下自由文档（先例 `day_plans.blocks`、`proposals.rows_json`）。MongoDB 做这件事更自然，但**不能成为要求** —— 否则等于把「支持四个后端」悄悄降级成「推荐 Mongo」。要搬走的是校验规则，它现在在 Go 里。
-
-#### 八、落地归属（批次 F）
-
-| 改动 | DDL |
-|---|---|
-| `frontend_builds` 表（`build_hash` 主键 + `family_id` + `manifest_json` + `rules_approved` + 首见/末见） | 新表 |
-| `frontend_families` 表（`family_id` 主键 + `tokens_json` 并集 + `rules` 运维版本 + `display_name`） | 新表 |
-| `custom_themes.family_id`、`theme_switch_log.family_id` | 三方言加列 |
-| 按端当前主题 → `SessionPrefs` 的 `{familyID: themeID}` | **零** |
-| 主题补算作业（缺 token 的 AI 补算 + 结果去重合并） | 走 `job_runs`，运维触发 |
-| `themeVarWhitelist`/`themeColorRe`/`builtinThemePresets` 从 Go 搬到 manifest 驱动 | — |
-
-⚠️ **加列与两张新表一起排在批次 F**，不要单独去动方言文件 —— 这一天已经碰过三次了，每次都是重演 `feedback_logs` 那类漏一处的风险。
-
-**改造期间现役前端行为不变**：后端内置一份它的 manifest（那 12 个 token + 现有规则）作兜底，与语言包「内嵌是地板」同构。
+改造期间现役前端行为不变：后端内置一份它的 manifest（那 12 个 token + 现有规则）作兜底，与语言包「内嵌是地板」同构。
 
 ---
 

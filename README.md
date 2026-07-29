@@ -171,61 +171,11 @@ All env vars are documented in [`.env.example`](.env.example). Version single so
 
 ---
 
-## 开发者手册（中文）
+## 开发者手册
 
-### 项目结构
+搬到 [`docs/DEVELOPING.md`](docs/DEVELOPING.md)：项目结构、扩展点（registry / 驱动模式）、开发命令、端到端冒烟。
 
-```
-cmd/daycore/main.go         装配：注册驱动/格式 → 打开 Store → 迁移 → 起 HTTP（优雅关闭）
-internal/
-  domain/                   实体 + 通用 Store/Repository 接口（界面分离核心）
-  config/                   环境配置（HOST/PORT/STATIC_DIR/…）
-  version/                  版本号唯一来源
-  auth/                     argon2id / JWT / OAuth / 会话 cookie
-  i18n/                     locale 归一化 / Accept-Language 协商
-  ai/                       AIProvider 接口 + catalog + 视觉编排 + 提示词
-    formats/{openai,anthropic,ollama}/   wire-format（自注册）
-    prompts/<locale>/*.tmpl 提示词（7 key × 2 locale）
-  schedule/                 重复规则展开/合并引擎（纯函数）
-  ics/                      最小 iCalendar + RRULE 子集解析器（零依赖）
-  storage/{sqlstore,mongostore}/  SQLite+PG+MySQL（Dialect 抽象）/ MongoDB
-  server/                   路由 + 中间件 + handlers（SSE / auto-plan / 导入 / 记忆 / 主题 / 静态托管）
-api/                        openapi.yaml + FRONTEND_HANDOFF.md（产品与协议规范）
-web/frontend/               React 前端（Vite；npm run dev / build）
-deploy/                     Dockerfile / docker-compose / nginx
-testdata/                   canvas-export.sample.json / sample.ics
-docs/                       实时项目文档（架构/认证/Agent/数据/AI/路由总表）
-extension/                  Chrome MV3 插件（抓 Canvas → POST /api/import/canvas）
-design-ui/                  前后端分离式前端的落地点（空占位，后端未跟进）
-```
-
-### 扩展点（registry / 驱动模式）
-
-1. **新增数据库**：实现 `domain.Store` + `storage.Register("foo", opener)`（SQL 类只需加一个 `Dialect`），main.go 加 blank import。
-2. **新增 AI 厂商格式**：实现 `ai.AIProvider` + `ai.RegisterFormat("gemini", New)`，`models.yaml` 引用 `format: gemini`。
-3. **新增模型（零代码）**：编辑 `config/models.yaml`，重启生效；视觉模型标 `vision: true`。
-4. **新增 OAuth provider（零代码）**：`config/oauth.yaml` 加条目，回调 `<PUBLIC_BASE_URL>/api/auth/oauth/<name>/callback`。
-5. **编辑提示词（运行时）**：`PUT /api/admin/prompts/{key}?locale=zh-CN|en-US`（`X-Admin-Token`），覆盖存 `prompt_overrides`。
-
-### 开发命令
-
-```bash
-make run / test / vet / build / docker
-cd web/frontend && npm run dev / build
-node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐校验
-```
-
-### 端到端冒烟（curl）
-
-见 `testdata/` 夹具；核心流：`POST /api/session/init` → `POST /api/import/token` → `POST /api/import/canvas`（X-Import-Token）→ `POST /api/import/ics` → `POST /api/rules` → `GET /api/plan?date=`（规则虚拟合并）→ `POST /api/ai/auto-plan` → SSE `/api/ai/companion`（`<rule_update>`/`<memory_update>`）→ `GET /api/memory`。
-
-### 相对 v1 的改进
-
-- 主模式从「手动输入日程」变为「自主规划」（资料导入 → auto-plan → 聊天微调）。
-- 新增重复/长期日程、Canvas/ICS/截图导入、每用户长期记忆、自定义主题 + AI 配色、i18n（含提示词双语）、版本体系与单二进制静态托管部署。
-- 修复无鉴权数据端点（服务端签名 httpOnly cookie）、`incrementInteractionCount` 占位符 bug、日程加载 N+1、v1 MoodScreen `exerciseOffered` 异步 bug（前端已按正确方式实现）。
-
----
+其余文档：[`docs/`](docs/) 是实时项目文档（这个仓库现在是什么样），[`docs/specs/`](docs/specs/) 是对外协议（别人要照着实现什么 —— 适配器与前端）。
 
 ## 许可证 / License
 
