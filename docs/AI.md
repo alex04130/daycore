@@ -51,3 +51,54 @@ obj, ok := extractJSONObject(resp)   // handlers_ai_helpers.go：取首 { 到末
 ## 上下文压缩（server/context.go）
 
 `maybeCompress`：估算 token 超 60% 阈值 → flash 模型压缩滑窗 → 开环提取为 memory，可回写 ChatThread.Summary。
+
+## 添加一种 AI wire-format
+
+格式通过 `ai.RegisterFormat`（`internal/ai/registry.go:32`）自注册，在 `init()` 里调用即可 —— 然后 `models.yaml` 加一条 `format: gemini` 的记录，**其余代码一行不改**。
+
+```go
+// internal/ai/formats/gemini/gemini.go
+package gemini
+
+import "daycore/internal/ai"
+
+func init() { ai.RegisterFormat("gemini", New) }
+
+type provider struct {
+    cfg      ai.ModelConfig
+    http     *http.Client
+    endpoint string
+}
+
+// cfg.BaseURL 来自 models.yaml；cfg.APIKey 已从环境变量解析。
+// 返回值要实现 Chat / ChatStream / Capabilities / Model 四个方法。
+func New(cfg ai.ModelConfig) (ai.AIProvider, error) { /* … */ }
+
+func (p *provider) Model() string                 { return p.cfg.Model }
+func (p *provider) Capabilities() ai.Capabilities { return p.cfg.Caps }
+```
+
+三个已有实现按用途挑一个抄：
+
+- `formats/openai/openai.go` —— OpenAI 兼容（DeepSeek 也走它）。**流式 tool_calls 的参考实现**：按 index 分片拼 `delta.tool_calls`、`delta.reasoning_content`、`finish_reason`；`mergeExtraBody` 浅合并且不覆盖既定键。
+- `formats/anthropic/anthropic.go` —— Anthropic Messages API，支持 `ServerSide` 工具（`web_search_20250305`）、`tool_use`/`tool_result` 块、`content_block_delta` SSE。
+- `formats/ollama/ollama.go` —— Ollama 原生格式，base64 图片 + newline JSON streaming。
+
+（2026-07-29 从 `AGENTS.md` §5.4 搬来。）
+
+## KV 缓存：策略跟着 provider 走
+
+三家的机制不一样，所以这件事不能有一个统一实现：
+
+| Provider | 机制 | 我们这边怎么做 |
+|---|---|---|
+| Anthropic | 显式 `cache_control: {"type":"ephemeral"}` | system 消息自动追加（`formats/anthropic/anthropic.go:128`） |
+| OpenAI | `prompt-cache-key` 请求头 | `ChatRequest.CacheKey` → HTTP header |
+| DeepSeek | 全自动磁盘缓存 | **零代码** —— 只要前缀一致就命中 |
+| Gemini | 独立的 cache API | 远期，没做 |
+
+⚠️ **前缀顺序与注入防护是一对真取舍，别以为能两全**（2026-07-29 澄清）。缓存想要「静态内容全在前面」，而现在的组装顺序是 `L1 → L3 → L3extra → L2 → reminder`（`handlers_ai_companion.go:218`）—— **reminder 故意放在最后**，这样 L2 里的「忽略前面的指令」压不掉硬边界。代价是可缓存前缀只到 L1 为止：它后面就是逐请求变化的 L3。
+
+把 reminder 挪到 L1 后面能把静态前缀拉长，但会丢掉「硬边界是最后一句话」这个性质。**当前选的是后者**，因为注入防护比省 token 贵。
+
+（这张表 2026-07-29 从已删除的 `plan.md` §2.3 搬来。那份文档自己 §2.1 与 §2.3 对 reminder 位置的说法是矛盾的，以代码为准。）

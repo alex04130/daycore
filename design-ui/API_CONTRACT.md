@@ -1,6 +1,12 @@
 # Daycore — API 契约（v4 · beta，琉璃 / 纸屿共用）
 
-> 本文是**唯一权威契约**。两套前端 UI 风格不同、能力对齐、同步演进，都只依赖这一套 HTTP API：
+> ⛔ **本文不是权威契约**（2026-07-29 更正抬头）。它原本自称「唯一权威契约」，与本目录 [`CLAUDE.md`](CLAUDE.md) 顶部的裁决直接矛盾 —— 而先打开这个文件的人只会读到那一句。
+>
+> **HTTP 契约的唯一权威是仓库根的 [`api/openapi.yaml`](../api/openapi.yaml)**（生成物，源在 [`api/spec/`](../api/spec/README.md)）+ [`api/FRONTEND_HANDOFF.md`](../api/FRONTEND_HANDOFF.md)。本文里的**路径命名不采纳**，只当**能力清单**参考：它说明了四端需要哪些能力，不说明那些能力叫什么名字。
+>
+> 抬头那个「v4」是**当时前端自己的编号**，不是 API 版本。API 契约版本是 `internal/version/version.go` 的 `APIVersion`/`APIMinor`，由 `GET /api/version` 报告。
+>
+> 以下原文保留（两套前端 UI 风格不同、能力对齐、同步演进，都依赖同一套 HTTP API）：
 > - **琉璃 liuli/** — 玻璃拟态，基于 DaycoreUI 设计系统；用户端 `liuli/index.html`，管理台 `liuli/admin.html`（独立页面）。
 > - **纸屿 zhiyu/** — 纸感手帐风，自带 dc.css；用户端与管理台同一 SPA（`zhiyu/index.html`，管理台在 `#/admin`）。
 >

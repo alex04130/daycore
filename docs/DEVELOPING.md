@@ -65,6 +65,97 @@ node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐�
 ---
 
 
+## 代码约定
+
+> 2026-07-29 从 `AGENTS.md` 搬来 —— 那份文档里只有这几节是别处没有的，其余六成与本目录重复且更旧。
+
+### 副作用归属
+
+**副作用永远服务端执行。** 前端决不能直接调 store 写操作 —— 必须经过 agent 工具或 HTTP handler。即使将来加批量操作，也走 `POST /api/...` 由服务端执行、写日志、返回结果。这条保证了每个操作可审计、可撤销 —— 撤销体系整个建立在它上面。
+
+**所有业务代码只 import `domain` 包**，绝不直接引用 `sqlstore` / `mongostore`。启动时 `main.go` 把 `Store` 传给 `Server`，之后 handler 完全不知道底层是哪个数据库。
+
+**AI 只在服务端调用**：`ai.Chat` / `ai.ChatStream` 只出现在 `internal/server/` 的 handler 或 agent 循环里。
+
+**永不信任客户端上送的上下文**：companion handler 不接收 `todayPlan` / `moodHistory` / `memoryContext` / `date` / `weekday` / `time`，全部由服务端从 store 组装。（客户端上送的对话历史会被角色白名单过滤 —— 见 `handlers_ai_companion.go` 里那段注释：客户端不能给自己注入一个 `system` 轮次。）
+
+### 操作日志
+
+所有写路径（plan add/update/remove/upsert/auto-plan、rule create/update/delete/batch、memory add/delete/clear，以及所有 agent 工具执行）必须调 `s.logOp`：
+
+```go
+func (s *Server) logOp(ctx context.Context, l *domain.OperationLog) string {
+    if l.ID == "" { l.ID = uuid.NewString() }
+    if l.Actor == "" { l.Actor = domain.ActorUser }
+    if l.Status == "" { l.Status = domain.OpStatusOK }
+    if l.RequestID == "" { l.RequestID = requestIDFrom(ctx) }
+    _ = s.store.OpLogs().Add(ctx, l)
+    return l.ID  // 返回 opID 供撤销链
+}
+```
+
+best-effort（`_ =` 丢错），`detail` 存 before/after 快照 —— **撤销是从 before 快照逐键重建的**，所以快照不全等于那条操作撤不回来。
+
+### 错误处理，四类各有约定
+
+| 哪一层 | 怎么报 | 为什么 |
+|---|---|---|
+| Agent 工具失败 | `toolResult{OK: false, ErrMsg: "…"}` | **不中断 loop** —— 作为 `role=tool` 消息注回上下文，模型看到错误可以改参数重试一次，或者向用户口头解释 |
+| HTTP handler | `s.writeErr(w, status, stableCode, humanMessage)` | `stableCode` 给前端做 i18n，`humanMessage` 只是回退。**不要只给 humanMessage** —— 那样前端只能拿字符串匹配 |
+| 存储层「找不到」 | `domain.ErrNotFound` | 所有 repo 统一用它，行为一致性套件断言这一点 |
+| AI 流出错 | `chunk.Err` → SSE error 帧 + done | 客户端必须收到 done，否则它会一直转 |
+
+### 文件命名
+
+- Go：`snake_case.go`
+- React：`PascalCase.jsx`（页面/组件）、`camelCase.js`（工具/状态）
+
+## 加东西的分步骨架
+
+### 加一条 API 路由
+
+1. 在 `internal/server/` 下写 handler（`sid, ok := s.requireSession(w, r)` 开头）。
+2. **在同一个文件的 `init()` 里注册**：`registerRoutes("<组名>", func(s *Server, mux Mux) { mux.HandleFunc("GET /api/xxx", s.handleXxx) })` —— 不要去 `server.go`，那里已经没有集中清单了（见 ARCHITECTURE.md「路由注册模式」）。
+3. **写进契约**：改 `api/spec/paths/<tag>.yaml`（文件名必须等于 operation 的 tag），然后 `make api-bundle`。跳过这步 `go test ./...` 会红 —— `routes_test.go` 与 openapi 双向核对。
+4. **契约面变了就升版**：`internal/version/version.go` 的 `APIMinor`（additive）或 `APIVersion`（breaking）。一批只升一次，`api/spec/contract-lock.json` 会要求至少升过一次。
+5. `make api-surface` 重生成 `docs/API_SURFACE.md`。
+6. 前端要用就在 `store.js` 加函数调 `api.get/post/patch/del`；有新文案就在 `i18n.js` 两个语言块各加一条。
+
+### 加一个 Agent 工具
+
+1. 在 `agent_tools.go` 的 `companionToolDefs` 里加 `ai.ToolDef{Name, Description, Parameters: schemaObj(...)}`。**如果这个工具在某些场景下不可能工作，就别把它加进工具带** —— 先例是 `interactive`：回不了卡的沉降口不给 `propose_decision`，因为「不给」胜过「让 agent 等一个永远等不到的答复」。
+2. 在 `runCompanionTool` 的 switch 里加 case。
+3. 照 `toolMemoryAdd` 的骨架实现：
+
+```go
+func (s *Server) toolMyNewTool(ctx context.Context, sid, rawArgs string) toolResult {
+    var args struct{ /* … */ }
+    if err := json.Unmarshal([]byte(rawArgs), &args); err != nil { return toolFail("…") }
+    // 调 s.store.* / s.weather.* / s.search.*
+    opID := s.logOp(ctx, &domain.OperationLog{ /* … */ })
+    return toolResult{OK: true, OpID: opID, Data: map[string]any{}, Summary: "…"}
+}
+```
+
+4. **写操作要能撤销**：在 `handlers_ops.go` 用 `registerRevert(action, handler)` 注册逆操作，每种 `action` 至少一个用例。
+5. 影响前端缓存（plan/rule/memory）的，在 `store.js` 的 `applyToolResult` 里加映射。
+
+### 加一个模型
+
+只改 `config/models.yaml` 一条记录，零代码 —— 只要 `format` 名已注册。重启生效。
+
+### 加一门语言
+
+丢一个 `<locale>.json` 进 `LOCALES_DIR`，或从控制台粘一份进 DB。**不改代码、不发版。** 前端目前还不是这样（`i18n.js` 是硬编码字典）。
+
+## 项目规则
+
+- **实现域唯一**：仓库根即实现面，后端在 `internal/`、前端在 `web/frontend/`。`design-ui/` 是只读设计参考，不要往里写业务代码。
+- **无包袱直切**：Beta 阶段不做双轨/灰度/迁移脚本。前后端同 PR 合入，回滚靠 git revert。
+- **测试是回归网**：日期解析、tool_call 解析、agent loop、operation_logs、存储行为一致性全覆盖。`make test` 先跑 i18n 校验再跑 Go test。
+- **非构建/验证期的 Bash 不要做危险操作**（删库、`rm -rf` 等）。
+
+
 ### 文档去哪找什么
 
 | 想知道 | 看 |

@@ -8,6 +8,28 @@ Only `zh-CN` and `en-US` are compiled into the binary, and they are a *floor* �
 enough to render a page and explain itself when there is no database and no
 files. They are not the set of languages the product supports.
 
+## Three layers, and this is the middle one
+
+```
+database overrides    console-editable, shared across instances   ← wins
+files here            LOCALES_DIR/<locale>.json
+embedded              Go literals, zh-CN and en-US only           ← floor
+```
+
+Resolution goes **locale by locale, not layer by layer**: for each candidate
+language in the fallback chain, all three layers are asked before moving to the
+next language. Done the other way round, a half-finished French override in the
+database would shadow a complete English translation underneath it.
+
+The database layer is loaded at startup by `server.ReloadLocaleOverrides` and
+again after a console edit. It was wired on 2026-07-29 — before that the layer
+existed in the catalog and in both stores but nothing connected them, so a
+running server had two layers while three documents described three.
+
+A language that exists **only** in the database still shows up in
+`GET /api/version`'s `locales.available`, and deleting it there removes it. So
+"install a language" and "uninstall a language" are both data operations.
+
 ## Format
 
 A flat object, message key → text:
