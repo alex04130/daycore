@@ -21,6 +21,41 @@
 | `internal/rapport/` `internal/rhythm/` `internal/mood/` | 默契评分与主动性门控 / 节律学习 + 20h 关怀 / 心情窗口（趋势+衰减+新鲜度）—— 三个都是纯函数、零存储、读时派生，见 DATA.md |
 | `internal/schedule/` `internal/ics/` `internal/i18n/` | 规则展开引擎 / ICS 解析 / locale 协商 + **三层消息目录**（DB → 文件 → 内嵌 zh-CN·en-US）+ 用户级一主一副 `Pair`，见 DATA.md |
 
+## 推荐 MongoDB，但四个后端都要能跑（2026-07-29）
+
+**MongoDB 是推荐部署**，理由是这个数据模型确实更贴它：主题变量、提案的 rows/ops、rapport 分数、节律日 —— 一半的新实体本来就是自由文档，Mongo 存它们不需要「塞进一个 JSON 列再整体重写」。
+
+**但兼容不是可选的。** 推荐与要求之间那条线要划清楚，否则「支持四个后端」会悄悄变成「只有 Mongo 真的测过」—— 而今天之前 `mongostore` 恰好是那个**零测试**的，方向还是反的。现在两边都跑同一套行为套件（见下）。
+
+### SQL 侧的取舍规则：条件写用列，其余用 JSON
+
+「大键值是个 JSON、每次整体重写」在**大部分**字段上是对的取舍 —— 省掉三方言 DDL、加字段零迁移、与 Mongo 的形状对齐。但它不能一刀切，因为整体重写**放弃了条件写**：
+
+> **凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段，必须是列。其余一律可以进 JSON blob。**
+
+批次 C 已经是这么分的，把规则写下来是为了后面不走偏：
+
+| 必须是列（参与条件写） | 可以是 JSON blob |
+|---|---|
+| `rev`（CAS）、`state`、`expires_at`、`ttl_policy`、`delivered_at`、`deliver_after`、`merge_key`、`created_at` | `rows_json`、`ops_json`、`applied_op_ids`、`accept_op_ids` |
+| `first_min`/`last_min`/`signals`（`CASE WHEN` 扩边界） | — |
+| `last_signal_at`/`run_since`（`WHERE last_signal_at < ?`） | — |
+| `attempts`、`status`、`started_at`（占有与接管判定） | `error_text` |
+| `fence`、`holder`、`expires_at`（选主） | — |
+| `cursor_created_at`/`cursor_id`（游标续读） | `scores_json` |
+
+把 `first_min` 塞进 blob，扩边界就退成读-改-写 —— 两个标签页开着就丢信号。这不是性能取舍，是正确性取舍。
+
+### 行为一致性套件（`internal/storage/storagetest`，已落地）
+
+一套按 `domain.Store` 写的行为套件，**两个后端都跑同一份**：sqlstore 用 SQLite，mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。29 个用例，全部来自今天审查抓到的真实分歧 —— 不是「能存能取」，而是：
+
+lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回别人的行 / 空 holder 被拒 / 场次占有互斥 / 完成的场次不再被占 / 失败重试到上限 / 崩溃接管有界且回报真实 attempts / **接管轮换占有令牌使僵尸的 `Finish` 落空** / `Prune` 保留 running / nil 切片回来是空切片而非 nil / 指向零值时间的指针算「不存在」 / **`ProposalOp.Args` 的数字在每个后端都回来是 `float64`** / `Validate` 在 `Create` 与 `Update` 两侧都生效 / `rev` CAS 拒绝陈旧写 / TTL 不对称 / **同毫秒并列时 Supersede 恰好留一张** / 已投递的卡不被退休 / keeper 缺失是非事件 / 可投递集合排除过期与压后 / 序列化失败拒绝写入 / rapport 游标往返 / **学习作业不擦掉活的清醒标记** / `Touch` 只向前 / 分钟 0 是有意义的值 / 并发首写不丢信号 / 语言包往返与整语言卸载 / `RevertedBy` 精确且不跨会话 / `Scan` 最旧优先且游标续读无重无漏。
+
+**加后端的验收标准就是这套套件通过**，包括计划中的 HTTP 转换层。这也是让第五个后端负担得起的唯一办法：两两分歧数随后端数平方增长，共享套件把它压平。
+
+⚠️ CI 里没有 Mongo，所以 CI 只跑 SQLite 那一半。真机那半靠 `make test-mongo` 手动跑 —— 这是已知缺口，不是「测过了」。
+
 ## 存储的 HTTP 转换层（路线已定，未落地）
 
 **「转换层 + 内部高效适配」是对的模式**，天气/搜索/通道（F2）已经这么设计，存储扩到同一个形状是自然的：写不进原生适配器的，写一个 HTTP 适配层就能接。
@@ -55,6 +90,21 @@ GET    /capabilities                     声明支持什么，缺的走降级
 ⚠️ **`matched` 而不是 `changed`**：MySQL 的 `RowsAffected` 默认数「改变的行」，这个仓库有 23 处依赖它数「匹配的行」（`mysqlDialect.NormalizeDSN` 为此强制 `clientFoundRows=true`）。协议必须把语义写死，否则第五个后端会重演同一个 bug。
 
 `/capabilities` 有先例：`domain.MaterialFTS` 就是可选能力接口，不实现就退回子串扫描。HTTP 后端不声明 FTS 就自动走那条路。
+
+### 两种传输，同一套协议
+
+同一套 8 个操作，传输方式两种，因为它们的失败模式不同：
+
+| | `transport: http` | `transport: exec` |
+|---|---|---|
+| 形态 | 适配层是个服务，可在别的机器、可并发扩容 | 后端启动并监管的子进程，走 stdio 或本地 socket |
+| 崩溃时你看到什么 | 连接被拒 —— 只知道它没了 | **退出码 + stderr**，能说出为什么 |
+| 重启 | 归运维/编排 | 后端自己带重启策略 |
+| 适用 | 已有的远端服务、需要横向扩容的适配层 | 本机适配器、开发期、以及「崩了要能诊断」的场合 |
+
+`exec` 不是 `http` 的降级，它在可观测性上是**更好**的那个：一个 HTTP 适配层崩掉只留下 connection refused，而被监管的子进程给出退出码和 stderr。这也正是 Go 生态的既有做法（HashiCorp 的 go-plugin 就是监管子进程 + 协议）。
+
+顺带说明一件事：**Go 的 `plugin` 包不适合做第三方生态** —— 只支持 Linux/macOS、要求插件与主程序用完全相同的工具链与依赖版本编译、加载后无法卸载。所以「子进程/服务 + 协议」不是绕开 Go 的弱点，它就是 Go 的标准答案。这条同样适用于 F2 的天气/搜索/通道适配层，两处共用一套 `transport` 概念，不要造两套。
 
 **定位是兼容不是性能**：每次读都过一趟网络，而 companion 组一次提示词要读八次库。原生适配器是快路径，HTTP 转换层是「实在不行」的那条路 —— 这与提出它时的原意一致，写下来免得以后被当成推荐部署方式。
 

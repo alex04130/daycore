@@ -1,4 +1,4 @@
-.PHONY: help run build test check-i18n tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo check-i18n tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -10,6 +10,10 @@ run: ## Run the server (SQLite by default)
 
 build: ## Build a static binary into bin/
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN) ./cmd/daycore
+
+test-mongo: ## Run the storage conformance suite against a real MongoDB
+	@echo "requires a mongod on 127.0.0.1:27017 — the suite creates and drops its own databases"
+	MONGO_TEST_DSN=mongodb://127.0.0.1:27017 go test -count=1 -run TestConformance -v ./internal/storage/mongostore/
 
 test: check-i18n ## Run all tests
 	go test ./...

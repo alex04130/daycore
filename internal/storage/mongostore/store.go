@@ -6,6 +6,7 @@ package mongostore
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,21 +45,35 @@ func Open(dsn string) (*Store, error) {
 	return &Store{client: client, db: client.Database(dbNameFromDSN(dsn))}, nil
 }
 
+// DefaultDatabase is used when the connection string names none.
+const DefaultDatabase = "daycore"
+
+// dbNameFromDSN reads the default database out of the connection string with a
+// real URL parser rather than slicing at the first '/'.
+//
+// The hand-rolled version cut at the first '/' after "://", which is the same
+// mistake the MySQL DSN handling made: a password may contain characters that
+// look like structure. `mongodb://user:p/ss@host/mydb` came back with a database
+// named "ss@host/mydb", and the server would then quietly create and use it. The
+// spec requires such characters to be percent-encoded, so the input is invalid —
+// but silently connecting to a nonsense database is the worst way to react to
+// invalid input — net/url refuses it, and refusing is what a caller can act on.
+//
+// net/url rather than the driver's connstring parser: that one resolves SRV
+// records for mongodb+srv URIs, so using it here would add a DNS round trip to
+// every Open and fail outright when a well-formed +srv URI cannot be resolved
+// from where the test runs. net/url is exact for every form that matters —
+// multi-host seed lists, mongodb+srv, options with no database, userinfo with
+// percent-encoded separators — and touches no network.
 func dbNameFromDSN(dsn string) string {
-	s := dsn
-	if i := strings.Index(s, "://"); i >= 0 {
-		s = s[i+3:]
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" {
+		return DefaultDatabase
 	}
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		s = s[i+1:]
-		if j := strings.IndexAny(s, "?"); j >= 0 {
-			s = s[:j]
-		}
-		if s != "" {
-			return s
-		}
+	if db := strings.TrimPrefix(u.Path, "/"); db != "" {
+		return db
 	}
-	return "daycore"
+	return DefaultDatabase
 }
 
 func (s *Store) c(name string) *mongo.Collection { return s.db.Collection(name) }

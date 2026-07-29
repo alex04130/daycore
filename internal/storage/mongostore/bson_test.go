@@ -179,3 +179,35 @@ func TestUnmarshalableOpsFailTheWrite(t *testing.T) {
 		t.Error("want an error rather than a card that claims work it does not hold")
 	}
 }
+
+// The connection string is parsed by the driver, not by slicing the string. The
+// hand-rolled version cut at the first '/' after "://" and returned a database
+// named "ss@host/mydb" for `mongodb://user:p/ss@host/mydb` — the same class of
+// mistake the MySQL DSN handling made, and the same silent outcome: the server
+// creates and uses a nonsense database.
+func TestDatabaseNameFromConnectionString(t *testing.T) {
+	for _, c := range []struct{ dsn, want string }{
+		{"mongodb://127.0.0.1:27017/daycore", "daycore"},
+		{"mongodb://127.0.0.1:27017/mydb?retryWrites=true&w=majority", "mydb"},
+		{"mongodb://user:pass@127.0.0.1:27017/mydb?authSource=admin", "mydb"},
+		{"mongodb://a:27017,b:27017/mydb?replicaSet=rs0", "mydb"},
+		// mongodb+srv must work without resolving anything: the driver's own
+		// connstring parser does an SRV lookup, which would put a DNS round trip
+		// in every Open and fail where the record cannot be resolved.
+		{"mongodb+srv://user:pass@cluster.example.com/mydb?retryWrites=true", "mydb"},
+		// A percent-encoded '/' in the password is the spec-conformant form and
+		// must not be mistaken for the path separator.
+		{"mongodb://user:p%2Fss@127.0.0.1:27017/mydb", "mydb"},
+		// No database named: fall back rather than guess.
+		{"mongodb://127.0.0.1:27017", DefaultDatabase},
+		{"mongodb://127.0.0.1:27017/", DefaultDatabase},
+		{"mongodb://127.0.0.1:27017/?directConnection=true", DefaultDatabase},
+		// Unparseable: fall back rather than connect somewhere arbitrary.
+		{"not a connection string", DefaultDatabase},
+		{"mongodb://user:p/ss@127.0.0.1:27017/mydb", DefaultDatabase},
+	} {
+		if got := dbNameFromDSN(c.dsn); got != c.want {
+			t.Errorf("dbNameFromDSN(%q) = %q, want %q", c.dsn, got, c.want)
+		}
+	}
+}
