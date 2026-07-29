@@ -233,6 +233,21 @@ func ptrString(ns sql.NullString) *string {
 	return nil
 }
 
+// marshalStrict is marshalJSON without the swallow. Use it where losing the
+// value would be worse than failing the write.
+//
+// marshalJSON's "null" fallback is fine for a display field, but a Proposal
+// whose ops will not marshal — a NaN anywhere in a tool argument is enough —
+// would be stored claiming it has work to do and holding none. The card then
+// looks live, the user accepts it, and nothing happens.
+func marshalStrict(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 func marshalJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

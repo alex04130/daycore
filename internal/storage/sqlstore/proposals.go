@@ -19,8 +19,14 @@ type proposalRepo struct{ *Store }
 // and START are reserved words in MySQL 8, and an unquoted reserved word is a
 // parse error that Rebind cannot fix (temp_contexts.key shipped exactly that
 // bug). rows_json and start_time avoid it without needing quoting anywhere.
-const proposalCols = `id, session_id, state, level, kind, title, summary, reason, evidence,
-	date, start_time, duration_min, block_type, lock_level, lock_reason,
+// Every nullable column is COALESCEd, not just the JSON ones. title, summary,
+// reason, evidence and lock_reason are TEXT — which this schema requires to be
+// nullable in all three dialects, because MySQL refuses a literal DEFAULT on
+// TEXT — and they scan into plain strings. A single NULL would fail the scan and
+// take down not just that card but the whole session's List.
+const proposalCols = `id, session_id, state, level, kind,
+	COALESCE(title, ''), COALESCE(summary, ''), COALESCE(reason, ''), COALESCE(evidence, ''),
+	date, start_time, duration_min, block_type, lock_level, COALESCE(lock_reason, ''),
 	COALESCE(rows_json, '[]'), COALESCE(ops_json, '[]'),
 	COALESCE(applied_op_ids, '[]'), COALESCE(accept_op_ids, '[]'),
 	merge_key, deliver_after, delivered_at, pushed_at,
@@ -37,10 +43,18 @@ func (r proposalRepo) Create(ctx context.Context, p *domain.Proposal) error {
 	if p.State == "" {
 		p.State = domain.ProposalPending
 	}
+	rowsJSON, err := marshalStrict(orEmptyRows(p.Rows))
+	if err != nil {
+		return err
+	}
+	opsJSON, err := marshalStrict(orEmptyOps(p.Ops))
+	if err != nil {
+		return err
+	}
 	now := nowMillis()
 	p.CreatedAt, p.UpdatedAt = fromMillis(now), fromMillis(now)
 	p.Rev = 1
-	_, err := r.exec(ctx,
+	_, err = r.exec(ctx,
 		`INSERT INTO proposals (id, session_id, state, level, kind, title, summary, reason, evidence,
 			date, start_time, duration_min, block_type, lock_level, lock_reason,
 			rows_json, ops_json, applied_op_ids, accept_op_ids,
@@ -50,7 +64,7 @@ func (r proposalRepo) Create(ctx context.Context, p *domain.Proposal) error {
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.SessionID, string(p.State), string(p.Level), string(p.Kind), p.Title, p.Summary, p.Reason, p.Evidence,
 		p.Date, p.Start, nullInt(p.Dur), string(p.BType), string(p.LockLevel), p.LockReason,
-		marshalJSON(orEmptyRows(p.Rows)), marshalJSON(orEmptyOps(p.Ops)),
+		rowsJSON, opsJSON,
 		marshalJSON(orEmptyStrings(p.AppliedOpIDs)), marshalJSON(orEmptyStrings(p.AcceptOpIDs)),
 		p.MergeKey, nullMillis(p.DeliverAfter), nullMillis(p.DeliveredAt), nullMillis(p.PushedAt),
 		string(p.TTLPolicy), toMillis(p.ExpiresAt), string(p.Resolution), string(p.Origin), p.ThreadID, p.OwnerInstance,
@@ -90,13 +104,9 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 		where = append(where, "expires_at > ?", "(deliver_after IS NULL OR deliver_after <= ?)")
 		args = append(args, ms, ms)
 	}
-	limit := f.Limit
-	if limit <= 0 {
-		limit = 100
-	}
 	rows, err := r.query(ctx,
 		`SELECT `+proposalCols+` FROM proposals WHERE `+strings.Join(where, " AND ")+
-			` ORDER BY created_at DESC LIMIT `+itoa(limit), args...)
+			` ORDER BY created_at DESC`+limitClause(f.Limit, 100, 1000), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +127,21 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 // the same compound card would otherwise read the same rows JSON, each write
 // their own line into it, and the second write would erase the first.
 func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
+	// Validate on the way out as well as on the way in. Without it a caller can
+	// blank the title, blank ttl_policy and zero the expiry — and a proposal
+	// whose ttl_policy is "" matches neither arm of the expiry sweep, so it
+	// stays pending forever, invisible to the mechanism meant to retire it.
+	if err := p.Validate(); err != nil {
+		return err
+	}
+	rowsJSON, err := marshalStrict(orEmptyRows(p.Rows))
+	if err != nil {
+		return err
+	}
+	opsJSON, err := marshalStrict(orEmptyOps(p.Ops))
+	if err != nil {
+		return err
+	}
 	now := nowMillis()
 	res, err := r.exec(ctx,
 		`UPDATE proposals SET state = ?, title = ?, summary = ?, reason = ?, evidence = ?,
@@ -128,7 +153,7 @@ func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
 		 WHERE id = ? AND session_id = ? AND rev = ?`,
 		string(p.State), p.Title, p.Summary, p.Reason, p.Evidence,
 		p.Date, p.Start, nullInt(p.Dur), string(p.BType), string(p.LockLevel), p.LockReason,
-		marshalJSON(orEmptyRows(p.Rows)), marshalJSON(orEmptyOps(p.Ops)),
+		rowsJSON, opsJSON,
 		marshalJSON(orEmptyStrings(p.AppliedOpIDs)), marshalJSON(orEmptyStrings(p.AcceptOpIDs)),
 		p.MergeKey, nullMillis(p.DeliverAfter), nullMillis(p.DeliveredAt), nullMillis(p.PushedAt),
 		string(p.TTLPolicy), toMillis(p.ExpiresAt), string(p.Resolution), p.OwnerInstance,
@@ -178,11 +203,30 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 	if mergeKey == "" {
 		return 0, nil // no key, nothing to merge with
 	}
+	// Read the keeper's timestamp in its own statement. Referencing proposals
+	// inside an UPDATE of proposals is ER_UPDATE_TABLE_USED (1093) on MySQL, and
+	// the classic derived-table workaround does not survive MySQL 8 — derived_merge
+	// is on by default, merges the derived table back into the enclosing
+	// subquery, and re-exposes the target table. created_at is immutable, so
+	// reading it separately opens no lost-update window and needs no transaction.
+	var keepAt int64
+	err := r.queryRow(ctx, `SELECT created_at FROM proposals WHERE session_id = ? AND id = ?`,
+		sessionID, keepID).Scan(&keepAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A keeper that is gone is nothing to merge against — the same non-event
+		// as an empty merge key, and the same answer the Mongo side gives.
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+
 	now := nowMillis()
 	// Retire what is OLDER than the keeper, not merely "not the keeper". Two
-	// daemons each calling this with their own id would otherwise annihilate
-	// each other and leave the user with nothing — the correlated subquery makes
-	// the survivor the same card whichever one calls first.
+	// daemons each calling this with their own id would otherwise annihilate each
+	// other and leave the user with nothing. The order has to be total: on a
+	// same-millisecond tie neither is older, so the tie breaks on id — arbitrary,
+	// but identical from either caller's side.
 	//
 	// Only undelivered ones, either way. A card the user has already seen must
 	// not vanish from under them because a newer one arrived: consensus 15
@@ -190,11 +234,9 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 	res, err := r.exec(ctx,
 		`UPDATE proposals SET state = ?, resolution = ?, rev = rev + 1, updated_at = ?
 		 WHERE session_id = ? AND merge_key = ? AND id <> ? AND state = ? AND delivered_at IS NULL
-		   AND (created_at < (SELECT created_at FROM (SELECT created_at FROM proposals WHERE id = ?) AS k1)
-			 OR (created_at = (SELECT created_at FROM (SELECT created_at FROM proposals WHERE id = ?) AS k2)
-				 AND id < ?))`,
+		   AND (created_at < ? OR (created_at = ? AND id < ?))`,
 		string(domain.ProposalExpired), string(domain.ResolutionSuperseded), now,
-		sessionID, mergeKey, keepID, string(domain.ProposalPending), keepID, keepID, keepID)
+		sessionID, mergeKey, keepID, string(domain.ProposalPending), keepAt, keepAt, keepID)
 	if err != nil {
 		return 0, err
 	}

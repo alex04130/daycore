@@ -2,6 +2,7 @@ package mongostore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"daycore/internal/domain"
@@ -28,6 +29,12 @@ type leaseRepo struct{ *Store }
 // version of the same guarantee — the match and the update are atomic on the
 // document, so two instances cannot both come back holding it.
 func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Duration, now time.Time) (*domain.Lease, bool, error) {
+	// Same contract as the SQL side: a holder identifies one PROCESS. Two
+	// instances sharing the string both match the renewal filter and both keep
+	// coming back true forever, with the fence never moving.
+	if holder == "" {
+		return nil, false, errors.New("lease: holder must be a per-process identifier, not empty")
+	}
 	expires := now.Add(ttl)
 	after := options.After
 
@@ -64,7 +71,16 @@ func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Du
 	if _, err := r.c("leases").InsertOne(ctx, leaseDoc{
 		Name: name, Holder: holder, AcquiredAt: now, ExpiresAt: expires, Fence: 1,
 	}); err != nil {
-		return nil, false, nil
+		// Distinguish "somebody inserted first" from "the primary is
+		// unreachable". Swallowing both as a lost election makes an outage look
+		// like an ordinary hand-over: the worker goes quiet and nothing says why.
+		// Reading the row back is driver-error-free — a row that now exists means
+		// we simply lost, and the caller gets the row naming the real holder
+		// rather than a nil the SQL side would never return.
+		if l, gerr := r.Get(ctx, name); gerr == nil {
+			return l, l.Held(holder, now), nil
+		}
+		return nil, false, err
 	}
 	return &domain.Lease{Name: name, Holder: holder, AcquiredAt: now, ExpiresAt: expires, Fence: 1}, true, nil
 }
@@ -134,9 +150,9 @@ type jobRunRepo struct{ *Store }
 // duplicate-key failure means somebody else already owns it. Write first, work
 // second — the other order leaves open the window this exists to close.
 func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error) {
-	if run.ID == "" {
-		run.ID = uuid.NewString()
-	}
+	// Always fresh: the id is a claim token, not caller identity. See the SQL
+	// side for what a reused struct would do.
+	run.ID = uuid.NewString()
 	now := time.Now().UTC()
 	run.Status = domain.JobRunning
 	run.StartedAt = now

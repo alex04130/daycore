@@ -20,7 +20,7 @@
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
 
 - `sqlstore/`：每实体一文件；方言拆分 dialect_sqlite/postgres/mysql.go；测试 store_test.go（round-trip）。
-- `mongostore/`：每实体一 repo 文件，store.go 有 index specs；**无测试**。
+- `mongostore/`：每实体一 repo 文件，store.go 有 index specs；`bson_test.go` 覆盖序列化往返（不需要真机），**没有针对真实 Mongo 的测试** —— 行为一致性套件见 ARCHITECTURE「存储的 HTTP 转换层」下的 F8a。
 
 ## 新增实体的完整路径
 
@@ -396,6 +396,33 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 1. **`kind` 是服务端已知的封闭集合**（color / length / number / ratio / duration / enum），校验器归后端，**前端不能自带正则、没有 `raw` 档**。加一种 kind 是改后端 —— 这个不便利是把值层面注入面钉在后端的那颗钉子。AI 生成的主题落地前逐 token 校验 key 与 kind。
 2. **`theme.rules` 未经运维批准不进 LLM**。前端可以主张、运维可以改并决定是否采用；没主张或没批准 → 后端按 token 清单机械生成。第三方前端一上来功能完整，代价只是提示词平淡；注入面默认为零。
+
+## 批次 C 的第二轮审查（七路跑完，2026-07-28）
+
+七路对抗式审查全部完成（前两次被 529 与会话额度打断），共 59 条去重后的 finding。**两条 fatal 都是批次 C 自己写出来的**：
+
+| 缺陷 | 后果 |
+|---|---|
+| `Supersede` 用 `(SELECT … FROM (SELECT …) AS k1)` 引用目标表 | 那是 **MySQL 5.7 前的旧绕法**；MySQL 8 的 `derived_merge` 默认开启会把派生表合并回去、重新暴露目标表 → **每次调用 error 1093**。改成先单独读一次 keeper 的 `created_at`（它不可变，没有丢失更新的窗口） |
+| `NormalizeDSN` 在整个 DSN 里找第一个 `?` | MySQL DSN 的参数段从**最后一个 `/` 之后**的第一个 `?` 开始，而密码里可以有 `?`（驱动 README 明说不用转义）→ 参数被拼到**数据库名**上 → `Unknown database 'daycore&clientfoundrows=true'`，**起不来**。改用驱动自己的 `ParseDSN`/`FormatDSN`，按构造正确 |
+
+其余已修的（每条都有回归测试）：
+
+- **`itoa` 的 8 字节缓冲从高位静默截断**：`itoa(100000000)` = `"00000000"` → `LIMIT 0` → **一行不返回**。既有 bug（import history 的 limit），批次 C 又复制到三个新调用点。换成 `limitClause(limit, def, max)`：`strconv.Itoa` + 上限（无上限的 LIMIT 是让服务端物化整张表的办法）。
+- **`proposalCols` 只 COALESCE 了 JSON 列**：title/summary/reason/evidence/lock_reason 是 TEXT（本 schema 要求三方言一律可空），却直接扫进 `string` —— 一个 NULL 不止毁那张卡，**整个会话的 List 都炸**。
+- **`Update` 不调 `Validate`**：一次字段不全的 Update 就能把 `ttl_policy` 清空，而 `ttl_policy=""` 两个清扫分支都不匹配 → **永远 pending**，投递查询也永远返回不了它。两侧都补上。
+- **`marshalJSON` 失败写字面 `"null"`**：ops 里有 NaN 就够 —— 卡入库时声称有活要干、实际一件都没有，用户点接受什么也不会发生。新增 `marshalStrict`，proposals 的 rows/ops 走它，失败就拒绝写入。
+- **`Claim` 的 ID 是占有令牌不是调用方身份**：复用同一个 struct 会撞主键而不是撞场次索引，于是 `Claim` 对一个没人占的场次报「别人占了」。改成总是新生成。
+- **`Claim` 把一切 INSERT 失败都当「别人占了」**：瞬时写失败也是。改成失败后查一次场次行 —— 有行是真落选，没行说明那个错误是真的。
+- **`Acquire` 接受空 holder**：两个实例共用 holder 字符串会**都**匹配续期语句、**都**一直返回 true 而 fence 永不动 —— fence 存在要抓的唯一那种失败变成不可检测。唯一性是调用方的契约（每进程一个值、永不可配置），空值是这一层唯一看得见的退化情形，拒掉。
+- **`rhythmProfiles` 一行两个写者、节奏差几个数量级**：夜间学习作业 `Get→算→Save` 会把开始前的清醒标记快照写回去，**擦掉中途开始的清醒段** —— 而零值 `RunSince` 读作「睡了」，Protector 就忘了这人已经醒着九小时。拆成 `Save`（只写学到的一半）+ `Touch`（只写两个标记，且只向前）。
+- **Mongo 侧五处与 SQL 不一致**：lease 吞掉一切 `InsertOne` 错误且返回 nil、`Update` 把「指向零值时间的非 nil 指针」当真值 `$set`、`localeRepo.Set` 的 upsert 过滤条件不是唯一键（自己和自己竞争）、`Supersede` 的 keeper 缺失语义、以及最要紧的一条：
+- **`ProposalOp.Args` 在两库回来的 Go 类型不同** —— SQL 走 JSON 得 `float64`/`[]interface{}`，Mongo 走 BSON 得 `int32`/`int64`/`primitive.A`。执行工具的 `args["minutes"].(float64)` 在 SQL 上成立、在 Mongo 上断言失败。**两库让执行器拿到不同类型比任何一个选择都糟**，所以 Mongo 侧的 `rows_json`/`ops_json` 也改成 JSON 字符串（字段名本来就叫 json），两边同样有损（>2^53 的整数掉精度 —— 工具参数不该带那种数）。
+- **对等测试自己的盲点**：它跳过了 `PRIMARY KEY` 行，于是 `rhythm_days` 与 `locale_overrides` 那两个「upsert 唯一依赖的复合主键」在三方言之间**没有任何东西在比**。已补。
+
+`mongostore` 因此有了第一批测试（`bson_test.go`，6 个，不需要真机）。
+
+**仍未做的**（审查列出、判断为后续批次）：`ProposalFilter` 表达不了注意力阶梯的两个预算（没有 `level` 谓词、没有 `pushed_at`、没有计数）→ 批次 D 用得到时再加；proposals 没有保留策略（唯一一张没有 `Prune` 的新表）；`RapportState.FoldVersion` 存了但没有任何地方定义「当前版本是几」；`Proposal.OwnerInstance` 写了但不可查（崩溃清扫写不出来）。
 
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 

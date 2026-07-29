@@ -2,6 +2,7 @@ package mongostore
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"daycore/internal/domain"
@@ -23,17 +24,28 @@ type proposalDoc struct {
 	Level     string `bson:"level"`
 	Kind      string `bson:"kind"`
 
-	Title      string               `bson:"title"`
-	Summary    string               `bson:"summary,omitempty"`
-	Reason     string               `bson:"reason,omitempty"`
-	Evidence   string               `bson:"evidence,omitempty"`
-	Date       string               `bson:"date,omitempty"`
-	Start      string               `bson:"start_time,omitempty"`
-	Dur        *int                 `bson:"duration_min,omitempty"`
-	BType      string               `bson:"block_type,omitempty"`
-	LockLevel  string               `bson:"lock_level,omitempty"`
-	LockReason string               `bson:"lock_reason,omitempty"`
-	Rows       []domain.ProposalRow `bson:"rows_json"`
+	Title      string `bson:"title"`
+	Summary    string `bson:"summary,omitempty"`
+	Reason     string `bson:"reason,omitempty"`
+	Evidence   string `bson:"evidence,omitempty"`
+	Date       string `bson:"date,omitempty"`
+	Start      string `bson:"start_time,omitempty"`
+	Dur        *int   `bson:"duration_min,omitempty"`
+	BType      string `bson:"block_type,omitempty"`
+	LockLevel  string `bson:"lock_level,omitempty"`
+	LockReason string `bson:"lock_reason,omitempty"`
+	// Rows and Ops are JSON STRINGS, not BSON documents — which is why the field
+	// names say json.
+	//
+	// BSON and encoding/json disagree about Go types on the way back:
+	// ProposalOp.Args is map[string]any, and a 45 comes back as float64 through
+	// JSON and as int32 through BSON, a list as []interface{} versus
+	// primitive.A. The agent tool that executes an op does
+	// args["minutes"].(float64) — correct on SQL, a failed assertion on Mongo.
+	// Two stores that hand the executor different types are worse than either
+	// choice, so both go through encoding/json and both are equally lossy
+	// (integers above 2^53 lose precision — tool arguments must not carry them).
+	Rows string `bson:"rows_json"`
 
 	MergeKey     string     `bson:"merge_key,omitempty"`
 	DeliverAfter *time.Time `bson:"deliver_after,omitempty"`
@@ -44,15 +56,15 @@ type proposalDoc struct {
 	ExpiresAt  time.Time `bson:"expires_at"`
 	Resolution string    `bson:"resolution,omitempty"`
 
-	Origin        string              `bson:"origin,omitempty"`
-	ThreadID      string              `bson:"thread_id,omitempty"`
-	Ops           []domain.ProposalOp `bson:"ops_json"`
-	AppliedOpIDs  []string            `bson:"applied_op_ids"`
-	AcceptOpIDs   []string            `bson:"accept_op_ids"`
-	OwnerInstance string              `bson:"owner_instance,omitempty"`
-	Rev           int                 `bson:"rev"`
-	CreatedAt     time.Time           `bson:"created_at"`
-	UpdatedAt     time.Time           `bson:"updated_at"`
+	Origin        string    `bson:"origin,omitempty"`
+	ThreadID      string    `bson:"thread_id,omitempty"`
+	Ops           string    `bson:"ops_json"`
+	AppliedOpIDs  []string  `bson:"applied_op_ids"`
+	AcceptOpIDs   []string  `bson:"accept_op_ids"`
+	OwnerInstance string    `bson:"owner_instance,omitempty"`
+	Rev           int       `bson:"rev"`
+	CreatedAt     time.Time `bson:"created_at"`
+	UpdatedAt     time.Time `bson:"updated_at"`
 }
 
 type proposalRepo struct{ *Store }
@@ -70,7 +82,11 @@ func (r proposalRepo) Create(ctx context.Context, p *domain.Proposal) error {
 	now := time.Now().UTC()
 	p.CreatedAt, p.UpdatedAt = now, now
 	p.Rev = 1
-	_, err := r.c("proposals").InsertOne(ctx, docFromProposal(*p))
+	doc, err := docFromProposal(*p)
+	if err != nil {
+		return err
+	}
+	_, err = r.c("proposals").InsertOne(ctx, doc)
 	return err
 }
 
@@ -138,8 +154,17 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 // a card does not change which ladder rung it is on or who produced it, and if
 // that ever needs to change it is a new card.
 func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
+	// Validate on the way out as well as in: without it a caller can blank
+	// ttl_policy, and a proposal whose policy is "" matches neither arm of the
+	// expiry sweep and stays pending forever.
+	if err := p.Validate(); err != nil {
+		return err
+	}
 	now := time.Now().UTC()
-	d := docFromProposal(*p)
+	d, err := docFromProposal(*p)
+	if err != nil {
+		return err
+	}
 	set := bson.M{
 		"state": d.State, "title": d.Title, "summary": d.Summary,
 		"reason": d.Reason, "evidence": d.Evidence,
@@ -159,7 +184,11 @@ func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
 	for field, v := range map[string]*time.Time{
 		"deliver_after": d.DeliverAfter, "delivered_at": d.DeliveredAt, "pushed_at": d.PushedAt,
 	} {
-		if v != nil {
+		// A non-nil pointer to the ZERO time counts as absent, matching
+		// sqlstore's nullMillis. Treating it as a real value would $set an epoch
+		// delivered_at and quietly take the card out of the undelivered pool on
+		// one backend and not the other.
+		if v != nil && !v.IsZero() {
 			set[field] = *v
 		} else {
 			unset[field] = ""
@@ -169,10 +198,10 @@ func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
 	if len(unset) > 0 {
 		update["$unset"] = unset
 	}
-	res, err := r.c("proposals").UpdateOne(ctx,
+	res, uerr := r.c("proposals").UpdateOne(ctx,
 		bson.M{"_id": p.ID, "session_id": p.SessionID, "rev": p.Rev}, update)
-	if err != nil {
-		return err
+	if uerr != nil {
+		return uerr
 	}
 	if res.MatchedCount == 0 {
 		return domain.ErrConflict
@@ -257,7 +286,7 @@ func (r proposalRepo) Supersede(ctx context.Context, sessionID, mergeKey, keepID
 	return int(res.ModifiedCount), nil
 }
 
-func docFromProposal(p domain.Proposal) proposalDoc {
+func docFromProposal(p domain.Proposal) (proposalDoc, error) {
 	// nil slices become empty ones, so a round trip never turns [] into null —
 	// the same normalisation the SQL side does before marshalling.
 	rows := p.Rows
@@ -276,35 +305,59 @@ func docFromProposal(p domain.Proposal) proposalDoc {
 	if accept == nil {
 		accept = []string{}
 	}
+	rowsJSON, err := json.Marshal(rows)
+	if err != nil {
+		// A proposal whose rows will not marshal would be stored claiming work
+		// it does not hold. Fail the write instead.
+		return proposalDoc{}, err
+	}
+	opsJSON, err := json.Marshal(ops)
+	if err != nil {
+		return proposalDoc{}, err
+	}
 	return proposalDoc{
 		ID: p.ID, SessionID: p.SessionID,
 		State: string(p.State), Level: string(p.Level), Kind: string(p.Kind),
 		Title: p.Title, Summary: p.Summary, Reason: p.Reason, Evidence: p.Evidence,
 		Date: p.Date, Start: p.Start, Dur: p.Dur,
 		BType: string(p.BType), LockLevel: string(p.LockLevel), LockReason: p.LockReason,
-		Rows:     rows,
+		Rows:     string(rowsJSON),
 		MergeKey: p.MergeKey, DeliverAfter: p.DeliverAfter, DeliveredAt: p.DeliveredAt, PushedAt: p.PushedAt,
 		TTLPolicy: string(p.TTLPolicy), ExpiresAt: p.ExpiresAt, Resolution: string(p.Resolution),
 		Origin: string(p.Origin), ThreadID: p.ThreadID,
-		Ops: ops, AppliedOpIDs: applied, AcceptOpIDs: accept,
+		Ops: string(opsJSON), AppliedOpIDs: applied, AcceptOpIDs: accept,
 		OwnerInstance: p.OwnerInstance, Rev: p.Rev,
 		CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt,
-	}
+	}, nil
 }
 
 func proposalFromDoc(d proposalDoc) domain.Proposal {
+	// Same fallback shape as the SQL scan: an unreadable blob becomes nil rather
+	// than an error, because a card that cannot show its rows is still a card.
+	var rows []domain.ProposalRow
+	if d.Rows != "" {
+		if e := json.Unmarshal([]byte(d.Rows), &rows); e != nil {
+			rows = nil
+		}
+	}
+	var ops []domain.ProposalOp
+	if d.Ops != "" {
+		if e := json.Unmarshal([]byte(d.Ops), &ops); e != nil {
+			ops = nil
+		}
+	}
 	return domain.Proposal{
 		ID: d.ID, SessionID: d.SessionID,
 		State: domain.ProposalState(d.State), Level: domain.ProposalLevel(d.Level), Kind: domain.ProposalKind(d.Kind),
 		Title: d.Title, Summary: d.Summary, Reason: d.Reason, Evidence: d.Evidence,
 		Date: d.Date, Start: d.Start, Dur: d.Dur,
 		BType: domain.BlockType(d.BType), LockLevel: domain.LockLevel(d.LockLevel), LockReason: d.LockReason,
-		Rows:     d.Rows,
+		Rows:     rows,
 		MergeKey: d.MergeKey, DeliverAfter: d.DeliverAfter, DeliveredAt: d.DeliveredAt, PushedAt: d.PushedAt,
 		TTLPolicy: domain.ProposalTTL(d.TTLPolicy), ExpiresAt: d.ExpiresAt,
 		Resolution: domain.ProposalResolution(d.Resolution),
 		Origin:     domain.ProposalOrigin(d.Origin), ThreadID: d.ThreadID,
-		Ops: d.Ops, AppliedOpIDs: d.AppliedOpIDs, AcceptOpIDs: d.AcceptOpIDs,
+		Ops: ops, AppliedOpIDs: d.AppliedOpIDs, AcceptOpIDs: d.AcceptOpIDs,
 		OwnerInstance: d.OwnerInstance, Rev: d.Rev,
 		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}

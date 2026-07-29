@@ -4,7 +4,9 @@ package sqlstore
 // MySQL can't index TEXT without a prefix and lacks CREATE INDEX IF NOT EXISTS,
 // so keys use VARCHAR and indexes are declared inline in CREATE TABLE.
 
-import "strings"
+import (
+	mysqldriver "github.com/go-sql-driver/mysql"
+)
 
 type mysqlDialect struct{}
 
@@ -414,14 +416,22 @@ func (mysqlDialect) Migrations() []string {
 func (mysqlDialect) MigrationLock() (acquire, release []string) { return nil, nil }
 
 func (mysqlDialect) NormalizeDSN(dsn string) string {
-	if strings.Contains(dsn, "clientFoundRows") {
+	// Parse and re-format with the driver rather than doing string surgery.
+	//
+	// A MySQL DSN's parameter list begins at the first '?' AFTER the last '/',
+	// and a password may legally contain '?' — the driver's own README says
+	// escaping is unnecessary. Splitting on the first '?' anywhere therefore
+	// appends the parameter to the DATABASE NAME for a password like "pa?ss",
+	// and the server then fails to boot with "Unknown database
+	// 'daycore&clientfoundrows=true'". Parsing is exact by construction.
+	cfg, err := mysqldriver.ParseDSN(dsn)
+	if err != nil {
+		// Let sql.Open surface the real parse error instead of masking it with a
+		// mangled string.
 		return dsn
 	}
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	return dsn + sep + "clientFoundRows=true"
+	cfg.ClientFoundRows = true
+	return cfg.FormatDSN()
 }
 
 func (mysqlDialect) Quote(ident string) string { return "`" + ident + "`" }

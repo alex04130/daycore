@@ -22,6 +22,16 @@ type leaseRepo struct{ *Store }
 // conditional statement is the only mutual exclusion available on all four
 // backends.
 func (r leaseRepo) Acquire(ctx context.Context, name, holder string, ttl time.Duration, now time.Time) (*domain.Lease, bool, error) {
+	// A holder must identify one PROCESS. Two instances passing the same string
+	// both match the renewal UPDATE, so both keep coming back true forever and
+	// the fence never moves — the one failure it exists to catch becomes
+	// undetectable. An empty holder is the degenerate case and the only one this
+	// layer can see, so it is refused here; uniqueness itself is the caller's
+	// contract (a per-process value, never configured — a pod restarting with the
+	// same hostname must not be able to renew its predecessor's lease).
+	if holder == "" {
+		return nil, false, errors.New("lease: holder must be a per-process identifier, not empty")
+	}
 	nowMS := toMillis(now)
 	expires := toMillis(now.Add(ttl))
 
@@ -133,9 +143,12 @@ type jobRunRepo struct{ *Store }
 // That ordering — write first, work second — is the entire mechanism. Recording
 // the run afterwards would leave open exactly the window this exists to close.
 func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error) {
-	if run.ID == "" {
-		run.ID = uuid.NewString()
-	}
+	// The id is a CLAIM TOKEN, not an identity the caller chooses, so it is
+	// always freshly generated. The usual "caller-supplied id wins" convention
+	// would make a reused struct collide on the primary key instead of on the
+	// occurrence index — and Claim would then report "somebody else owns this"
+	// for an occurrence nobody owns.
+	run.ID = uuid.NewString()
 	now := nowMillis()
 	run.Status = domain.JobRunning
 	run.StartedAt = fromMillis(now)
@@ -178,6 +191,18 @@ func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error)
 		return false, uerr
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
+		// Neither the insert nor the takeover landed. That is normally "somebody
+		// else owns this occurrence" — but it is also what a transient write
+		// failure looks like, and reporting an outage as a lost race leaves the
+		// worker quiet with nothing to explain it. A row for the occurrence means
+		// we genuinely lost; no row means the insert error was real.
+		var one int
+		qerr := r.queryRow(ctx,
+			`SELECT 1 FROM job_runs WHERE session_id = ? AND job_name = ? AND run_key = ?`,
+			run.SessionID, run.Job, run.RunKey).Scan(&one)
+		if errors.Is(qerr, sql.ErrNoRows) {
+			return false, err
+		}
 		return false, nil
 	}
 	// The UPDATE incremented attempts in the database; read it back so the
@@ -199,13 +224,10 @@ func (r jobRunRepo) Finish(ctx context.Context, id string, status domain.JobStat
 }
 
 func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.JobRun, error) {
-	if limit <= 0 {
-		limit = 50
-	}
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, job_name, run_key, status, instance, started_at, ended_at, attempts,
 			COALESCE(error_text, '')
-		 FROM job_runs WHERE session_id = ? ORDER BY started_at DESC LIMIT `+itoa(limit), sessionID)
+		 FROM job_runs WHERE session_id = ? ORDER BY started_at DESC`+limitClause(limit, 50, 500), sessionID)
 	if err != nil {
 		return nil, err
 	}

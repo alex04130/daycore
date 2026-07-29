@@ -102,7 +102,23 @@ type RhythmDay struct {
 
 type RhythmRepository interface {
 	Get(ctx context.Context, sessionID string) (*RhythmProfile, error)
+	// Save writes the LEARNED half — wake, sleep, source, days. It deliberately
+	// does not touch the two live marks.
+	//
+	// The row has two owners on wildly different cadences: the nightly learn job
+	// writes the profile, and every awake signal moves the marks. With one
+	// whole-row Save, the learn job's Get→compute→Save would carry a snapshot of
+	// the marks from before it started and write it back minutes later, erasing a
+	// stretch that began in between — and a zero RunSince reads as "asleep", so
+	// the Protector would forget somebody had been up for nine hours. Splitting
+	// the writers is cheaper and more obviously correct than versioning the row.
 	Save(ctx context.Context, p *RhythmProfile) error
+	// Touch writes only the two live marks, and only forward: a signal older
+	// than the one already recorded is a retry or a clock that stepped back, and
+	// letting it move the marks would shorten a stretch that in fact continued.
+	//
+	// This is the every-signal path, so it is one statement.
+	Touch(ctx context.Context, sessionID string, runSince, lastSignalAt time.Time) error
 	// Observe folds one awake moment into the day's row: widening its bounds if
 	// it already exists, creating it if not. Called on every signal, so it has
 	// to be one statement's worth of work.

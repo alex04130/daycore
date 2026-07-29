@@ -21,6 +21,55 @@
 | `internal/rapport/` `internal/rhythm/` `internal/mood/` | 默契评分与主动性门控 / 节律学习 + 20h 关怀 / 心情窗口（趋势+衰减+新鲜度）—— 三个都是纯函数、零存储、读时派生，见 DATA.md |
 | `internal/schedule/` `internal/ics/` `internal/i18n/` | 规则展开引擎 / ICS 解析 / locale 协商 + **三层消息目录**（DB → 文件 → 内嵌 zh-CN·en-US）+ 用户级一主一副 `Pair`，见 DATA.md |
 
+## 存储的 HTTP 转换层（路线已定，未落地）
+
+**「转换层 + 内部高效适配」是对的模式**，天气/搜索/通道（F2）已经这么设计，存储扩到同一个形状是自然的：写不进原生适配器的，写一个 HTTP 适配层就能接。
+
+但**最小接口不是「基础增删改查」，是「增删改查 + 条件写（CAS）」** —— 这一个字是关键。
+
+`domain.Store` 有 179 个方法、**20 处条件写**，它们不是优化，是这个仓库唯一的互斥手段（**全包无事务**，`grep BeginTx` 零命中）：
+
+| 靠它的东西 | 语句 | 退成读-改-写的后果 |
+|---|---|---|
+| 选主 | `UPDATE leases … WHERE expires_at <= ?` | 两个实例同时持锁 |
+| 任务场次占有 | `INSERT` 本身即互斥，靠唯一键冲突分辨 | 早报发两遍 |
+| 提案行级接受 | `WHERE rev = ?` | 后写的擦掉先写的 |
+| 节律日边界 | `SET first_min = CASE WHEN ? < first_min …` | 两个标签页开着就丢信号 |
+| 清醒标记 | `WHERE last_signal_at < ?` | 迟到信号把清醒段截短 |
+
+纯 CRUD 表达不了任何一条。**协议少了 CAS，这些保证就全部静默降级成「通常能用」** —— 而且降级不报错，只在并发下偶尔出错。批次 C 的对抗式审查抓到的多数问题正是这一类。
+
+### 协议层级（约 8 个操作）
+
+```
+GET    /doc/{coll}/{id}                  读一条
+PUT    /doc/{coll}/{id}?ifMatch=<rev>    写 + CAS ← 地基，不可省
+POST   /doc/{coll}                       插入；冲突必须可区分（409 ≠ 500）
+PATCH  /doc/{coll}?where=…               条件更新，返回 matched 数
+DELETE /doc/{coll}?where=…               谓词删除，返回删除数
+POST   /query/{coll}                     过滤 + 排序 + 游标 + limit
+POST   /count/{coll}                     聚合（ailog/feedback 三处 COUNT/SUM 要它）
+GET    /capabilities                     声明支持什么，缺的走降级
+```
+
+⚠️ **`matched` 而不是 `changed`**：MySQL 的 `RowsAffected` 默认数「改变的行」，这个仓库有 23 处依赖它数「匹配的行」（`mysqlDialect.NormalizeDSN` 为此强制 `clientFoundRows=true`）。协议必须把语义写死，否则第五个后端会重演同一个 bug。
+
+`/capabilities` 有先例：`domain.MaterialFTS` 就是可选能力接口，不实现就退回子串扫描。HTTP 后端不声明 FTS 就自动走那条路。
+
+**定位是兼容不是性能**：每次读都过一趟网络，而 companion 组一次提示词要读八次库。原生适配器是快路径，HTTP 转换层是「实在不行」的那条路 —— 这与提出它时的原意一致，写下来免得以后被当成推荐部署方式。
+
+### ⚠️ 顺序：先做一致性套件，再做第五个后端
+
+批次 C 的审查在**现有两个**后端之间抓到十几处行为分歧 —— `ProposalOp.Args` 回来的 Go 类型不同、Mongo 的 lease 吞掉一切错误、`Update` 的字段清单不一致、接管不轮换 id、零值时间处理不同。而 sqlstore 有 60 个测试，mongostore 到 2026-07-28 才有 6 个（BSON 往返），**没有任何测试断言两者行为相同**。
+
+再加一个后端只会把分歧从 O(1) 对变成 O(n²) 对。让第五个后端变便宜的东西是**一套按 `domain.Store` 接口写、所有后端都跑的行为一致性套件**：
+
+1. 它把今天靠人工审查发现的每条不变量变成一个用例（CAS 拒绝、占有互斥、并发首写、零值时间、nil vs 空切片、`matched` 语义……）。
+2. 它回头覆盖 mongostore —— 有真机就能跑，而不是继续零测试。
+3. 它是 HTTP 后端唯一可验证的方式；否则「实现了」只能靠读代码判断。
+
+`dialect_parity_test.go` 是**静态**比对（同一份 SQL 的三个方言），解决不了这个 —— 那是行为，不是 DDL 字符串。
+
 ## 中间件链（server.go 底部，全局单链，无分组）
 
 ```

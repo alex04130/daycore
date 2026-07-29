@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"daycore/internal/domain"
 )
@@ -145,8 +146,8 @@ func (r rhythmRepo) Save(ctx context.Context, p *domain.RhythmProfile) error {
 	}
 	res, err := r.exec(ctx,
 		`UPDATE rhythm_profiles SET wake_hm = ?, sleep_hm = ?, source = ?, learned_days = ?,
-			run_since = ?, last_signal_at = ?, updated_at = ? WHERE session_id = ?`,
-		p.Wake, p.Sleep, p.Source, p.Days, runSince, lastAt, now, p.SessionID)
+			updated_at = ? WHERE session_id = ?`,
+		p.Wake, p.Sleep, p.Source, p.Days, now, p.SessionID)
 	if err != nil {
 		return err
 	}
@@ -158,8 +159,8 @@ func (r rhythmRepo) Save(ctx context.Context, p *domain.RhythmProfile) error {
 		if err != nil {
 			if res, rerr := r.exec(ctx,
 				`UPDATE rhythm_profiles SET wake_hm = ?, sleep_hm = ?, source = ?, learned_days = ?,
-					run_since = ?, last_signal_at = ?, updated_at = ? WHERE session_id = ?`,
-				p.Wake, p.Sleep, p.Source, p.Days, runSince, lastAt, now, p.SessionID); rerr == nil {
+					updated_at = ? WHERE session_id = ?`,
+				p.Wake, p.Sleep, p.Source, p.Days, now, p.SessionID); rerr == nil {
 				if n, _ := res.RowsAffected(); n > 0 {
 					err = nil
 				}
@@ -170,6 +171,42 @@ func (r rhythmRepo) Save(ctx context.Context, p *domain.RhythmProfile) error {
 		p.UpdatedAt = fromMillis(now)
 	}
 	return err
+}
+
+// Touch moves the two live marks, and only forward. See RhythmRepository.Touch
+// for why they are not part of Save.
+func (r rhythmRepo) Touch(ctx context.Context, sessionID string, runSince, lastSignalAt time.Time) error {
+	now := nowMillis()
+	last := toMillis(lastSignalAt)
+	res, err := r.exec(ctx,
+		`UPDATE rhythm_profiles SET run_since = ?, last_signal_at = ?, updated_at = ?
+		 WHERE session_id = ? AND (last_signal_at IS NULL OR last_signal_at < ?)`,
+		toMillis(runSince), last, now, sessionID, last)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	// Either the row is not there yet, or the mark we hold is not newer than the
+	// stored one. Try the insert; if THAT loses, the row exists with a newer mark
+	// and there is nothing to do — which is the correct outcome for a stale
+	// signal, not an error.
+	// The seed row carries EMPTY body times, not the cold-start defaults: those
+	// belong to internal/rhythm, and a storage layer that guessed them would be a
+	// second place where "07:30" is written down. A caller that reads this row
+	// sees Source "" and Wake "" and asks rhythm for the fallback, which is where
+	// the answer lives.
+	if _, ierr := r.exec(ctx,
+		`INSERT INTO rhythm_profiles (session_id, wake_hm, sleep_hm, source, learned_days, run_since, last_signal_at, updated_at)
+		 VALUES (?, '', '', '', 0, ?, ?, ?)`,
+		sessionID, toMillis(runSince), last, now); ierr == nil {
+		return nil
+	}
+	// The insert lost to a concurrent writer whose mark is newer than ours.
+	// Nothing to do — a stale signal being ignored is the correct outcome, not an
+	// error.
+	return nil
 }
 
 // Observe widens a rhythm day's bounds, or creates the row. This runs on every
@@ -217,12 +254,9 @@ func (r rhythmRepo) Observe(ctx context.Context, sessionID, day string, minute i
 }
 
 func (r rhythmRepo) Days(ctx context.Context, sessionID string, limit int) ([]domain.RhythmDay, error) {
-	if limit <= 0 {
-		limit = 30
-	}
 	rows, err := r.query(ctx,
 		`SELECT session_id, day, first_min, last_min, signals FROM rhythm_days
-		 WHERE session_id = ? ORDER BY day DESC LIMIT `+itoa(limit), sessionID)
+		 WHERE session_id = ? ORDER BY day DESC`+limitClause(limit, 30, 400), sessionID)
 	if err != nil {
 		return nil, err
 	}

@@ -104,17 +104,53 @@ func (r rhythmRepo) Get(ctx context.Context, sessionID string) (*domain.RhythmPr
 	}, nil
 }
 
+// Save writes only the LEARNED half. See RhythmRepository.Save: the two live
+// marks have a different writer on a different cadence, and a whole-row write
+// from the nightly learn job would erase a stretch that began while it was
+// computing.
 func (r rhythmRepo) Save(ctx context.Context, p *domain.RhythmProfile) error {
 	now := time.Now().UTC()
 	_, err := r.c("rhythm_profiles").UpdateOne(ctx, bson.M{"_id": p.SessionID}, bson.M{
 		"$set": bson.M{
-			"wake_hm": p.Wake, "sleep_hm": p.Sleep, "source": p.Source, "learned_days": p.Days,
-			"run_since": p.RunSince, "last_signal_at": p.LastSignalAt, "updated_at": now,
+			"wake_hm": p.Wake, "sleep_hm": p.Sleep, "source": p.Source,
+			"learned_days": p.Days, "updated_at": now,
 		},
 	}, options.Update().SetUpsert(true))
 	if err == nil {
 		p.UpdatedAt = now
 	}
+	return err
+}
+
+// Touch moves the two live marks, and only forward — a signal older than the one
+// already recorded is a retry or a clock that stepped back, and letting it move
+// the marks would shorten a stretch that in fact continued.
+func (r rhythmRepo) Touch(ctx context.Context, sessionID string, runSince, lastSignalAt time.Time) error {
+	now := time.Now().UTC()
+	res, err := r.c("rhythm_profiles").UpdateOne(ctx,
+		bson.M{"_id": sessionID, "$or": []bson.M{
+			{"last_signal_at": bson.M{"$exists": false}},
+			{"last_signal_at": bson.M{"$lt": lastSignalAt}},
+		}},
+		bson.M{"$set": bson.M{"run_since": runSince, "last_signal_at": lastSignalAt, "updated_at": now}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount > 0 {
+		return nil
+	}
+	// Either no row yet, or the stored mark is not older than ours. An upsert
+	// keyed on _id alone settles both: it creates the row when absent and is a
+	// no-op we can ignore when a newer mark already won.
+	//
+	// The seed row carries EMPTY body times rather than the cold-start defaults —
+	// those live in internal/rhythm, and writing them here would be a second
+	// place where "07:30" is recorded.
+	_, err = r.c("rhythm_profiles").UpdateOne(ctx, bson.M{"_id": sessionID},
+		bson.M{"$setOnInsert": bson.M{
+			"wake_hm": "", "sleep_hm": "", "source": "", "learned_days": 0,
+			"run_since": runSince, "last_signal_at": lastSignalAt, "updated_at": now,
+		}}, options.Update().SetUpsert(true))
 	return err
 }
 
@@ -205,12 +241,19 @@ func (r localeRepo) All(ctx context.Context) ([]domain.LocaleOverride, error) {
 	return out, cur.Err()
 }
 
+// Set keys the filter on _id rather than on (message_key, locale).
+//
+// An upsert whose filter is not the unique key races itself: two concurrent
+// first writes both miss, both insert, and one gets E11000 — which the SQL path
+// deliberately recovers from and this one used to surface. Filtering on _id
+// makes the upsert atomic on the document it is about, so there is nothing to
+// recover from.
 func (r localeRepo) Set(ctx context.Context, key, locale, content string) error {
 	_, err := r.c("locale_overrides").UpdateOne(ctx,
-		bson.M{"message_key": key, "locale": locale},
+		bson.M{"_id": key + ":" + locale},
 		bson.M{
 			"$set":         bson.M{"content": content, "updated_at": time.Now().UTC()},
-			"$setOnInsert": bson.M{"_id": key + ":" + locale, "message_key": key, "locale": locale},
+			"$setOnInsert": bson.M{"message_key": key, "locale": locale},
 		}, options.Update().SetUpsert(true))
 	return err
 }

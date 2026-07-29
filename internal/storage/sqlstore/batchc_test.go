@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+
+	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
 // These six tables carry mechanisms, not just columns: an optimistic lock, a
@@ -862,15 +864,46 @@ func TestLocaleSetConcurrentFirstWrite(t *testing.T) {
 // than documenting it, because the DSN is operator-supplied.
 func TestMySQLDSNForcesClientFoundRows(t *testing.T) {
 	d := mysqlDialect{}
-	for _, c := range []struct{ in, want string }{
-		{"u:p@tcp(h:3306)/db", "u:p@tcp(h:3306)/db?clientFoundRows=true"},
-		{"u:p@tcp(h:3306)/db?parseTime=true", "u:p@tcp(h:3306)/db?parseTime=true&clientFoundRows=true"},
-		{"u:p@tcp(h:3306)/db?clientFoundRows=true", "u:p@tcp(h:3306)/db?clientFoundRows=true"},
-		{"u:p@tcp(h:3306)/db?clientFoundRows=false", "u:p@tcp(h:3306)/db?clientFoundRows=false"},
+	// Assert semantics, not the exact string: the driver's FormatDSN reorders
+	// parameters, so comparing text would be testing the driver's formatting.
+	for _, in := range []string{
+		"u:p@tcp(h:3306)/db",
+		"u:p@tcp(h:3306)/db?parseTime=true&charset=utf8mb4",
+		// An explicit false must be OVERRIDDEN. Three separate paths depend on
+		// RowsAffected meaning MATCHED rows; an operator who turned it off (or
+		// copied a DSN from an older README) must not be able to reintroduce
+		// "saving a form without changing anything returns 404".
+		"u:p@tcp(h:3306)/db?clientFoundRows=false",
+		// The parameter list starts at the first '?' AFTER the last '/', and a
+		// password may legally contain '?'. Splitting on the first '?' anywhere
+		// appended the parameter to the DATABASE NAME, and the server then failed
+		// to boot with "Unknown database 'db&clientfoundrows=true'".
+		"daycore:pa?ss@tcp(mysql:3306)/daycore",
 	} {
-		if got := d.NormalizeDSN(c.in); got != c.want {
-			t.Errorf("NormalizeDSN(%q) = %q, want %q", c.in, got, c.want)
+		cfg, err := mysqldriver.ParseDSN(d.NormalizeDSN(in))
+		if err != nil {
+			t.Errorf("NormalizeDSN(%q) produced an unparseable DSN: %v", in, err)
+			continue
 		}
+		if !cfg.ClientFoundRows {
+			t.Errorf("NormalizeDSN(%q) did not set clientFoundRows", in)
+		}
+		if cfg.DBName != "daycore" && cfg.DBName != "db" {
+			t.Errorf("NormalizeDSN(%q) mangled the database name: %q", in, cfg.DBName)
+		}
+	}
+	// Other parameters survive.
+	cfg, err := mysqldriver.ParseDSN(d.NormalizeDSN("u:p@tcp(h:3306)/db?parseTime=true&charset=utf8mb4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ParseTime || cfg.Params["charset"] != "utf8mb4" {
+		t.Errorf("existing parameters were lost: parseTime=%v params=%v", cfg.ParseTime, cfg.Params)
+	}
+	// A DSN the driver cannot parse comes back untouched so sql.Open surfaces the
+	// real error instead of a mangled string.
+	if got := d.NormalizeDSN("this is not a dsn"); got != "this is not a dsn" {
+		t.Errorf("an unparseable DSN should pass through, got %q", got)
 	}
 	if got := (postgresDialect{}).NormalizeDSN("whatever"); got != "whatever" {
 		t.Errorf("postgres rewrote the DSN: %q", got)
@@ -1047,5 +1080,204 @@ func TestJobRunCrashTakeoverIsBounded(t *testing.T) {
 	}
 	if steals == 0 {
 		t.Error("a genuinely dead claim should be recoverable at least once")
+	}
+}
+
+// ── the mysql / mongo-parity / data-fidelity pass ────────────────────────────
+
+// limitClause replaces a hand-rolled itoa whose 8-byte buffer silently dropped
+// the HIGH digits of any longer number: itoa(100000000) returned "00000000", so
+// `LIMIT 0`, so zero rows for a caller asking for everything.
+func TestLimitClauseDoesNotTruncateOrRunAway(t *testing.T) {
+	for _, c := range []struct {
+		limit, def, max int
+		want            string
+	}{
+		{0, 50, 500, " LIMIT 50"},
+		{-1, 50, 500, " LIMIT 50"},
+		{10, 50, 500, " LIMIT 10"},
+		{100000000, 50, 500, " LIMIT 500"}, // clamped, not truncated to LIMIT 0
+		{499, 50, 500, " LIMIT 499"},
+	} {
+		if got := limitClause(c.limit, c.def, c.max); got != c.want {
+			t.Errorf("limitClause(%d, %d, %d) = %q, want %q", c.limit, c.def, c.max, got, c.want)
+		}
+	}
+	// And end to end: a huge limit must return the rows, not none of them.
+	s, ctx := newStore(t)
+	if err := s.Proposals().Create(ctx, pending("s1", "一张卡")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", Limit: 100000000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("a huge limit returned %d rows, want 1", len(got))
+	}
+}
+
+// title/summary/reason/evidence/lock_reason are TEXT, which this schema requires
+// to be nullable in all three dialects (MySQL refuses a literal DEFAULT on
+// TEXT), and they scan into plain strings. One NULL used to fail the scan and
+// take down the whole session's List, not just that card.
+func TestProposalNullTextColumnsDoNotBreakTheList(t *testing.T) {
+	s, ctx := newStore(t)
+	p := pending("s1", "标题会被设成 NULL")
+	if err := s.Proposals().Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.exec(ctx,
+		`UPDATE proposals SET title = NULL, summary = NULL, reason = NULL, evidence = NULL, lock_reason = NULL
+		 WHERE id = ?`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Proposals().Get(ctx, "s1", p.ID)
+	if err != nil {
+		t.Fatalf("a NULL text column broke Get: %v", err)
+	}
+	if got.Title != "" || got.Summary != "" || got.LockReason != "" {
+		t.Errorf("NULLs should read as empty strings: %+v", got)
+	}
+	if _, err := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1"}); err != nil {
+		t.Errorf("a NULL in one card broke the whole List: %v", err)
+	}
+}
+
+// Update used to skip Validate, so one under-populated call could blank
+// ttl_policy — and a proposal whose policy is "" matches neither arm of the
+// expiry sweep, so it stays pending forever, invisible to the mechanism meant to
+// retire it.
+func TestProposalUpdateValidates(t *testing.T) {
+	s, ctx := newStore(t)
+	p := pending("s1", "一张正常的卡")
+	if err := s.Proposals().Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Proposals().Get(ctx, "s1", p.ID)
+
+	blank := *got
+	blank.TTLPolicy = ""
+	if err := s.Proposals().Update(ctx, &blank); err == nil {
+		t.Error("blanking ttl_policy should be refused — the sweep could never resolve the row")
+	}
+	notitle := *got
+	notitle.Title = ""
+	if err := s.Proposals().Update(ctx, &notitle); err == nil {
+		t.Error("blanking the title should be refused")
+	}
+	// The act-first rule holds on Update too, not only on Create.
+	actFirst := *got
+	actFirst.TTLPolicy = domain.TTLSilenceAccepts
+	actFirst.AppliedOpIDs = nil
+	if err := s.Proposals().Update(ctx, &actFirst); err == nil {
+		t.Error("act-first with nothing to undo should be refused on Update as well")
+	}
+	// And the row is untouched by the refusals.
+	after, _ := s.Proposals().Get(ctx, "s1", p.ID)
+	if after.Rev != 1 || after.TTLPolicy != domain.TTLSilenceRejects || after.Title == "" {
+		t.Errorf("a refused Update still wrote something: %+v", after)
+	}
+}
+
+// A card whose ops will not marshal must fail the write. marshalJSON's "null"
+// fallback would have stored a live-looking card holding no ops at all — the
+// user accepts it and nothing happens.
+func TestUnmarshalableOpsFailTheWrite(t *testing.T) {
+	s, ctx := newStore(t)
+	p := pending("s1", "参数没法序列化")
+	p.Ops = []domain.ProposalOp{{Tool: "plan_add", Args: map[string]any{"bad": func() {}}}}
+	if err := s.Proposals().Create(ctx, p); err == nil {
+		t.Error("want an error rather than a card that claims work it does not hold")
+	}
+	if got, _ := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1"}); len(got) != 0 {
+		t.Errorf("the failed write left %d rows behind", len(got))
+	}
+}
+
+// Two instances passing the same holder string both match the renewal UPDATE, so
+// both keep coming back true and the fence never moves — the one failure the
+// fence exists to catch. Uniqueness is the caller's contract; the empty case is
+// the only one this layer can see, so it is refused.
+func TestLeaseRefusesAnEmptyHolder(t *testing.T) {
+	s, ctx := newStore(t)
+	if _, ok, err := s.Leases().Acquire(ctx, domain.LeaseWorker, "", time.Minute, time.Now()); err == nil || ok {
+		t.Errorf("an empty holder should be refused, got ok=%v err=%v", ok, err)
+	}
+}
+
+// The two writers of rhythm_profiles are on wildly different cadences. The
+// nightly learn job must not carry a stale snapshot of the live marks and write
+// it back, erasing a stretch that began while it was computing — a zero
+// RunSince reads as "asleep", so the Protector would forget somebody had been up
+// for nine hours.
+func TestRhythmSaveDoesNotClobberTheLiveMarks(t *testing.T) {
+	s, ctx := newStore(t)
+	// The learn job reads first, while the user is asleep.
+	stale := &domain.RhythmProfile{SessionID: "s1", Wake: "07:30", Sleep: "22:30", Source: "default"}
+	if err := s.Rhythm().Save(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+	// The user wakes up and a signal lands.
+	runSince := time.Now().Add(-9 * time.Hour).Truncate(time.Millisecond)
+	last := time.Now().Truncate(time.Millisecond)
+	if err := s.Rhythm().Touch(ctx, "s1", runSince, last); err != nil {
+		t.Fatal(err)
+	}
+	// The learn job finishes and writes the profile it computed, from the struct
+	// it read before the signal.
+	stale.Wake, stale.Sleep, stale.Source, stale.Days = "10:00", "02:30", "learned", 12
+	if err := s.Rhythm().Save(ctx, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Rhythm().Get(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Wake != "10:00" || got.Days != 12 {
+		t.Errorf("the learned half did not land: %+v", got)
+	}
+	if !got.RunSince.Equal(runSince.UTC()) || !got.LastSignalAt.Equal(last.UTC()) {
+		t.Errorf("the learn job erased the live stretch: runSince=%v want %v", got.RunSince, runSince.UTC())
+	}
+}
+
+// Touch only moves the marks forward. A signal older than the one recorded is a
+// retry or a clock that stepped back, and letting it win would shorten a stretch
+// that in fact continued.
+func TestRhythmTouchOnlyMovesForward(t *testing.T) {
+	s, ctx := newStore(t)
+	runSince := time.Now().Add(-3 * time.Hour).Truncate(time.Millisecond)
+	last := time.Now().Truncate(time.Millisecond)
+	if err := s.Rhythm().Touch(ctx, "s1", runSince, last); err != nil {
+		t.Fatal(err)
+	}
+	// A late-arriving older signal.
+	older := last.Add(-30 * time.Minute)
+	if err := s.Rhythm().Touch(ctx, "s1", older, older); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Rhythm().Get(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.LastSignalAt.Equal(last.UTC()) || !got.RunSince.Equal(runSince.UTC()) {
+		t.Errorf("an out-of-order signal moved the marks: %+v", got)
+	}
+	// Touch on a session with no profile row seeds one, and does NOT invent body
+	// times — those belong to internal/rhythm, not here.
+	if err := s.Rhythm().Touch(ctx, "s2", runSince, last); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.Rhythm().Get(ctx, "s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Wake != "" || fresh.Source != "" {
+		t.Errorf("the seed row invented body times: %+v — the fallback lives in internal/rhythm", fresh)
+	}
+	if !fresh.LastSignalAt.Equal(last.UTC()) {
+		t.Errorf("the seed row lost the mark: %+v", fresh)
 	}
 }

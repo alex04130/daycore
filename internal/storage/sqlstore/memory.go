@@ -3,6 +3,7 @@ package sqlstore
 import (
 	"context"
 	"database/sql"
+	"strconv"
 
 	"daycore/internal/domain"
 
@@ -93,7 +94,7 @@ func (r memoryRepo) ListImports(ctx context.Context, sessionID string, limit int
 	}
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, source, items, summary, created_at FROM import_history
-		 WHERE session_id = ? ORDER BY created_at DESC LIMIT `+itoa(limit), sessionID)
+		 WHERE session_id = ? ORDER BY created_at DESC`+limitClause(limit, 20, 500), sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,16 +118,24 @@ func (r memoryRepo) ListImports(ctx context.Context, sessionID string, limit int
 }
 
 // itoa avoids fmt for a trivially-safe int.
-func itoa(n int) string {
-	if n <= 0 {
-		return "0"
+// limitClause renders a LIMIT for the queries that interpolate it instead of
+// binding it.
+//
+// It replaces a hand-rolled itoa whose 8-byte buffer silently dropped the HIGH
+// digits of anything longer: itoa(100000000) returned "00000000", so a caller
+// asking for a hundred million rows got `LIMIT 0` and an empty result. The bug
+// was in the import-history limit and got copied into three of the batch C
+// repositories before anyone measured it.
+//
+// The clamp is the other half. An unbounded LIMIT reachable from a query
+// parameter is a way to ask the server to materialise a whole table, and every
+// caller here has a sane ceiling.
+func limitClause(limit, def, max int) string {
+	if limit <= 0 {
+		limit = def
 	}
-	buf := [8]byte{}
-	i := len(buf)
-	for n > 0 && i > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
+	if limit > max {
+		limit = max
 	}
-	return string(buf[i:])
+	return " LIMIT " + strconv.Itoa(limit)
 }

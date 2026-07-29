@@ -44,13 +44,19 @@ type table struct {
 	columns map[string]column
 	indexes map[string]bool // "col,col" of each index over this table
 	uniques map[string]bool
+	pk      string // composite PRIMARY KEY columns; "" when inline on one column
 }
 
 var (
 	reCreateTable = regexp.MustCompile(`(?is)CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*)\)\s*$`)
 	reCreateIndex = regexp.MustCompile(`(?is)^\s*CREATE\s+(UNIQUE\s+)?INDEX IF NOT EXISTS\s+(\w+)\s+ON\s+(\w+)\s*\(([^)]*)\)`)
 	reInlineKey   = regexp.MustCompile(`(?i)^\s*(UNIQUE\s+)?KEY\s+(\w+)\s*\(([^)]*)\)\s*,?\s*$`)
-	reOtherClause = regexp.MustCompile(`(?i)^\s*(PRIMARY KEY|CONSTRAINT|FOREIGN KEY|FULLTEXT|CHECK)\b`)
+	reOtherClause = regexp.MustCompile(`(?i)^\s*(CONSTRAINT|FOREIGN KEY|FULLTEXT|CHECK)\b`)
+	// PRIMARY KEY used to be skipped with the other table-level clauses — which
+	// meant the composite primary keys that are the ONLY uniqueness constraint
+	// behind two of the new upserts (rhythm_days, locale_overrides) were compared
+	// across dialects by nothing at all.
+	rePrimaryKey = regexp.MustCompile(`(?i)^\s*PRIMARY KEY\s*\(([^)]*)\)`)
 )
 
 // parseSchema turns one dialect's Migrations() into a table map.
@@ -87,6 +93,10 @@ func parseSchema(t *testing.T, name string, d Dialect) map[string]*table {
 		for _, line := range strings.Split(m[2], "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || reOtherClause.MatchString(line) {
+				continue
+			}
+			if m := rePrimaryKey.FindStringSubmatch(line); m != nil {
+				tbl.pk = normalizeCols(m[1])
 				continue
 			}
 			if k := reInlineKey.FindStringSubmatch(line); k != nil {
@@ -154,6 +164,12 @@ func TestDialectsDeclareTheSameSchema(t *testing.T) {
 		for _, name := range sortedKeys(schemas) {
 			for c := range schemas[name][tbl].columns {
 				cols[c] = true
+			}
+		}
+		for _, name := range []string{"postgres", "mysql"} {
+			if got, want := schemas[name][tbl].pk, schemas["sqlite"][tbl].pk; got != want {
+				t.Errorf("%s: %s PRIMARY KEY is (%s) but sqlite says (%s) — for a table whose upsert relies on it, that is a uniqueness invariant enforced on one engine only",
+					name, tbl, got, want)
 			}
 		}
 		for _, c := range sortedSet(cols) {
