@@ -1,0 +1,6 @@
+/api/feedback:
+  post:
+    operationId: addFeedback
+    tags: [feedback]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { messageId: { type: string }, useful: { type: boolean }, reason: { type: string } } } } } }
+    responses: { '200': { description: OK } }

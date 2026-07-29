@@ -1,0 +1,27 @@
+/api/rules:
+  get: { operationId: listRules, tags: [rules], summary: All rules (active + paused)., responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/ScheduleRule' } } } } } } } } }
+  post:
+    operationId: createRule
+    tags: [rules]
+    requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleInput' } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRule' } } } }, '400': { $ref: '#/components/responses/Error' } }
+/api/rules/batch:
+  post:
+    operationId: batchCreateRules
+    tags: [rules]
+    summary: Create many rules (ICS/timetable confirmations).
+    requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/RuleInput' } } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+/api/rules/{id}:
+  patch:
+    operationId: patchRule
+    tags: [rules]
+    summary: Partial update (validated BEFORE persist so a bad update can't corrupt the row).
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleInput' } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRule' } } } }, '400': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+  delete:
+    operationId: deleteRule
+    tags: [rules]
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }

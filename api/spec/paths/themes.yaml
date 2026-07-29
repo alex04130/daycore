@@ -1,0 +1,10 @@
+/api/themes:
+  get: { operationId: listThemes, tags: [themes], responses: { '200': { description: OK } } }
+  post:
+    operationId: createTheme
+    tags: [themes]
+    requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }
+    responses: { '200': { description: OK } }
+/api/themes/{id}:
+  patch: { operationId: patchTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }, responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  delete: { operationId: deleteTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }

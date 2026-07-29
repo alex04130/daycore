@@ -1,0 +1,36 @@
+/api/admin/prompts:
+  get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
+/api/admin/prompts/{key}:
+  get:
+    operationId: adminGetPrompt
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    parameters: [{ name: key, in: path, required: true, schema: { type: string } }, { name: locale, in: query, schema: { type: string } }]
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+  put:
+    operationId: adminSetPrompt
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    parameters: [{ name: key, in: path, required: true, schema: { type: string } }, { name: locale, in: query, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [content], properties: { content: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+/api/admin/stats:
+  get: { operationId: adminStats, tags: [admin], security: [{ adminToken: [] }], summary: Dashboard aggregation (incl. feedbackUseful/feedbackTotal)., responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStats' } } } } } }
+/api/admin/ailogs:
+  get: { operationId: adminAILogs, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+/api/admin/users:
+  get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+/api/admin/users/{id}:
+  delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+/api/admin/db/tables:
+  get: { operationId: adminDBTables, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+/api/admin/db/table/{name}:
+  get: { operationId: adminDBBrowse, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+/api/admin/db/table/{name}/{id}:
+  delete: { operationId: adminDBDelete, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }, { name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+/api/admin/db/export:
+  get: { operationId: adminDBExport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+/api/admin/db/import:
+  post: { operationId: adminDBImport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+/api/admin/db/backup:
+  get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }

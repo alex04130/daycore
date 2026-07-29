@@ -1,0 +1,48 @@
+openapi: 3.1.0
+info:
+  title: Daycore v2 API
+  version: "2.2.0"
+  description: >
+    Daycore v2 backend (Go). Autonomous AI day-planning + mood companion.
+    Anonymous-first: POST /api/session/init issues an httpOnly, signed session
+    cookie (dc_sid) that authorizes all data endpoints. Optional email/OAuth
+    sign-in sets an httpOnly JWT cookie (dc_auth); logout revokes all issued JWTs
+    (server-side token version). Same-origin web frontends MUST send cookies
+    (fetch: credentials:"include"). Native apps and separately-deployed frontends
+    use header credentials instead (dual-rail, cookies stay supported): the
+    signed session token in X-Session-Token (returned by /api/session/init with
+    {"tokenInBody":true}) and/or the JWT in Authorization: Bearer (returned by
+    login/register with {"tokenInBody":true}). Check GET /api/version (apiVersion
+    contract major) before use — matching rules in FRONTEND_HANDOFF.md.
+    The browser extension authenticates to /api/import/* with X-Import-Token;
+    admin endpoints use X-Admin-Token.
+    Errors are {error, message}. The single SSE endpoint is /api/ai/companion —
+    see FRONTEND_HANDOFF.md §B for the v2 frame protocol (NOT the legacy [DONE]).
+servers:
+  - url: http://localhost:8080
+    description: Local (Go serves the API; nginx proxies /api in production)
+
+tags:
+  - { name: session }
+  - { name: plan }
+  - { name: rules }
+  - { name: ai }
+  - { name: chat }
+  - { name: materials }
+  - { name: wishes }
+  - { name: inbox }
+  - { name: memory }
+  - { name: mood }
+  - { name: themes }
+  - { name: import }
+  - { name: channels }
+  - { name: ops }
+  - { name: feedback }
+  - { name: auth }
+  - { name: admin }
+  - { name: meta }
+
+security:
+  - sessionCookie: []
+  - sessionToken: []
+  - bearerAuth: []

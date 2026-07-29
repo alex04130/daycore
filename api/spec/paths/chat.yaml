@@ -1,0 +1,43 @@
+/api/chat/threads:
+  get: { operationId: listThreads, tags: [chat], summary: List threads (first call auto-imports legacy companion_memory once)., responses: { '200': { description: OK } } }
+  post:
+    operationId: createThread
+    tags: [chat]
+    requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatThread' } } } } }
+/api/chat/threads/{id}:
+  patch:
+    operationId: updateThread
+    tags: [chat]
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string }, archived: { type: boolean } } } } } }
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+  delete:
+    operationId: deleteThread
+    tags: [chat]
+    summary: Delete a thread and cascade its messages.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK } }
+/api/chat/threads/{id}/messages:
+  get:
+    operationId: listMessages
+    tags: [chat]
+    summary: Cursor pagination (newest→oldest); before = oldest createdAt (UnixMilli) of the previous page.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }, { name: before, in: query, schema: { type: string, description: "UnixMilli; non-numeric → 400" } }, { name: limit, in: query, schema: { type: integer } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { messages: { type: array, items: { $ref: '#/components/schemas/ChatMessage' } } } } } } }, '400': { $ref: '#/components/responses/Error' } }
+  delete:
+    operationId: clearMessages
+    tags: [chat]
+    summary: Clear all messages (keep the thread).
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK } }
+/api/chat/messages/{id}:
+  get:
+    operationId: getMessage
+    tags: [chat]
+    summary: One message by id — cheap polling target for async turns.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '404': { $ref: '#/components/responses/Error' } }
+/api/companion-history:
+  get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
+  post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }

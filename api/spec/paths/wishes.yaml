@@ -1,0 +1,20 @@
+/api/wishes:
+  get:
+    operationId: listWishes
+    tags: [wishes]
+    parameters: [{ name: status, in: query, schema: { type: string, enum: [active, done, archived] } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { wishes: { type: array, items: { $ref: '#/components/schemas/Wish' } } } } } } } }
+  post:
+    operationId: createWish
+    tags: [wishes]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, note: { type: string }, effortMin: { type: integer } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } } }
+/api/wishes/{id}:
+  get: { operationId: getWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+  patch:
+    operationId: updateWish
+    tags: [wishes]
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string }, note: { type: string }, effortMin: { type: integer }, status: { type: string, enum: [active, done, archived] } } } } } }
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+  delete: { operationId: deleteWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }

@@ -1,0 +1,94 @@
+/api/ai/companion:
+  post:
+    operationId: companion
+    tags: [ai]
+    summary: Companion agent over SSE v2 (tool-calls frame protocol).
+    description: >
+      Returns text/event-stream. Each frame is `data: {json}\n\n` discriminated
+      by `type`: delta | reasoning | tool_start | tool_result | decision_card |
+      error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
+      FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
+      history; client roles are whitelisted to user/assistant.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+    responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
+/api/ai/companion/async:
+  post:
+    operationId: companionAsync
+    tags: [ai]
+    summary: Fire-and-forget companion turn (no client connection needed).
+    description: >
+      Persists the user message plus a pending assistant placeholder and
+      returns 202 immediately; the agent runs server-side detached from the
+      connection. Poll GET /api/chat/messages/{messageId} (or the thread's
+      message list) until status leaves "pending". A decision_card frame may
+      appear in the placeholder's toolEvents while still pending — answer it
+      via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
+      threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message, threadId], properties: { message: { type: string }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string } } } } } }
+    responses:
+      '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
+      '400': { $ref: '#/components/responses/Error' }
+      '404': { $ref: '#/components/responses/Error' }
+      '429': { $ref: '#/components/responses/Error' }
+/api/ai/auto-plan:
+  post:
+    operationId: autoPlan
+    tags: [ai]
+    summary: Autonomous multi-day planning from imported materials.
+    requestBody: { content: { application/json: { schema: { type: object, properties: { from: { type: string }, to: { type: string }, mode: { type: string, enum: [keep_manual, replace_all] }, extra: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+/api/ai/plan-text:
+  post:
+    operationId: planText
+    tags: [ai]
+    summary: Natural language → day plan JSON (candidates).
+    requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, date: { type: string } } } } } }
+    responses: { '200': { description: OK } }
+/api/ai/plan-image:
+  post:
+    operationId: planImage
+    tags: [ai]
+    summary: "Image → day plan (vision). imageBase64 has no data: prefix."
+    requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string }, date: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+/api/ai/extract-schedule-image:
+  post:
+    operationId: extractScheduleImage
+    tags: [ai]
+    summary: Timetable screenshot → rule candidates.
+    requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+/api/ai/travel:
+  post:
+    operationId: aiTravel
+    tags: [ai]
+    summary: Destination + dates → AI itinerary suggestion + inbox draft.
+    description: >
+      Returns {title, summary, itinerary{days[]}, tips[], draftId}. Confirming
+      is the standard POST /api/inbox/commit with the draftId — it lands as a
+      travel material (Body carries destination/dates/itinerary/tips JSON).
+      Requires the travel category to be enabled. Rate-limited.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [destination], properties: { destination: { type: string }, startDate: { type: string }, endDate: { type: string }, notes: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
+/api/ai/mood:
+  post:
+    operationId: aiMood
+    tags: [ai]
+    summary: Mood → AI response (memory facts injected).
+    requestBody: { content: { application/json: { schema: { type: object, properties: { mood: { type: string } } } } } }
+    responses: { '200': { description: OK } }
+/api/ai/theme:
+  post:
+    operationId: aiTheme
+    tags: [ai]
+    summary: AI-generated theme palette (preview, not persisted).
+    requestBody: { content: { application/json: { schema: { type: object, properties: { description: { type: string }, base: { type: string }, themeId: { type: string } } } } } }
+    responses: { '200': { description: OK } }
+/api/decisions/{id}/respond:
+  post:
+    operationId: respondDecision
+    tags: [ai]
+    summary: Resolve a pending decision card (unblocks the companion agent loop).
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { choice: { type: string }, text: { type: string } } } } } }
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }

@@ -1,3 +1,9 @@
+# ─── GENERATED FILE — do not edit ─────────────────────────────────────────────
+# Assembled from api/spec/head.yaml + api/spec/paths/<tag>.yaml + api/spec/components.yaml
+# by `make api-bundle`. Edit the shard for the tag you are changing; a path's
+# shard is named after its tag, and the bundler enforces that. `go test ./...` fails
+# when this file is stale, so a forgotten rebuild cannot reach CI green.
+
 openapi: 3.1.0
 info:
   title: Daycore v2 API
@@ -48,7 +54,7 @@ security:
   - bearerAuth: []
 
 paths:
-  # ─── session & auth ────────────────────────────────────────────────────────
+  # ─── session ──────────────────────────────────────────────────────────────
   /api/session/init:
     post:
       operationId: sessionInit
@@ -94,42 +100,8 @@ paths:
       summary: Partial update of toggles, category overrides and language pair.
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
-  /api/auth/register:
-    post:
-      operationId: register
-      tags: [auth]
-      summary: Email + password sign-up (rate-limited).
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
-      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
-  /api/auth/login:
-    post:
-      operationId: login
-      tags: [auth]
-      summary: Email + password sign-in; merges anonymous data into the canonical session.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
-      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
-  /api/auth/logout:
-    post: { operationId: logout, tags: [auth], summary: Clear the auth cookie and revoke all issued JWTs., responses: { '200': { description: OK } } }
-  /api/auth/providers:
-    get: { operationId: oauthProviders, tags: [auth], summary: List enabled OAuth providers., responses: { '200': { description: OK } } }
-  /api/auth/oauth/{provider}:
-    get:
-      operationId: oauthStart
-      tags: [auth]
-      summary: Begin the OAuth authorization-code flow (redirects).
-      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }]
-      responses: { '302': { description: Redirect to provider } }
-  /api/auth/oauth/{provider}/callback:
-    get:
-      operationId: oauthCallback
-      tags: [auth]
-      summary: OAuth callback; links only verified emails, sets dc_auth, redirects to /.
-      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
-      responses: { '302': { description: Redirect to / } }
-  /api/me:
-    get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }
 
-  # ─── plan & rules ──────────────────────────────────────────────────────────
+  # ─── plan ─────────────────────────────────────────────────────────────────
   /api/plan:
     get:
       operationId: getPlan
@@ -156,6 +128,8 @@ paths:
       summary: Batch fetch [from,to] with rule occurrences merged per date.
       parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
+
+  # ─── rules ────────────────────────────────────────────────────────────────
   /api/rules:
     get: { operationId: listRules, tags: [rules], summary: All rules (active + paused)., responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/ScheduleRule' } } } } } } } } }
     post:
@@ -184,7 +158,7 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
-  # ─── AI ──────────────────────────────────────────────────────────────────
+  # ─── ai ───────────────────────────────────────────────────────────────────
   /api/ai/companion:
     post:
       operationId: companion
@@ -280,7 +254,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { choice: { type: string }, text: { type: string } } } } } }
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
-  # ─── chat threads ──────────────────────────────────────────────────────────
+  # ─── chat ─────────────────────────────────────────────────────────────────
   /api/chat/threads:
     get: { operationId: listThreads, tags: [chat], summary: List threads (first call auto-imports legacy companion_memory once)., responses: { '200': { description: OK } } }
     post:
@@ -321,8 +295,11 @@ paths:
       summary: One message by id — cheap polling target for async turns.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '404': { $ref: '#/components/responses/Error' } }
+  /api/companion-history:
+    get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
+    post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
 
-  # ─── materials & wishes ────────────────────────────────────────────────────
+  # ─── materials ────────────────────────────────────────────────────────────
   /api/materials:
     get:
       operationId: listMaterials
@@ -371,6 +348,8 @@ paths:
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
     delete: { operationId: deleteMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+
+  # ─── wishes ───────────────────────────────────────────────────────────────
   /api/wishes:
     get:
       operationId: listWishes
@@ -392,7 +371,7 @@ paths:
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
     delete: { operationId: deleteWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
 
-  # ─── inbox & temp-context ──────────────────────────────────────────────────
+  # ─── inbox ────────────────────────────────────────────────────────────────
   /api/inbox/process:
     post:
       operationId: inboxProcess
@@ -442,7 +421,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [key], properties: { key: { type: string }, payload: { type: string }, ttlSeconds: { type: integer } } } } } }
       responses: { '200': { description: OK } }
 
-  # ─── memory / mood / themes ────────────────────────────────────────────────
+  # ─── memory ───────────────────────────────────────────────────────────────
   /api/memory:
     get: { operationId: listMemory, tags: [memory], responses: { '200': { description: OK } } }
     post:
@@ -453,6 +432,8 @@ paths:
     delete: { operationId: clearMemory, tags: [memory], summary: Forget everything (privacy)., responses: { '200': { description: OK } } }
   /api/memory/{id}:
     delete: { operationId: deleteMemory, tags: [memory], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+
+  # ─── mood ─────────────────────────────────────────────────────────────────
   /api/mood:
     get:
       operationId: listMood
@@ -483,6 +464,8 @@ paths:
       summary: Mark a check-in's exercise completed (session-scoped).
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [id], properties: { id: { type: string } } } } } }
       responses: { '200': { description: OK } }
+
+  # ─── themes ───────────────────────────────────────────────────────────────
   /api/themes:
     get: { operationId: listThemes, tags: [themes], responses: { '200': { description: OK } } }
     post:
@@ -494,7 +477,7 @@ paths:
     patch: { operationId: patchTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }, responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
     delete: { operationId: deleteTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
 
-  # ─── import / courses / assignments ────────────────────────────────────────
+  # ─── import ───────────────────────────────────────────────────────────────
   /api/import/token:
     get: { operationId: getImportToken, tags: [import], responses: { '200': { description: OK } } }
     post: { operationId: rotateImportToken, tags: [import], responses: { '200': { description: OK } } }
@@ -528,7 +511,7 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
       responses: { '200': { description: OK } }
 
-  # ─── channels ──────────────────────────────────────────────────────────────
+  # ─── channels ─────────────────────────────────────────────────────────────
   /api/channels:
     get: { operationId: listChannels, tags: [channels], summary: Available channels + binding status., responses: { '200': { description: OK } } }
   /api/channels/{channel}/bind:
@@ -549,13 +532,7 @@ paths:
   /api/channels/{channel}/unbind:
     delete: { operationId: unbindChannel, tags: [channels], parameters: [{ name: channel, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
 
-  # ─── feedback / ops ────────────────────────────────────────────────────────
-  /api/feedback:
-    post:
-      operationId: addFeedback
-      tags: [feedback]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { messageId: { type: string }, useful: { type: boolean }, reason: { type: string } } } } } }
-      responses: { '200': { description: OK } }
+  # ─── ops ──────────────────────────────────────────────────────────────────
   /api/ops:
     get:
       operationId: listOps
@@ -570,12 +547,51 @@ paths:
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
 
-  # ─── companion-history (legacy) ────────────────────────────────────────────
-  /api/companion-history:
-    get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
-    post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
+  # ─── feedback ─────────────────────────────────────────────────────────────
+  /api/feedback:
+    post:
+      operationId: addFeedback
+      tags: [feedback]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { messageId: { type: string }, useful: { type: boolean }, reason: { type: string } } } } } }
+      responses: { '200': { description: OK } }
 
-  # ─── admin (X-Admin-Token) ─────────────────────────────────────────────────
+  # ─── auth ─────────────────────────────────────────────────────────────────
+  /api/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Email + password sign-up (rate-limited).
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Email + password sign-in; merges anonymous data into the canonical session.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+      responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /api/auth/logout:
+    post: { operationId: logout, tags: [auth], summary: Clear the auth cookie and revoke all issued JWTs., responses: { '200': { description: OK } } }
+  /api/auth/providers:
+    get: { operationId: oauthProviders, tags: [auth], summary: List enabled OAuth providers., responses: { '200': { description: OK } } }
+  /api/auth/oauth/{provider}:
+    get:
+      operationId: oauthStart
+      tags: [auth]
+      summary: Begin the OAuth authorization-code flow (redirects).
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }]
+      responses: { '302': { description: Redirect to provider } }
+  /api/auth/oauth/{provider}/callback:
+    get:
+      operationId: oauthCallback
+      tags: [auth]
+      summary: OAuth callback; links only verified emails, sets dc_auth, redirects to /.
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
+      responses: { '302': { description: Redirect to / } }
+  /api/me:
+    get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }
+
+  # ─── admin ────────────────────────────────────────────────────────────────
   /api/admin/prompts:
     get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
   /api/admin/prompts/{key}:
@@ -613,7 +629,7 @@ paths:
   /api/admin/db/backup:
     get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
 
-  # ─── meta ──────────────────────────────────────────────────────────────────
+  # ─── meta ─────────────────────────────────────────────────────────────────
   /api/healthz:
     get:
       operationId: health

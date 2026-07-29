@@ -1,0 +1,48 @@
+/api/inbox/process:
+  post:
+    operationId: inboxProcess
+    tags: [inbox]
+    summary: "Classify a quick capture ({text} or {temp_id}) via AI → confirmation card + draftId."
+    description: >
+      AI classification over the session's ENABLED categories (see
+      /api/materials/categories). Response always carries the legacy keys
+      {understanding, suggestions}; when the AI is confident (≥0.5) it adds
+      "classification" ({category, confidence, title, summary, structured,
+      suggested_action, advice?}) and "draftId" — show the card, let the user
+      confirm/override, then POST /api/inbox/commit. On AI failure or low
+      confidence it falls back to the keyword categorizer (no draftId).
+      Rate-limited like other AI endpoints.
+    requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, temp_id: { type: string } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+/api/inbox/commit:
+  post:
+    operationId: inboxCommit
+    tags: [inbox]
+    summary: Execute a confirmed classification draft (server-side mapping to the target module).
+    description: >
+      Looks up the server-side draft (1h TTL), applies optional overrides,
+      validates the category against the session's enabled set, and lands the
+      capture as a typed Material (Body = {"text", "structured"?, "advice"?}
+      JSON, Source "inbox"). Preferred over hand-rolling module calls — the
+      classification→module mapping lives once, server-side.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [draftId], properties: { draftId: { type: string }, overrides: { type: object, properties: { category: { type: string }, title: { type: string }, summary: { type: string }, body: { type: string } } }, alsoKeepNote: { type: boolean, description: "when the draft routes to an assignment, also keep the raw capture as a material" } } } } } }
+    responses: { '200': { description: "OK {type: material|assignment, material?, assignment?} — academic drafts with a due date become manual assignments" }, '400': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
+/api/inbox/upload:
+  post:
+    operationId: inboxUpload
+    tags: [inbox]
+    summary: Upload a file (≤8MB); small files (≤1MB) persist for /process to consume. Requires session + rate-limited.
+    requestBody: { content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { temp_id: { type: string }, filename: { type: string }, size: { type: integer }, content_type: { type: string }, stored: { type: boolean } } } } } } }
+/api/temp-context:
+  get:
+    operationId: getTempContext
+    tags: [inbox]
+    summary: "Get a session-scoped value (missing/expired → {data:null})."
+    parameters: [{ name: key, in: query, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { data: { type: string, nullable: true }, ttl: { type: string } } } } } } }
+  put:
+    operationId: putTempContext
+    tags: [inbox]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [key], properties: { key: { type: string }, payload: { type: string }, ttlSeconds: { type: integer } } } } } }
+    responses: { '200': { description: OK } }

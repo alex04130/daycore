@@ -19,7 +19,7 @@ internal/
   ics/                      最小 iCalendar + RRULE 子集解析器（零依赖）
   storage/{sqlstore,mongostore}/  SQLite+PG+MySQL（Dialect 抽象）/ MongoDB
   server/                   路由 + 中间件 + handlers（SSE / auto-plan / 导入 / 记忆 / 主题 / 静态托管）
-api/                        openapi.yaml + FRONTEND_HANDOFF.md（产品与协议规范）
+api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
 web/frontend/               React 前端（Vite；npm run dev / build）
 deploy/                     Dockerfile / docker-compose / nginx
 testdata/                   canvas-export.sample.json / sample.ics
@@ -64,7 +64,7 @@ node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐�
 | 想知道 | 看 |
 |---|---|
 | 这个仓库现在是什么样、为什么这样 | `docs/ARCHITECTURE.md` `docs/DATA.md` `docs/AUTH.md` `docs/AGENT.md` `docs/AI.md` |
-| 有哪些 HTTP 路由 | `docs/API_SURFACE.md` + `api/openapi.yaml`（唯一权威） |
+| 有哪些 HTTP 路由 | `docs/API_SURFACE.md` + `api/openapi.yaml`（唯一权威；**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**） |
 | 端无关的产品语义（时间三层、提案、注意力阶梯、默契） | `docs/EXPERIENCE_CORE.md` |
 | **别人要照着实现什么**（适配器、前端） | `docs/specs/` |
 | 前端要对接的 API 细节 | `api/FRONTEND_HANDOFF.md` |

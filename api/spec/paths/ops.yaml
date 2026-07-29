@@ -1,0 +1,13 @@
+/api/ops:
+  get:
+    operationId: listOps
+    tags: [ops]
+    parameters: [{ name: limit, in: query, schema: { type: integer } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ops: { type: array, items: { $ref: '#/components/schemas/OperationLog' } } } } } } } }
+/api/ops/{id}/revert:
+  post:
+    operationId: revertOp
+    tags: [ops]
+    summary: Undo one logged operation (a revert cannot itself be reverted).
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }

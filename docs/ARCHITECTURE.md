@@ -70,12 +70,6 @@ lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回
 
 ⚠️ **顺序：先套件，后后端。** 批次 C 的审查在现有两个后端之间抓到约十五处行为分歧，而当时没有任何测试断言两者行为相同。再加一个后端只会把分歧从 O(1) 对变成 O(n²) 对。
 
-### 行为一致性套件（`internal/storage/storagetest`，已落地）
-
-按 `domain.Store` 写的一套行为套件，**两个后端跑同一份**：sqlstore 用 SQLite，mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。29 个用例，全部来自审查抓到的真实分歧 —— 不是「能存能取」，而是 `ProposalOp.Args` 的数字必须回来是 `float64`、接管必须轮换占有令牌使僵尸的 `Finish` 落空、学习作业不能擦掉活的清醒标记、同毫秒并列时 `Supersede` 恰好留一张、`Scan` 游标续读无重无漏。
-
-**加后端的验收标准就是这套套件通过**，HTTP 转换层也一样。
-
 ### SQL 侧存自由数据的三种写法
 
 「一个大 JSON 每次整体重写」是最省事的一种，但不是唯一的，也不总是最好的：
@@ -131,7 +125,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 仓库级布局
 
-- `api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。
+- `api/` = 契约唯一权威（openapi.yaml + FRONTEND_HANDOFF.md）。**`openapi.yaml` 是生成物**，源在 `api/spec/`（`head.yaml` + `paths/<tag>.yaml` 一个 tag 一个文件 + `components.yaml`），`make api-bundle` 拼回同一个路径 —— 下游生成器不受影响。理由与三条强制规则见 `api/spec/README.md`；`go test ./...` 会因产物过期而红。
 - `docs/` = 实时项目文档，随代码同批更新；`EXPERIENCE_CORE.md` 是端无关语义总纲（v2.3）。
 - `extension/` = Chrome MV3 插件（Canvas 抓取 → 导入）。
 - `design-ui/` = 设计原型，只读参考不参与构建。四端源码（liuli / zhiyu / ting / liuli-classic）+ `core/daycore-core.js` 共享 mock + `HANDOFF/` 交接文档 + `_ds/` 设计系统原件。其 `API_CONTRACT.md` 的路径命名非权威（见该目录 CLAUDE.md 顶部裁决）。

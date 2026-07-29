@@ -1,0 +1,10 @@
+/api/memory:
+  get: { operationId: listMemory, tags: [memory], responses: { '200': { description: OK } } }
+  post:
+    operationId: addMemory
+    tags: [memory]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [fact], properties: { fact: { type: string, maxLength: 500 }, source: { type: string, enum: [chat, user, import] } } } } } }
+    responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
+  delete: { operationId: clearMemory, tags: [memory], summary: Forget everything (privacy)., responses: { '200': { description: OK } } }
+/api/memory/{id}:
+  delete: { operationId: deleteMemory, tags: [memory], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }

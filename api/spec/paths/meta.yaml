@@ -1,0 +1,28 @@
+/api/healthz:
+  get:
+    operationId: health
+    tags: [meta]
+    security: []
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, db: { type: string }, version: { type: string }, channel: { type: string }, env: { type: string } } } } } }, '503': { description: DB unavailable } }
+/api/models:
+  get: { operationId: listModels, tags: [meta], security: [], responses: { '200': { description: OK } } }
+/api/version:
+  get:
+    operationId: apiVersion
+    tags: [meta]
+    security: []
+    summary: API contract version (independent of the build version).
+    description: >
+      Clients call this before anything else. apiVersion is the contract major
+      (breaking changes only); apiMinor bumps on additive changes; build is the
+      server build ("2.2.0-beta"); minClient is the oldest compatible client
+      build (advisory). Matching rules in FRONTEND_HANDOFF.md.
+
+
+      locales.available lists every language this installation can render. It
+      is NOT a compile-time list — only zh-CN and en-US are compiled in, and
+      a <locale>.json message pack or a console override extends it — so
+      clients must read it rather than hardcoding what they think exists.
+      defaultPrimary/defaultSecondary are what a brand-new user starts with;
+      a signed-in user's own pair comes from GET /api/session/preferences.
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }

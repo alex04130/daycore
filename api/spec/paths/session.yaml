@@ -1,0 +1,45 @@
+/api/session/init:
+  post:
+    operationId: sessionInit
+    tags: [session]
+    summary: Create/return the anonymous session; sets dc_sid cookie.
+    description: >
+      Optional body {"tokenInBody":true} adds "sessionToken" (the same signed
+      value as the dc_sid cookie) to the response for clients without a cookie
+      jar; send it back as the X-Session-Token header.
+    requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { tokenInBody: { type: boolean } } } } } }
+    responses: { '200': { description: "OK (Session; + sessionToken when tokenInBody)", content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
+/api/session/theme:
+  post:
+    operationId: sessionTheme
+    tags: [session]
+    summary: Record the current theme.
+    requestBody: { content: { application/json: { schema: { type: object, properties: { theme: { type: string } } } } } }
+    responses: { '200': { description: OK } }
+/api/session/settings:
+  patch:
+    operationId: sessionSettings
+    tags: [session]
+    summary: Update assistantName / theme / language / personaPrompt.
+    description: >
+      language is which of the user's two languages they are reading in right
+      now — what the home-page switch flips. It must be one of their pair
+      (GET /api/session/preferences); the pair itself is changed through
+      PATCH /api/session/preferences, not here. A value outside the pair is
+      rejected with 400 unsupported_locale. Reads never fail this way: a
+      stored value that falls outside the pair resolves to the primary, so
+      changing your pair never breaks your settings page.
+    requestBody: { content: { application/json: { schema: { type: object, properties: { assistantName: { type: string }, currentTheme: { type: string }, language: { type: string, enum: [zh-CN, en-US] }, personaPrompt: { type: string, maxLength: 2000 } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
+/api/session/preferences:
+  get:
+    operationId: getPreferences
+    tags: [session]
+    summary: Get the proactive-feature toggles, category overrides and language pair.
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+  patch:
+    operationId: setPreferences
+    tags: [session]
+    summary: Partial update of toggles, category overrides and language pair.
+    requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }

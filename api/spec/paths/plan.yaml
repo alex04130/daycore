@@ -1,0 +1,26 @@
+/api/plan:
+  get:
+    operationId: getPlan
+    tags: [plan]
+    summary: Single day with rule occurrences merged in (JSON null when empty).
+    parameters: [{ name: date, in: query, required: true, schema: { type: string, example: "2026-07-13" } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { oneOf: [ { $ref: '#/components/schemas/DayPlan' }, { type: 'null' } ] } } } } }
+  post:
+    operationId: upsertPlan
+    tags: [plan]
+    summary: Upsert a day's plan (full blocks). Use PATCH for single-block edits.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date], properties: { date: { type: string }, blocks: { type: array, items: { $ref: '#/components/schemas/TimeBlock' } }, note: { type: string }, sourceType: { type: string } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+  patch:
+    operationId: patchPlan
+    tags: [plan]
+    summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+/api/plan/range:
+  get:
+    operationId: getPlanRange
+    tags: [plan]
+    summary: Batch fetch [from,to] with rule occurrences merged per date.
+    parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }

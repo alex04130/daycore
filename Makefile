@@ -1,4 +1,4 @@
-.PHONY: help run build test test-mongo check-i18n tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo check-i18n api-bundle api-check tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -20,6 +20,12 @@ test: check-i18n ## Run all tests
 
 check-i18n: ## Verify zh-CN/en-US i18n key sets stay aligned
 	node web/frontend/scripts/check-i18n.mjs
+
+api-bundle: ## Rebuild api/openapi.yaml from the per-tag shards in api/spec/
+	go run ./api/spec/bundle
+
+api-check: ## Verify api/openapi.yaml matches the shards (also covered by go test)
+	go run ./api/spec/bundle -check
 
 vet: ## go vet
 	go vet ./...

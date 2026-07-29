@@ -1,0 +1,48 @@
+/api/materials:
+  get:
+    operationId: listMaterials
+    tags: [materials]
+    parameters: [{ name: category, in: query, schema: { type: string } }, { name: q, in: query, schema: { type: string } }, { name: limit, in: query, schema: { type: integer } }, { name: offset, in: query, schema: { type: integer } }]
+    responses: { '200': { description: OK } }
+  post:
+    operationId: createMaterial
+    tags: [materials]
+    requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } } }
+/api/materials/search:
+  get:
+    operationId: searchMaterials
+    tags: [materials]
+    summary: Full-text search — engine-native FTS with ranking, substring fallback as the recall floor.
+    description: >
+      Served by the storage engine's native index when available (SQLite FTS5
+      trigram / PG tsvector / MySQL FULLTEXT ngram / Mongo text), with real
+      relevance scores. Falls back transparently to the case-insensitive
+      substring scan when the index is unavailable, the term is under 3
+      characters (SQLite), or the engine can't tokenize the script (Mongo +
+      CJK) — fallback results carry Score 1. Best-effort ranking; recall is
+      guaranteed by the fallback.
+    parameters: [{ name: q, in: query, required: true, schema: { type: string } }, { name: category, in: query, schema: { type: string } }, { name: limit, in: query, schema: { type: integer } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: '#/components/schemas/SearchResult' } } } } } } }, '501': { $ref: '#/components/responses/Error' } }
+/api/materials/categories:
+  get:
+    operationId: materialCategories
+    tags: [materials]
+    summary: The category registry with this session's enablement flags.
+    description: >
+      Full localized list {id, name, icon, enabled, default}. Frontends render
+      the toggle panel from the full list and the capture UI from the enabled
+      subset. Toggle via PATCH /api/session/preferences {materialCategories}.
+      Writes to /api/materials validate category against the registry (empty →
+      "note", unknown → 400 bad_category); reads never reject legacy free-text
+      categories.
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { categories: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, icon: { type: string }, enabled: { type: boolean }, default: { type: boolean } } } } } } } } } }
+/api/materials/{id}:
+  get: { operationId: getMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+  patch:
+    operationId: updateMaterial
+    tags: [materials]
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+  delete: { operationId: deleteMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }

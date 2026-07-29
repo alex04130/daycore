@@ -7,7 +7,7 @@
 - `cmd/daycore/` + `internal/` — Go 后端（14 个包，module 名 `daycore`）。
 - `web/frontend/` — **现役** Vite+React 前端，生产由 Go 二进制托管 `STATIC_DIR`。**将来会被四端替换**，替换完成前不要动它（任何时刻都要有能跑的东西）。
 - `design-ui/` — **设计原型**（只读参考，不参与构建）：四套范式级不同的前端（琉璃·长卷 / 纸屿·顺流 / 汀·此刻 / 琉璃初版）+ `core/daycore-core.js` 共享 mock + `HANDOFF/` 交接文档 + `_ds/` 设计系统。重建时逐行对照它。**注意其 `API_CONTRACT.md` 的路径命名不是权威**，详见该目录 `CLAUDE.md` 顶部裁决。
-- `api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。
+- `api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。**`openapi.yaml` 是生成物**，改的是 `api/spec/paths/<tag>.yaml`（一个 tag 一个文件），然后 `make api-bundle`；`go test ./...` 会因它过期而红。
 - `docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表/开发者手册）+ `EXPERIENCE_CORE.md`（端无关语义总纲，v2.3）。
 - `docs/specs/` — **对外协议**（别人照着实现什么）：`transport.md` 传输层四种适配层共用（HTTP 语义 + 子进程握手与生命周期）、`storage-protocol.md`、`provider-protocol.md`、`frontend-manifest.md`。改协议要同时想「第三方照这个写会不会踩坑」。
 - `extension/` — Chrome MV3 插件（抓 Canvas → 推 `POST /api/import/canvas`）。
@@ -24,7 +24,7 @@
 
 ## 实时文档铁律
 
-1. **任何代码改动，必须在同一批修改中更新 `docs/` 对应文件**（改了认证就改 `AUTH.md`，加了路由就改 `API_SURFACE.md` + `openapi.yaml`，依此类推）。文档与代码不同步视为改动未完成。
+1. **任何代码改动，必须在同一批修改中更新 `docs/` 对应文件**（改了认证就改 `AUTH.md`，加了路由就改 `API_SURFACE.md` + `api/spec/paths/<tag>.yaml` 再 `make api-bundle`，依此类推）。文档与代码不同步视为改动未完成。加/删路由不必靠自觉：`internal/server/routes_test.go` 与 openapi 双向核对，漏一边就红。
 2. **做规划/探索时先读 `docs/`，不要派 agent 全量扫代码**；只对将要改动的文件做点状核实。发现文档与代码脱节时，先修文档再继续。
 
 ## 常用事实

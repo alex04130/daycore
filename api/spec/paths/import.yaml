@@ -1,0 +1,32 @@
+/api/import/token:
+  get: { operationId: getImportToken, tags: [import], responses: { '200': { description: OK } } }
+  post: { operationId: rotateImportToken, tags: [import], responses: { '200': { description: OK } } }
+/api/import/canvas:
+  post:
+    operationId: importCanvas
+    tags: [import]
+    security: [{ importToken: [] }, { sessionCookie: [] }]
+    summary: Canvas direct push (extension) or JSON upload.
+    responses: { '200': { description: OK } }
+/api/import/ics:
+  post: { operationId: importICS, tags: [import], summary: ICS upload (preview → confirm via rules/batch)., responses: { '200': { description: OK } } }
+/api/import/history:
+  get: { operationId: importHistory, tags: [import], responses: { '200': { description: OK } } }
+/api/courses:
+  get: { operationId: listCourses, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Course' } } } } } } }
+/api/assignments:
+  get: { operationId: listAssignments, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } } } }
+  post:
+    operationId: createAssignment
+    tags: [import]
+    summary: Manually add a deadline (quick-capture academic route).
+    description: Source "manual"; Canvas re-imports never touch manual rows. dueAt accepts RFC3339, YYYY-MM-DDTHH:MM, or YYYY-MM-DD.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, dueAt: { type: string }, courseId: { type: string } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }, '400': { $ref: '#/components/responses/Error' } }
+/api/assignments/{id}:
+  patch:
+    operationId: patchAssignment
+    tags: [import]
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
+    responses: { '200': { description: OK } }

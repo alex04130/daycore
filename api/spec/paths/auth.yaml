@@ -1,0 +1,34 @@
+/api/auth/register:
+  post:
+    operationId: register
+    tags: [auth]
+    summary: Email + password sign-up (rate-limited).
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+    responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+/api/auth/login:
+  post:
+    operationId: login
+    tags: [auth]
+    summary: Email + password sign-in; merges anonymous data into the canonical session.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
+    responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+/api/auth/logout:
+  post: { operationId: logout, tags: [auth], summary: Clear the auth cookie and revoke all issued JWTs., responses: { '200': { description: OK } } }
+/api/auth/providers:
+  get: { operationId: oauthProviders, tags: [auth], summary: List enabled OAuth providers., responses: { '200': { description: OK } } }
+/api/auth/oauth/{provider}:
+  get:
+    operationId: oauthStart
+    tags: [auth]
+    summary: Begin the OAuth authorization-code flow (redirects).
+    parameters: [{ name: provider, in: path, required: true, schema: { type: string } }]
+    responses: { '302': { description: Redirect to provider } }
+/api/auth/oauth/{provider}/callback:
+  get:
+    operationId: oauthCallback
+    tags: [auth]
+    summary: OAuth callback; links only verified emails, sets dc_auth, redirects to /.
+    parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
+    responses: { '302': { description: Redirect to / } }
+/api/me:
+  get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }

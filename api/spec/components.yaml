@@ -1,0 +1,280 @@
+components:
+  securitySchemes:
+    sessionCookie: { type: apiKey, in: cookie, name: dc_sid }
+    authCookie: { type: apiKey, in: cookie, name: dc_auth }
+    sessionToken: { type: apiKey, in: header, name: X-Session-Token, description: "Same signed value as the dc_sid cookie, for clients without a cookie jar. Get it from POST /api/session/init {tokenInBody:true}." }
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT, description: "Same JWT as the dc_auth cookie. Get it from login/register {tokenInBody:true}; logout revokes all issued JWTs (token-version bump)." }
+    importToken: { type: apiKey, in: header, name: X-Import-Token, description: "Session-scoped token for the browser extension's direct push." }
+    adminToken: { type: apiKey, in: header, name: X-Admin-Token, description: "Admin endpoints." }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: "Stable code the frontend translates (e.g. no_session, bad_request, rate_limited, token_expired)." }
+        message: { type: string, description: "Localized fallback message." }
+    TimeBlock:
+      type: object
+      required: [id, title, type, time_mode, timezone]
+      properties:
+        id: { type: string }
+        date: { type: string, example: "2026-07-13", description: "YYYY-MM-DD" }
+        time: { type: string, nullable: true, example: "14:30", description: "HH:MM or null when unscheduled" }
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal] }
+        duration_min: { type: integer, nullable: true }
+        time_mode: { type: string, enum: [floating, fixed, local], description: "floating=wall clock (no utc_time); fixed=absolute instant; local=circadian, follows current tz. fixed/local carry utc_time." }
+        timezone: { type: string, example: "Asia/Shanghai" }
+        utc_time: { type: string, nullable: true, description: "RFC3339 UTC anchor for fixed/local blocks." }
+        offset_min: { type: integer, nullable: true }
+        offset_ref: { type: string }
+        completed: { type: boolean }
+        isAchievement: { type: boolean }
+        rule_id: { type: string, description: "Set when the block is an occurrence of a ScheduleRule." }
+        origin: { type: string, enum: [auto, manual, rule], description: "auto=generated (dashed border, replaced on re-plan); manual=user (survives); rule=materialized occurrence." }
+        hidden: { type: boolean, description: "Tombstone — filtered out of reads; never render." }
+        note: { type: string, description: "Whatever the user felt like writing when checking the block off — how it went, what was left half-done. Always optional; never prompted for. The agent reads it." }
+        lock_level:
+          type: string
+          enum: ["", none, soft, hard]
+          description: >-
+            How firmly the time slot is fixed. THREE states, not two: "" means
+            never derived yet (the server will fill it in on read), none means
+            derived and free to move. hard=set by a timetable, the user cannot
+            move it; soft=agreed with someone else, moving needs confirmation.
+            Derivation rule and the shared case table live in api/lock-rules.json.
+        lock_reason: { type: string, description: "Why it is locked. Derived reasons are looked up per request locale; a user-set reason is stored verbatim." }
+        lock_source:
+          type: string
+          enum: ["", derived, user, agent]
+          description: >-
+            Who decided the lock. derived=inferred from type+title and safe to
+            recompute; user/agent=a deliberate choice, never recomputed. Without
+            this a hand-unlocked class would be re-locked on every read.
+        rescheduled_from: { type: string, description: "Id of the block this one was re-fished from, chaining each retry back to the original." }
+        reschedule_count: { type: integer, description: "How many times this item has been offered a new slot. Past the configured limit the agent stops offering and records the preference instead." }
+    DayPlan:
+      type: object
+      properties:
+        id: { type: string, description: "Empty for synthetic rules-only days." }
+        sessionId: { type: string }
+        date: { type: string }
+        blocks: { type: array, items: { $ref: '#/components/schemas/TimeBlock' } }
+        sourceType: { type: string, enum: [text, image, auto, rules] }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanAction:
+      type: object
+      required: [action]
+      properties:
+        action: { type: string, enum: [add, update, remove] }
+        match: { type: object, additionalProperties: true, description: "e.g. {id}" }
+        changes: { type: object, additionalProperties: true }
+        block: { $ref: '#/components/schemas/TimeBlock' }
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string, nullable: true }
+        interactionCount: { type: integer }
+        signInPrompted: { type: boolean }
+        assistantName: { type: string }
+        currentTheme: { type: string }
+        language: { type: string, enum: [zh-CN, en-US] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Preferences:
+      type: object
+      properties:
+        morningBrief: { type: boolean }
+        eveningReview: { type: boolean }
+        deadlineAlerts: { type: boolean }
+        rollingReplan: { type: boolean }
+        gapSuggestions: { type: boolean }
+        doNotDisturb: { type: boolean }
+        autoPlan: { type: boolean }
+        materialCategories:
+          type: object
+          additionalProperties: { type: boolean }
+          description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        primaryLocale:
+          type: string
+          description: >
+            This user's main language. Empty means "use the deployment default"
+            (GET /api/version locales.defaultPrimary), which is the common case.
+            Any locale in locales.available is a legal choice.
+        secondaryLocale:
+          type: string
+          description: >
+            The language the home-page switch flips to. Send "" to drop the
+            switch entirely. Must differ from primaryLocale — a toggle between a
+            language and itself is a control that does nothing (400
+            unsupported_locale). The two are validated as a pair, so send both
+            when changing both. Changing the pair realigns
+            /api/session.language into it when the current value falls outside.
+    ScheduleRule:
+      type: object
+      required: [id, title, type, time_mode, kind, active]
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal] }
+        time: { type: string, nullable: true }
+        duration_min: { type: integer, nullable: true }
+        timezone: { type: string }
+        time_mode: { type: string, enum: [floating, fixed, local] }
+        kind: { type: string, enum: [once, recurring] }
+        date: { type: string, nullable: true }
+        freq: { type: string, enum: [daily, weekly, monthly, every_n_days] }
+        interval: { type: integer, minimum: 1 }
+        by_weekday: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        start_date: { type: string }
+        until: { type: string, nullable: true }
+        active: { type: boolean }
+        source: { type: string, enum: [user, chat, ics, image, canvas] }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    RuleInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        type: { type: string, enum: [task, appointment, break, relax, meal], default: task }
+        time: { type: string, nullable: true }
+        duration_min: { type: integer, nullable: true }
+        timezone: { type: string }
+        time_mode: { type: string, enum: [floating, fixed, local], default: floating }
+        kind: { type: string, enum: [once, recurring], default: recurring }
+        date: { type: string, nullable: true }
+        freq: { type: string, enum: [daily, weekly, monthly, every_n_days] }
+        interval: { type: integer, minimum: 1, default: 1 }
+        by_weekday: { type: array, items: { type: integer } }
+        start_date: { type: string }
+        until: { type: string, nullable: true }
+        active: { type: boolean, default: true }
+        source: { type: string, enum: [user, chat, ics, image, canvas], default: user }
+        note: { type: string, nullable: true }
+    Material:
+      type: object
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        category: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        body: { type: string }
+        source: { type: string }
+        mime_type: { type: string }
+        storage_ref: { type: string }
+        tags: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SearchResult:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        snippet: { type: string }
+        score: { type: number }
+    Wish:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        note: { type: string }
+        effortMin: { type: integer }
+        status: { type: string, enum: [active, done, archived] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChatThread:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        archived: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ChatMessage:
+      type: object
+      properties:
+        id: { type: string }
+        threadId: { type: string }
+        sessionId: { type: string }
+        role: { type: string, enum: [user, assistant, system, tool] }
+        content: { type: string }
+        toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
+        status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        createdAt: { type: string, format: date-time }
+    CustomTheme:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        base: { type: string }
+        dark: { type: boolean }
+        variables: { type: object, additionalProperties: { type: string }, description: "CSS variable whitelist; color literals only (server-validated)." }
+    Course:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        canvasId: { type: string }
+        name: { type: string }
+        courseCode: { type: string }
+        currentScore: { type: number, nullable: true }
+        currentGrade: { type: string, nullable: true }
+    Assignment:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        courseId: { type: string }
+        canvasId: { type: string }
+        title: { type: string }
+        dueAt: { type: string, format: date-time, nullable: true }
+        pointsPossible: { type: number, nullable: true }
+        submitted: { type: boolean }
+        graded: { type: boolean }
+        status: { type: string, enum: [pending, planned, done, dismissed] }
+    OperationLog:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        actor: { type: string, enum: [user, agent, system] }
+        action: { type: string, example: "plan_update" }
+        domain:
+          type: string
+          enum: [schedule, habit, archive, care, system]
+          description: >-
+            Which part of the user's life the operation touched. Two consumers:
+            the river colours its bands by domain, and rapport (how much latitude
+            the user has given the agent) is scored per domain — being trusted
+            with the schedule says nothing about being trusted to archive things.
+            Only the first four are scored; system is plumbing. Derived from the
+            action prefix when a row does not carry one.
+        targetId: { type: string }
+        date: { type: string }
+        summary: { type: string, description: "Short list-view line, clamped to 512 runes." }
+        detail: { type: string, description: "Full JSON payload including before/after snapshots — this is what revert replays. Unbounded." }
+        status: { type: string, enum: [ok, failed] }
+        requestId: { type: string }
+        createdAt: { type: string, format: date-time }
+    AdminStats:
+      type: object
+      properties:
+        users: { type: integer }
+        sessions: { type: integer }
+        aiCalls: { type: integer }
+        tokenUsed: { type: integer }
+        feedbackUseful: { type: integer }
+        feedbackTotal: { type: integer }

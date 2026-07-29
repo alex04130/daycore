@@ -1,0 +1,19 @@
+/api/channels:
+  get: { operationId: listChannels, tags: [channels], summary: Available channels + binding status., responses: { '200': { description: OK } } }
+/api/channels/{channel}/bind:
+  post:
+    operationId: bindChannel
+    tags: [channels]
+    summary: Generate a 12-char token (10-min TTL) to send to the bot.
+    parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { token: { type: string }, channel: { type: string }, note: { type: string } } } } } } }
+/api/channels/{channel}/verify:
+  post:
+    operationId: verifyChannel
+    tags: [channels]
+    summary: Verify token + externalId (unauthenticated, rate-limited, TTL-enforced).
+    parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token, externalId], properties: { token: { type: string }, externalId: { type: string } } } } } }
+    responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '410': { $ref: '#/components/responses/Error' } }
+/api/channels/{channel}/unbind:
+  delete: { operationId: unbindChannel, tags: [channels], parameters: [{ name: channel, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
