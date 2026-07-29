@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"daycore/internal/version"
 )
 
 // The test runs in api/spec/bundle/, so api/ is two levels up.
@@ -191,5 +194,75 @@ func TestBundleParsesAndKeepsEveryPath(t *testing.T) {
 	}
 	if len(doc.Tags) != len(shards) {
 		t.Errorf("%d tags declared, %d shards on disk", len(doc.Tags), len(shards))
+	}
+}
+
+// The contract version must move when the surface does.
+//
+// Five separate work items in the plan each intended to bump APIMinor, which
+// would mint three different "1.1"s with no way to tell which one a client
+// meant. The rule is one bump per batch, at the end — and CheckVersion is what
+// makes it checkable without making it annoying: the assertion is "moved at
+// least once since the last freeze", so the first additive change in a batch
+// bumps, every later change is already covered, and a second bump is never
+// required.
+func TestContractVersionFollowsTheSurface(t *testing.T) {
+	lock, err := ReadLock(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundled, err := Bundle(specRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, err := Surface(bundled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckVersion(lock, version.APIVersion, version.APIMinor, now); err != nil {
+		t.Error(err)
+	}
+}
+
+// And the rule itself, against fixtures — because the case that matters is the
+// one where the repo is wrong, which the check above can never exercise while
+// the repo is right.
+func TestVersionRule(t *testing.T) {
+	lock := Lock{APIVersion: 1, APIMinor: 0, Operations: []string{"GET /a getA", "GET /b getB"}}
+	both := lock.Operations
+	plusOne := []string{"GET /a getA", "GET /b getB", "GET /c getC"}
+	minusOne := []string{"GET /a getA"}
+	renamed := []string{"GET /a getA", "GET /b fetchB"}
+
+	cases := []struct {
+		name    string
+		ops     []string
+		v, m    int
+		wantErr string
+	}{
+		{"nothing changed, nothing bumped", both, 1, 0, ""},
+		{"new operation without a bump", plusOne, 1, 0, "bump version.APIMinor to 1"},
+		{"new operation with the batch's one bump", plusOne, 1, 1, ""},
+		{"a second new operation in the same batch needs no second bump", plusOne, 1, 1, ""},
+		{"new operation, major bumped instead", plusOne, 2, 0, ""},
+		{"removed operation is breaking", minusOne, 1, 1, "bump version.APIVersion to 2"},
+		{"removed operation with a major bump", minusOne, 2, 0, ""},
+		{"renamed operationId counts as removal", renamed, 1, 1, "bump version.APIVersion to 2"},
+		{"version went backwards", both, 0, 9, "went backwards"},
+		{"minor went backwards", both, 1, 0, ""},
+		{"field-only additive change (surface identical, minor bumped)", both, 1, 1, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckVersion(lock, tc.v, tc.m, tc.ops)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("rejected a legitimate state: %v", err)
+			case tc.wantErr != "" && err == nil:
+				t.Errorf("accepted a state it should have caught (wanted %q)", tc.wantErr)
+			case tc.wantErr != "" && !strings.Contains(err.Error(), tc.wantErr):
+				t.Errorf("caught it but said the wrong thing:\n  got:  %v\n  want to contain: %q", err, tc.wantErr)
+			}
+		})
 	}
 }

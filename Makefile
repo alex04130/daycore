@@ -1,4 +1,4 @@
-.PHONY: help run build test test-mongo check-i18n api-bundle api-check tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo check-i18n api-bundle api-check api-lock tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -26,6 +26,9 @@ api-bundle: ## Rebuild api/openapi.yaml from the per-tag shards in api/spec/
 
 api-check: ## Verify api/openapi.yaml matches the shards (also covered by go test)
 	go run ./api/spec/bundle -check
+
+api-lock: ## Freeze the current contract surface at the current APIVersion.APIMinor
+	go run ./api/spec/bundle -lock
 
 vet: ## go vet
 	go vet ./...

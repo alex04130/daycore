@@ -16,11 +16,13 @@
 // as their authors wrote them.
 //
 //	go run ./api/spec/bundle           rebuild api/openapi.yaml
-//	go run ./api/spec/bundle -check    verify it is current (exit 1 if stale)
+//	go run ./api/spec/bundle -check    verify it is current and the version rule holds
+//	go run ./api/spec/bundle -lock     freeze the current surface at the current version
 package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -29,6 +31,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"daycore/internal/version"
 )
 
 // Root is the repository-relative location of the spec. Overridable so the test
@@ -37,6 +41,7 @@ var Root = "api"
 
 func main() {
 	check := flag.Bool("check", false, "verify api/openapi.yaml matches the shards instead of writing it")
+	lock := flag.Bool("lock", false, "rewrite contract-lock.json to the current surface and version (do this when freezing a contract version)")
 	root := flag.String("root", Root, "directory holding openapi.yaml and spec/")
 	flag.Parse()
 
@@ -47,6 +52,15 @@ func main() {
 	}
 	out := filepath.Join(*root, "openapi.yaml")
 
+	if *lock {
+		if err := WriteLock(*root, want); err != nil {
+			fmt.Fprintln(os.Stderr, "bundle:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("locked contract v%d.%d with %d operations\n", version.APIVersion, version.APIMinor, len(mustSurface(want)))
+		return
+	}
+
 	if *check {
 		got, err := os.ReadFile(out)
 		if err != nil {
@@ -55,6 +69,15 @@ func main() {
 		}
 		if !bytes.Equal(got, want) {
 			fmt.Fprintf(os.Stderr, "%s is stale — run `make api-bundle`\n", out)
+			os.Exit(1)
+		}
+		lock, err := ReadLock(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "bundle:", err)
+			os.Exit(1)
+		}
+		if err := CheckVersion(lock, version.APIVersion, version.APIMinor, mustSurface(want)); err != nil {
+			fmt.Fprintln(os.Stderr, "bundle:", err)
 			os.Exit(1)
 		}
 		return
@@ -245,4 +268,152 @@ func indent(b []byte) string {
 		}
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// ─── contract lock ───────────────────────────────────────────────────────────
+//
+// The plan has five separate work items each planning to bump APIMinor, which
+// would produce three different "1.1"s and no way to tell which one a client
+// meant. The rule is "one bump per batch, at the end" — but a rule written in
+// prose is a rule nobody can be shown to have broken.
+//
+// So the lock records the contract surface as of the last freeze, and the test
+// asserts the version moved *at least once* since then. That is exactly the
+// batch rule: the first additive change in a batch bumps APIMinor, every later
+// change in the same batch is already covered, and the lock is refreshed when
+// the contract is frozen. A second bump is never required, so the 1.1/1.2/1.3
+// collision cannot happen.
+
+// Lock is api/spec/contract-lock.json.
+type Lock struct {
+	APIVersion int      `json:"apiVersion"`
+	APIMinor   int      `json:"apiMinor"`
+	Note       string   `json:"note"`
+	Operations []string `json:"operations"`
+}
+
+const lockNote = "The contract surface as of the last freeze. Refresh with `make api-lock` when bumping " +
+	"the contract version, never to silence a test. See api/spec/README.md."
+
+// Surface is the set of operations a generated client can see, one line each.
+//
+// operationId is part of it because renaming one breaks every generated client
+// exactly as removing it would — the method+path still answers, and the client's
+// function is gone.
+func Surface(bundled []byte) ([]string, error) {
+	var doc struct {
+		Paths map[string]map[string]struct {
+			OperationID string `yaml:"operationId"`
+		} `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(bundled, &doc); err != nil {
+		return nil, err
+	}
+	var out []string
+	for path, ops := range doc.Paths {
+		for verb, op := range ops {
+			if !httpVerbs[strings.ToLower(verb)] {
+				continue
+			}
+			if op.OperationID == "" {
+				return nil, fmt.Errorf("%s %s has no operationId — generated clients name their functions after it", strings.ToUpper(verb), path)
+			}
+			out = append(out, fmt.Sprintf("%s %s %s", strings.ToUpper(verb), path, op.OperationID))
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func mustSurface(bundled []byte) []string {
+	s, err := Surface(bundled)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "bundle:", err)
+		os.Exit(1)
+	}
+	return s
+}
+
+func LockPath(root string) string { return filepath.Join(root, "spec", "contract-lock.json") }
+
+func ReadLock(root string) (Lock, error) {
+	var l Lock
+	b, err := os.ReadFile(LockPath(root))
+	if err != nil {
+		return l, err
+	}
+	err = json.Unmarshal(b, &l)
+	return l, err
+}
+
+func WriteLock(root string, bundled []byte) error {
+	ops, err := Surface(bundled)
+	if err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(Lock{
+		APIVersion: version.APIVersion,
+		APIMinor:   version.APIMinor,
+		Note:       lockNote,
+		Operations: ops,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(LockPath(root), append(b, '\n'), 0o644)
+}
+
+// CheckVersion applies the bump rule. It lives in the tool rather than only in
+// the test so `-check` enforces it too — the rule is part of what the contract
+// is, not a property someone remembered to test.
+func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
+	added, removed := diffOps(lock.Operations, current)
+
+	// A version that went backwards is always a mistake — usually a bad merge of
+	// internal/version/version.go, which nothing else would notice.
+	if apiVersion < lock.APIVersion || (apiVersion == lock.APIVersion && apiMinor < lock.APIMinor) {
+		return fmt.Errorf("contract version went backwards: the lock says %d.%d, version.go says %d.%d",
+			lock.APIVersion, lock.APIMinor, apiVersion, apiMinor)
+	}
+
+	switch {
+	case len(removed) > 0:
+		// Renames land here too: the method and path still answer, but the
+		// generated client's function is gone, which a client cannot tell apart
+		// from removal.
+		if apiVersion <= lock.APIVersion {
+			return fmt.Errorf("these operations disappeared since contract %d.%d, which is breaking — bump version.APIVersion to %d:\n  %s",
+				lock.APIVersion, lock.APIMinor, lock.APIVersion+1, strings.Join(removed, "\n  "))
+		}
+	case len(added) > 0:
+		if apiVersion == lock.APIVersion && apiMinor == lock.APIMinor {
+			return fmt.Errorf("%d new operations since contract %d.%d — bump version.APIMinor to %d (once per batch, not once per change):\n  %s",
+				len(added), lock.APIVersion, lock.APIMinor, lock.APIMinor+1, strings.Join(added, "\n  "))
+		}
+	}
+	// Surface unchanged deliberately does NOT mean "no bump allowed": additive
+	// changes include new fields on existing endpoints, which an operation set
+	// cannot see. A bump with no new operation is legitimate.
+	return nil
+}
+
+func diffOps(old, cur []string) (added, removed []string) {
+	o, n := map[string]bool{}, map[string]bool{}
+	for _, s := range old {
+		o[s] = true
+	}
+	for _, s := range cur {
+		n[s] = true
+		if !o[s] {
+			added = append(added, s)
+		}
+	}
+	for _, s := range old {
+		if !n[s] {
+			removed = append(removed, s)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return
 }

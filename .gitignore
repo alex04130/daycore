@@ -1,6 +1,7 @@
 # ── Go 构建产物 ──
 /bin/
 /daycore
+/bundle          # go build ./api/spec/bundle drops it here
 *.exe
 *.test
 *.out
