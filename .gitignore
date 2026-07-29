@@ -53,3 +53,10 @@ coverage/
 .directory
 .Trash-*
 .nfs*
+
+# Scratch test files left behind by review subagents. They are probes, not
+# deliverables — anything worth keeping gets rewritten as a named regression
+# test. Ignored so a `git add -A` during a running review cannot commit them.
+internal/**/zz_*_test.go
+internal/**/zzz_*_test.go
+internal/**/zzprobe_test.go

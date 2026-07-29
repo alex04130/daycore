@@ -55,6 +55,16 @@
 
 后端托管静态资源（`STATIC_DIR`）。前端落实 `manifest.json`（standalone/图标/主题色）+ service worker（离线壳 + 缓存今日 `GET /api/plan?date=today`）+ 安装提示。
 
+### G0. 前端契约的三条硬要求（2026-07-28）
+
+任何前端 —— 包括第三方做的、别的平台的 —— 必须做到三件事：
+
+1. **握手并自我介绍**：`POST /api/version` 带上 `familyId` / `buildHash` / `version` / `minApi` + 主题 manifest。不介绍，后端分不清连上来的是谁，主题与偏好就无处归属。`GET /api/version` 只给匿名/老客户端读。
+2. **首次安装配置界面**（`/setting` 或同等结构），至少能配**连哪个后端**。把后端地址写死的前端只能对着一个部署用，而自部署是这个项目的常态。这个界面同时是语言开关（§1.1）与主题选择的落点。
+3. **自主丢弃用不到的主题 token**。主题按 family 存、token 空间取并集，所以你会拿到本 build 不认识的变量 —— 忽略它们是你的责任，后端不为此裁剪。
+
+详见 `docs/EXPERIENCE_CORE.md` §1.2。
+
 ### G. 前后端分离 / 原生端：版本契约 + header 认证（2026-07-14 新增）
 
 **版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, locales}`。

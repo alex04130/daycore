@@ -370,6 +370,33 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - `note`：**MySQL 的 TEXT 不允许字面 DEFAULT**，三方言共用一份迁移清单，所以 ALTER 与建表都不带 `NOT NULL DEFAULT ''`，读时把 NULL 归一成 `""`。
 - 回归测试：`sqlstore/store_test.go` 的 `TestMoodSourceAndNoteRoundTrip`（含「没写 source 的行读回来是空」）。
 
+## 主题与前端握手（路线已定，落地在批次 F）
+
+**决定与理由在 `docs/EXPERIENCE_CORE.md` §1.2**，这里只记数据层要动什么。
+
+现状写死给单个前端：`themeVarWhitelist`（`handlers_themes.go:16`，12 条硬编码）、`themeColorRe`（强制值必须是颜色字面量）、`builtinThemePresets`、`theme_gen.tmpl` 里那套设计规则。琉璃要模糊半径、纸屿要纸纹颗粒、汀要留白刻度 —— 相当一部分不是颜色，现有正则会直接拒掉。
+
+**存储形状不用改**：`custom_themes.variables` 已经是 JSON 列，四引擎都存得下自由文档。Mongo 更自然但**不能成为要求**。要搬走的是校验规则。
+
+**两层身份**：`build_hash`（一次构建的指纹，派生不可改）+ `family_id`（主题兼容组，build 声明、**运维可在控制台改**）。主题与按端偏好按 **family** 存 —— 那才是一套主题有意义的单位。
+
+**family 的 token 空间是并集，不做子集拦截**：新 build 带来新 token 就扩一条，已存主题因此缺那一条 → 运维触发一次**补算**（每个缺 token 的主题一次 AI 调用），补完若两套变量完全一致就**合并**（保留一条，会话偏好改指）。build 用不到的 token 由**前端自己丢弃**，后端不裁剪。
+
+| 改动 | DDL |
+|---|---|
+| `frontend_builds`（`build_hash` 主键 + `family_id` + `manifest_json` + `rules_approved` + 首见/末见） | 新表 |
+| `frontend_families`（`family_id` 主键 + `tokens_json` 并集 + `rules` 运维版本 + `display_name`） | 新表 |
+| `custom_themes.family_id` · `theme_switch_log.family_id` | 三方言加列 |
+| 按端当前主题 → `SessionPrefs` 的 `{familyID: themeID}` | **零** |
+| 主题补算 | 走 `job_runs`，运维触发 |
+
+⚠️ **加列与两张新表一起排在批次 F**，不要单独去动方言文件 —— 这一天已经碰过三次了。
+
+**两条安全边界**（前端是开放的，第三方在场，上报内容是第三方数据）：
+
+1. **`kind` 是服务端已知的封闭集合**（color / length / number / ratio / duration / enum），校验器归后端，**前端不能自带正则、没有 `raw` 档**。加一种 kind 是改后端 —— 这个不便利是把值层面注入面钉在后端的那颗钉子。AI 生成的主题落地前逐 token 校验 key 与 kind。
+2. **`theme.rules` 未经运维批准不进 LLM**。前端可以主张、运维可以改并决定是否采用；没主张或没批准 → 后端按 token 清单机械生成。第三方前端一上来功能完整，代价只是提示词平淡；注入面默认为零。
+
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 
 `switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`，各特性在自己文件的 `init()` 里注册。
