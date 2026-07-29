@@ -8,6 +8,18 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("chat threads", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/chat/threads", s.handleChatListThreads)
+		mux.HandleFunc("POST /api/chat/threads", s.handleChatCreateThread)
+		mux.HandleFunc("PATCH /api/chat/threads/{id}", s.handleChatUpdateThread)
+		mux.HandleFunc("DELETE /api/chat/threads/{id}", s.handleChatDeleteThread)
+		mux.HandleFunc("GET /api/chat/threads/{id}/messages", s.handleChatListMessages)
+		mux.HandleFunc("DELETE /api/chat/threads/{id}/messages", s.handleChatClearMessages)
+		mux.HandleFunc("GET /api/chat/messages/{id}", s.handleChatGetMessage)
+	})
+}
+
 // ─── chat thread handlers ────────────────────────────────────────────────────
 
 // GET /api/chat/threads — list all threads for the session.

@@ -13,6 +13,12 @@ import (
 	"daycore/internal/schedule"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/auto-plan", s.handleAIAutoPlan)
+	})
+}
+
 var (
 	weekdaysZH = []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
 	weekdaysEN = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}

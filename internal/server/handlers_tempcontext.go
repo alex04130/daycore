@@ -12,6 +12,13 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("temp-context (session-scoped key-value store)", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/temp-context", s.handleTempContextGet)
+		mux.HandleFunc("PUT /api/temp-context", s.handleTempContextPut)
+	})
+}
+
 // maxPayloadLen limits the size of a single temp-context payload.
 const maxPayloadLen = 64 << 10 // 64 KiB
 

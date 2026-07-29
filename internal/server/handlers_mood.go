@@ -8,6 +8,14 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("moods", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/mood", s.handleMoodList)
+		mux.HandleFunc("POST /api/mood", s.handleMoodCreate)
+		mux.HandleFunc("PATCH /api/mood", s.handleMoodPatch)
+	})
+}
+
 // GET /api/mood?limit=10 — recent check-ins (newest first).
 func (s *Server) handleMoodList(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

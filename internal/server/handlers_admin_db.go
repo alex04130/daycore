@@ -4,6 +4,17 @@ import (
 	"net/http"
 )
 
+func init() {
+	registerRoutes("admin (stats, users, DB)", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/admin/db/tables", s.handleAdminDBTables)
+		mux.HandleFunc("GET /api/admin/db/table/{name}", s.handleAdminDBTableBrowse)
+		mux.HandleFunc("DELETE /api/admin/db/table/{name}/{id}", s.handleAdminDBTableDelete)
+		mux.HandleFunc("GET /api/admin/db/export", s.handleAdminDBExport)
+		mux.HandleFunc("POST /api/admin/db/import", s.handleAdminDBImport)
+		mux.HandleFunc("GET /api/admin/db/backup", s.handleAdminDBBackup)
+	})
+}
+
 // GET /api/admin/db/tables
 func (s *Server) handleAdminDBTables(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {

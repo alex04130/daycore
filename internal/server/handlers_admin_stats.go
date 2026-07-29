@@ -7,6 +7,15 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("admin (stats, users, DB)", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/admin/stats", s.handleAdminStats)
+		mux.HandleFunc("GET /api/admin/ailogs", s.handleAdminAILogs)
+		mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
+		mux.HandleFunc("DELETE /api/admin/users/{id}", s.handleAdminDeleteUser)
+	})
+}
+
 // GET /api/admin/stats — dashboard aggregation.
 func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {

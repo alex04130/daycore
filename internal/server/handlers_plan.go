@@ -11,6 +11,15 @@ import (
 	"daycore/internal/schedule"
 )
 
+func init() {
+	registerRoutes("plans", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/plan", s.handlePlanGet)
+		mux.HandleFunc("POST /api/plan", s.handlePlanUpsert)
+		mux.HandleFunc("PATCH /api/plan", s.handlePlanPatch)
+		mux.HandleFunc("GET /api/plan/range", s.handlePlanRange)
+	})
+}
+
 // ruleOccurrences expands the session's rules for [from, to]; storage failures
 // degrade to "no occurrences" rather than failing the whole read.
 func (s *Server) ruleOccurrences(ctx context.Context, sid, from, to string) []domain.TimeBlock {

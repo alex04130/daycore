@@ -10,6 +10,16 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("long-term memory", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/memory", s.handleMemoryList)
+		mux.HandleFunc("POST /api/memory", s.handleMemoryAdd)
+		mux.HandleFunc("DELETE /api/memory", s.handleMemoryClear)
+		mux.HandleFunc("DELETE /api/memory/{id}", s.handleMemoryDelete)
+		mux.HandleFunc("GET /api/import/history", s.handleImportHistory)
+	})
+}
+
 // maxFactLen keeps single facts prompt-sized.
 const maxFactLen = 500
 

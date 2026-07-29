@@ -10,6 +10,18 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("materials", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/materials", s.handleMaterialList)
+		mux.HandleFunc("POST /api/materials", s.handleMaterialCreate)
+		mux.HandleFunc("GET /api/materials/search", s.handleMaterialSearch)
+		mux.HandleFunc("GET /api/materials/categories", s.handleMaterialCategories)
+		mux.HandleFunc("GET /api/materials/{id}", s.handleMaterialGet)
+		mux.HandleFunc("PATCH /api/materials/{id}", s.handleMaterialUpdate)
+		mux.HandleFunc("DELETE /api/materials/{id}", s.handleMaterialDelete)
+	})
+}
+
 // GET /api/materials — list materials, optionally filtered by category and query.
 func (s *Server) handleMaterialList(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

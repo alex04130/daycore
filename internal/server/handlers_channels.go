@@ -9,6 +9,15 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("admin (prompts)", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/channels", s.handleChannelList)
+		mux.HandleFunc("POST /api/channels/{channel}/bind", s.handleChannelBind)
+		mux.HandleFunc("POST /api/channels/{channel}/verify", s.handleChannelVerify)
+		mux.HandleFunc("DELETE /api/channels/{channel}/unbind", s.handleChannelUnbind)
+	})
+}
+
 // generateBindingToken creates a 12-char random token valid for 10 minutes.
 func generateBindingToken() (string, error) {
 	b := make([]byte, 6)

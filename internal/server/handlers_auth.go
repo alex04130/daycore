@@ -11,6 +11,15 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("auth", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/auth/register", s.handleRegister)
+		mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+		mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+		mux.HandleFunc("GET /api/me", s.handleMe)
+	})
+}
+
 // POST /api/auth/register — email + password sign-up.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if !s.authRateLimit(w, r) {

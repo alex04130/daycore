@@ -11,6 +11,12 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/travel", s.handleAITravel)
+	})
+}
+
 // POST /api/ai/travel — destination + dates → AI itinerary suggestion. The
 // result is returned for display AND stored as an inbox draft, so confirming
 // it is the same POST /api/inbox/commit flow as any quick capture (it lands as

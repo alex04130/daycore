@@ -8,6 +8,14 @@ import (
 	"daycore/internal/i18n"
 )
 
+func init() {
+	registerRoutes("session", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/session/init", s.handleSessionInit)
+		mux.HandleFunc("POST /api/session/theme", s.handleSessionTheme)
+		mux.HandleFunc("PATCH /api/session/settings", s.handleSessionSettings)
+	})
+}
+
 // POST /api/session/init — get-or-create the anonymous session. The server owns
 // the session id: if there is no valid signed cookie, a fresh random id is
 // generated and set as an httpOnly cookie (fixes v1's guessable query-param id).

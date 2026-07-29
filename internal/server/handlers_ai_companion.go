@@ -11,6 +11,12 @@ import (
 	"daycore/internal/i18n"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/companion", s.handleAICompanion)
+	})
+}
+
 // POST /api/ai/companion — the companion agent over SSE v2. Context is
 // server-authoritative (clock, plans, memory, rules, assignments, moods).
 // When threadId is set, history is loaded from the server-side chat thread;

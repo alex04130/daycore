@@ -8,6 +8,16 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("wishes", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/wishes", s.handleWishList)
+		mux.HandleFunc("POST /api/wishes", s.handleWishCreate)
+		mux.HandleFunc("GET /api/wishes/{id}", s.handleWishGet)
+		mux.HandleFunc("PATCH /api/wishes/{id}", s.handleWishUpdate)
+		mux.HandleFunc("DELETE /api/wishes/{id}", s.handleWishDelete)
+	})
+}
+
 // wishInput is the JSON shape accepted by create and update.
 type wishInput struct {
 	Title     string `json:"title"`

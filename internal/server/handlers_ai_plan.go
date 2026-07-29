@@ -9,6 +9,14 @@ import (
 	"daycore/internal/ai"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/plan-text", s.handleAIPlanText)
+		mux.HandleFunc("POST /api/ai/plan-image", s.handleAIPlanImage)
+		mux.HandleFunc("POST /api/ai/extract-schedule-image", s.handleAIExtractScheduleImage)
+	})
+}
+
 // POST /api/ai/plan-text — natural language → structured day plan (JSON).
 func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 	if !s.rateLimit(w, r) {

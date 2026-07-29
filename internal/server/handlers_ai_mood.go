@@ -10,6 +10,12 @@ import (
 	"daycore/internal/mood"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/mood", s.handleAIMood)
+	})
+}
+
 // POST /api/ai/mood — mood → warm text response.
 func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 	if !s.rateLimit(w, r) {

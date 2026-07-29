@@ -103,7 +103,15 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 路由注册模式
 
-`server.go` 的 `New()` 里 `mux.HandleFunc("METHOD /path", s.handleXxx)` 集中注册（60+ 条），路由→handler 文件映射见 API_SURFACE.md，REST 细节以 `api/openapi.yaml` 为准。
+**分散注册**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){ … })`，`Handler()` 遍历注册表。注册表在 `internal/server/routes.go`。当前 **100 条路由 / 21 个组**，`server.go` 只剩静态 `/` 那一条（它有条件，只在 `STATIC_DIR` 存在时挂）。
+
+原先是 `Handler()` 里 100 行集中注册，让 `server.go` 成了全仓最抢手的文件（12 个工作项都要改同一份清单）。**顺序无关紧要** —— Go 1.22 的 ServeMux 按 pattern 具体度而非注册顺序裁决，所以打散不会改变谁胜出，`/` 兜底也永远输给任何真路由。
+
+`Mux` 是个只有 `HandleFunc` 的接口，不是 `*http.ServeMux`：注册打散之后就没有任何一处能读到完整 HTTP 面了，而 `*http.ServeMux` 无法枚举自己收了什么。换成接口，`RouteTable(*Server)` 就能拿一个记录器把注册重放一遍，把那份清单还回来 —— 传 `&Server{}` 即可，闭包只取方法值不调用，所以**读路由表不需要数据库**。
+
+于此之上三条测试（`routes_test.go`）：pattern 不重复（ServeMux 撞了是 panic，但要等到起服务才炸）、每条都带方法、以及**与 `api/openapi.yaml` 双向核对** —— 服务了没写进契约、写进契约没人服务，两个方向都报错。这是实时文档铁律里「加了路由就改 openapi」那一条第一次真正由 CI 兜住。
+
+路由→handler 文件映射见 API_SURFACE.md，REST 细节以 `api/openapi.yaml` 为准。
 
 ## main.go 启动/关停
 

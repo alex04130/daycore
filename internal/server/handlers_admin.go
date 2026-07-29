@@ -9,6 +9,14 @@ import (
 	"daycore/internal/i18n"
 )
 
+func init() {
+	registerRoutes("admin (prompts)", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/admin/prompts", s.handleAdminPromptList)
+		mux.HandleFunc("GET /api/admin/prompts/{key}", s.handleAdminPromptGet)
+		mux.HandleFunc("PUT /api/admin/prompts/{key}", s.handleAdminPromptSet)
+	})
+}
+
 // adminAuthorized gates the prompt-editing endpoints. With ADMIN_TOKEN set, the
 // X-Admin-Token header must match (constant-time); unset means open in dev,
 // closed in prod.

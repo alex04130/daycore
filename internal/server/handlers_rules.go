@@ -9,6 +9,16 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("schedule rules", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/rules", s.handleRuleList)
+		mux.HandleFunc("POST /api/rules", s.handleRuleCreate)
+		mux.HandleFunc("POST /api/rules/batch", s.handleRuleBatchCreate)
+		mux.HandleFunc("PATCH /api/rules/{id}", s.handleRulePatch)
+		mux.HandleFunc("DELETE /api/rules/{id}", s.handleRuleDelete)
+	})
+}
+
 // GET /api/rules — every rule (active and paused) for the session.
 func (s *Server) handleRuleList(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

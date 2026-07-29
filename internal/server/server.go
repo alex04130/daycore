@@ -120,151 +120,19 @@ const (
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// health & diagnostics
-	mux.HandleFunc("GET /api/healthz", s.handleHealth)
-	mux.HandleFunc("GET /api/version", s.handleAPIVersion)
-	mux.HandleFunc("GET /api/models", s.handleModels)
+	// Routes are registered by the files that own their handlers (see routes.go).
+	// This used to be one hundred mux.HandleFunc calls in this function, which
+	// made it the single most contended file in the repo — twelve parallel work
+	// items all had to edit the same list.
+	for _, g := range routeGroups {
+		g.register(s, mux)
+	}
 
-	// session
-	mux.HandleFunc("POST /api/session/init", s.handleSessionInit)
-	mux.HandleFunc("POST /api/session/theme", s.handleSessionTheme)
-	mux.HandleFunc("PATCH /api/session/settings", s.handleSessionSettings)
-	mux.HandleFunc("GET /api/session/preferences", s.handleSessionGetPreferences)
-	mux.HandleFunc("PATCH /api/session/preferences", s.handleSessionPreferences)
-
-	// plans
-	mux.HandleFunc("GET /api/plan", s.handlePlanGet)
-	mux.HandleFunc("POST /api/plan", s.handlePlanUpsert)
-	mux.HandleFunc("PATCH /api/plan", s.handlePlanPatch)
-	mux.HandleFunc("GET /api/plan/range", s.handlePlanRange)
-
-	// schedule rules
-	mux.HandleFunc("GET /api/rules", s.handleRuleList)
-	mux.HandleFunc("POST /api/rules", s.handleRuleCreate)
-	mux.HandleFunc("POST /api/rules/batch", s.handleRuleBatchCreate)
-	mux.HandleFunc("PATCH /api/rules/{id}", s.handleRulePatch)
-	mux.HandleFunc("DELETE /api/rules/{id}", s.handleRuleDelete)
-
-	// moods
-	mux.HandleFunc("GET /api/mood", s.handleMoodList)
-	mux.HandleFunc("POST /api/mood", s.handleMoodCreate)
-	mux.HandleFunc("PATCH /api/mood", s.handleMoodPatch)
-
-	// companion history
-	mux.HandleFunc("GET /api/companion-history", s.handleCompanionHistoryGet)
-	mux.HandleFunc("POST /api/companion-history", s.handleCompanionHistorySet)
-
-	// feedback
-	mux.HandleFunc("POST /api/feedback", s.handleFeedbackAdd)
-
-	// imports
-	mux.HandleFunc("GET /api/import/token", s.handleImportTokenGet)
-	mux.HandleFunc("POST /api/import/token", s.handleImportTokenRotate)
-	mux.HandleFunc("POST /api/import/canvas", s.handleImportCanvas)
-	mux.HandleFunc("POST /api/import/ics", s.handleImportICS)
-
-	// inbox
-	mux.HandleFunc("POST /api/inbox/process", s.handleInboxProcess)
-	mux.HandleFunc("POST /api/inbox/upload", s.handleInboxUpload)
-	mux.HandleFunc("POST /api/inbox/commit", s.handleInboxCommit)
-
-	// temp-context (session-scoped key-value store)
-	mux.HandleFunc("GET /api/temp-context", s.handleTempContextGet)
-	mux.HandleFunc("PUT /api/temp-context", s.handleTempContextPut)
-
-	// long-term memory
-	mux.HandleFunc("GET /api/memory", s.handleMemoryList)
-	mux.HandleFunc("POST /api/memory", s.handleMemoryAdd)
-	mux.HandleFunc("DELETE /api/memory", s.handleMemoryClear)
-	mux.HandleFunc("DELETE /api/memory/{id}", s.handleMemoryDelete)
-	mux.HandleFunc("GET /api/import/history", s.handleImportHistory)
-
-	// custom themes
-	mux.HandleFunc("GET /api/themes", s.handleThemeList)
-	mux.HandleFunc("POST /api/themes", s.handleThemeCreate)
-	mux.HandleFunc("PATCH /api/themes/{id}", s.handleThemePatch)
-	mux.HandleFunc("DELETE /api/themes/{id}", s.handleThemeDelete)
-
-	// canvas materials
-	mux.HandleFunc("GET /api/courses", s.handleCourseList)
-	mux.HandleFunc("GET /api/assignments", s.handleAssignmentList)
-	mux.HandleFunc("POST /api/assignments", s.handleAssignmentCreate)
-	mux.HandleFunc("PATCH /api/assignments/{id}", s.handleAssignmentPatch)
-
-	// materials
-	mux.HandleFunc("GET /api/materials", s.handleMaterialList)
-	mux.HandleFunc("POST /api/materials", s.handleMaterialCreate)
-	mux.HandleFunc("GET /api/materials/search", s.handleMaterialSearch)
-	mux.HandleFunc("GET /api/materials/categories", s.handleMaterialCategories)
-	mux.HandleFunc("GET /api/materials/{id}", s.handleMaterialGet)
-	mux.HandleFunc("PATCH /api/materials/{id}", s.handleMaterialUpdate)
-	mux.HandleFunc("DELETE /api/materials/{id}", s.handleMaterialDelete)
-
-	// wishes
-	mux.HandleFunc("GET /api/wishes", s.handleWishList)
-	mux.HandleFunc("POST /api/wishes", s.handleWishCreate)
-	mux.HandleFunc("GET /api/wishes/{id}", s.handleWishGet)
-	mux.HandleFunc("PATCH /api/wishes/{id}", s.handleWishUpdate)
-	mux.HandleFunc("DELETE /api/wishes/{id}", s.handleWishDelete)
-
-	// ai
-	mux.HandleFunc("POST /api/ai/plan-text", s.handleAIPlanText)
-	mux.HandleFunc("POST /api/ai/plan-image", s.handleAIPlanImage)
-	mux.HandleFunc("POST /api/ai/extract-schedule-image", s.handleAIExtractScheduleImage)
-	mux.HandleFunc("POST /api/ai/auto-plan", s.handleAIAutoPlan)
-	mux.HandleFunc("POST /api/ai/theme", s.handleAITheme)
-	mux.HandleFunc("POST /api/ai/mood", s.handleAIMood)
-	mux.HandleFunc("POST /api/ai/travel", s.handleAITravel)
-	mux.HandleFunc("POST /api/ai/companion", s.handleAICompanion)
-	mux.HandleFunc("POST /api/ai/companion/async", s.handleAICompanionAsync)
-	mux.HandleFunc("POST /api/decisions/{id}/respond", s.handleDecisionRespond)
-
-	// chat threads
-	mux.HandleFunc("GET /api/chat/threads", s.handleChatListThreads)
-	mux.HandleFunc("POST /api/chat/threads", s.handleChatCreateThread)
-	mux.HandleFunc("PATCH /api/chat/threads/{id}", s.handleChatUpdateThread)
-	mux.HandleFunc("DELETE /api/chat/threads/{id}", s.handleChatDeleteThread)
-	mux.HandleFunc("GET /api/chat/threads/{id}/messages", s.handleChatListMessages)
-	mux.HandleFunc("DELETE /api/chat/threads/{id}/messages", s.handleChatClearMessages)
-	mux.HandleFunc("GET /api/chat/messages/{id}", s.handleChatGetMessage)
-
-	// operation logs & undo
-	mux.HandleFunc("GET /api/ops", s.handleOpList)
-	mux.HandleFunc("POST /api/ops/{id}/revert", s.handleOpRevert)
-
-	// auth
-	mux.HandleFunc("POST /api/auth/register", s.handleRegister)
-	mux.HandleFunc("POST /api/auth/login", s.handleLogin)
-	mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
-	mux.HandleFunc("GET /api/auth/providers", s.handleOAuthProviders)
-	mux.HandleFunc("GET /api/auth/oauth/{provider}", s.handleOAuthStart)
-	mux.HandleFunc("GET /api/auth/oauth/{provider}/callback", s.handleOAuthCallback)
-	mux.HandleFunc("GET /api/me", s.handleMe)
-
-	// admin (prompts)
-	mux.HandleFunc("GET /api/channels", s.handleChannelList)
-	mux.HandleFunc("POST /api/channels/{channel}/bind", s.handleChannelBind)
-	mux.HandleFunc("POST /api/channels/{channel}/verify", s.handleChannelVerify)
-	mux.HandleFunc("DELETE /api/channels/{channel}/unbind", s.handleChannelUnbind)
-
-	// admin (prompts)
-	mux.HandleFunc("GET /api/admin/prompts", s.handleAdminPromptList)
-	mux.HandleFunc("GET /api/admin/prompts/{key}", s.handleAdminPromptGet)
-	mux.HandleFunc("PUT /api/admin/prompts/{key}", s.handleAdminPromptSet)
-
-	// admin (stats, users, DB)
-	mux.HandleFunc("GET /api/admin/stats", s.handleAdminStats)
-	mux.HandleFunc("GET /api/admin/ailogs", s.handleAdminAILogs)
-	mux.HandleFunc("GET /api/admin/users", s.handleAdminUsers)
-	mux.HandleFunc("DELETE /api/admin/users/{id}", s.handleAdminDeleteUser)
-	mux.HandleFunc("GET /api/admin/db/tables", s.handleAdminDBTables)
-	mux.HandleFunc("GET /api/admin/db/table/{name}", s.handleAdminDBTableBrowse)
-	mux.HandleFunc("DELETE /api/admin/db/table/{name}/{id}", s.handleAdminDBTableDelete)
-	mux.HandleFunc("GET /api/admin/db/export", s.handleAdminDBExport)
-	mux.HandleFunc("POST /api/admin/db/import", s.handleAdminDBImport)
-	mux.HandleFunc("GET /api/admin/db/backup", s.handleAdminDBBackup)
-
-	// static frontend (SPA)
+	// static frontend (SPA) — stays here because it is conditional on
+	// STATIC_DIR existing, and because "/" must be registered by exactly one
+	// thing. Go 1.22's ServeMux resolves by specificity rather than by
+	// registration order, so "/" loses to every real route regardless of when it
+	// goes in.
 	if h := s.staticHandler(); h != nil {
 		mux.Handle("/", h)
 	}

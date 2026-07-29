@@ -8,6 +8,12 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("imports", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/import/canvas", s.handleImportCanvas)
+	})
+}
+
 // canvasExportVersion is the wire contract shared with extension/export.js.
 const canvasExportVersion = "daycore.canvas.v1"
 

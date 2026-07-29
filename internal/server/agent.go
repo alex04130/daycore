@@ -15,6 +15,12 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/decisions/{id}/respond", s.handleDecisionRespond)
+	})
+}
+
 // ─── SSE v2 sender ───────────────────────────────────────────────────────────
 // One `data:` frame per event, discriminated by "type":
 // delta / reasoning / tool_start / tool_result / decision_card / error / done.

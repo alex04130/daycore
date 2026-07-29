@@ -11,6 +11,13 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("operation logs & undo", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/ops", s.handleOpList)
+		mux.HandleFunc("POST /api/ops/{id}/revert", s.handleOpRevert)
+	})
+}
+
 // GET /api/ops?limit= — list recent operation logs for the session.
 func (s *Server) handleOpList(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

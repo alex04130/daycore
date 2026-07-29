@@ -14,6 +14,12 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/companion/async", s.handleAICompanionAsync)
+	})
+}
+
 // recordingSink captures agent frames in memory for persistence into the
 // placeholder message's toolEvents (same frame objects the SSE protocol emits,
 // so clients replay them identically). Deltas/reasoning are dropped — the final

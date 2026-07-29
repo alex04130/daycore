@@ -13,6 +13,15 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	registerRoutes("canvas materials", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/courses", s.handleCourseList)
+		mux.HandleFunc("GET /api/assignments", s.handleAssignmentList)
+		mux.HandleFunc("POST /api/assignments", s.handleAssignmentCreate)
+		mux.HandleFunc("PATCH /api/assignments/{id}", s.handleAssignmentPatch)
+	})
+}
+
 // GET /api/courses — the session's imported Canvas courses with grades.
 func (s *Server) handleCourseList(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

@@ -15,6 +15,14 @@ import (
 	"daycore/internal/schedule"
 )
 
+func init() {
+	registerRoutes("imports", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/import/token", s.handleImportTokenGet)
+		mux.HandleFunc("POST /api/import/token", s.handleImportTokenRotate)
+		mux.HandleFunc("POST /api/import/ics", s.handleImportICS)
+	})
+}
+
 // importSession resolves the acting session for import endpoints: the normal
 // cookie session when present, else the X-Import-Token header (how the browser
 // extension pushes without cookies). Writes the error response on failure.

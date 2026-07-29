@@ -9,6 +9,13 @@ import (
 	"daycore/internal/i18n"
 )
 
+func init() {
+	registerRoutes("session", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/session/preferences", s.handleSessionGetPreferences)
+		mux.HandleFunc("PATCH /api/session/preferences", s.handleSessionPreferences)
+	})
+}
+
 // sessionPrefsPatch is the request body for PATCH /api/session/preferences.
 // All fields are optional — nil means "leave unchanged".
 type sessionPrefsPatch struct {

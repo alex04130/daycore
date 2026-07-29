@@ -12,6 +12,12 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("ai", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/ai/theme", s.handleAITheme)
+	})
+}
+
 // POST /api/ai/theme — AI-assisted theme generation/editing. Returns a theme
 // CANDIDATE {name, dark, variables, warnings} for the frontend to live-preview;
 // nothing is saved here — the user confirms via POST /api/themes (create) or

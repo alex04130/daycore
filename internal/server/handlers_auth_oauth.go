@@ -10,6 +10,14 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("auth", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/auth/providers", s.handleOAuthProviders)
+		mux.HandleFunc("GET /api/auth/oauth/{provider}", s.handleOAuthStart)
+		mux.HandleFunc("GET /api/auth/oauth/{provider}/callback", s.handleOAuthCallback)
+	})
+}
+
 // GET /api/auth/providers — list enabled OAuth providers.
 func (s *Server) handleOAuthProviders(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"providers": s.oauth.Providers()})

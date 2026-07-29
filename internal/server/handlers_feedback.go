@@ -9,6 +9,12 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	registerRoutes("feedback", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/feedback", s.handleFeedbackAdd)
+	})
+}
+
 // POST /api/feedback
 func (s *Server) handleFeedbackAdd(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

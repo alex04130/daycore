@@ -10,6 +10,15 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("custom themes", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/themes", s.handleThemeList)
+		mux.HandleFunc("POST /api/themes", s.handleThemeCreate)
+		mux.HandleFunc("PATCH /api/themes/{id}", s.handleThemePatch)
+		mux.HandleFunc("DELETE /api/themes/{id}", s.handleThemeDelete)
+	})
+}
+
 // themeVarWhitelist is the design system's themeable token set (kept in sync
 // with api/FRONTEND_HANDOFF.md §5). Anything outside it is rejected so stored
 // themes can never smuggle arbitrary CSS into the page.

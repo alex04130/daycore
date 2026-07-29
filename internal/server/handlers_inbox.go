@@ -17,6 +17,14 @@ import (
 	"daycore/internal/i18n"
 )
 
+func init() {
+	registerRoutes("inbox", func(s *Server, mux Mux) {
+		mux.HandleFunc("POST /api/inbox/process", s.handleInboxProcess)
+		mux.HandleFunc("POST /api/inbox/upload", s.handleInboxUpload)
+		mux.HandleFunc("POST /api/inbox/commit", s.handleInboxCommit)
+	})
+}
+
 // categoryLine formats one material category for the inbox classifier prompt:
 // id, display name, hint.
 var categoryLine = i18n.Reg("inbox.categoryLine", i18n.Text{

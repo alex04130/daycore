@@ -7,6 +7,13 @@ import (
 	"daycore/internal/domain"
 )
 
+func init() {
+	registerRoutes("companion history", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/companion-history", s.handleCompanionHistoryGet)
+		mux.HandleFunc("POST /api/companion-history", s.handleCompanionHistorySet)
+	})
+}
+
 // GET /api/companion-history — persisted chat history + key facts for the session.
 func (s *Server) handleCompanionHistoryGet(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)

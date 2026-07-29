@@ -8,6 +8,14 @@ import (
 	"daycore/internal/version"
 )
 
+func init() {
+	registerRoutes("health & diagnostics", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/healthz", s.handleHealth)
+		mux.HandleFunc("GET /api/version", s.handleAPIVersion)
+		mux.HandleFunc("GET /api/models", s.handleModels)
+	})
+}
+
 // GET /api/healthz — liveness + DB connectivity + build version.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.Ping(r.Context()); err != nil {
