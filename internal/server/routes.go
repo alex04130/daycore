@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -34,7 +36,12 @@ type Mux interface {
 type routeGroup struct {
 	// name groups related routes the way the comment headers in Handler() used
 	// to. It shows up in the route table and in duplicate-registration errors.
-	name     string
+	name string
+	// file is the source file that called registerRoutes, captured rather than
+	// declared: docs/API_SURFACE.md answers "which file owns this route", and a
+	// hand-written or regex-scraped answer to that question is exactly what went
+	// stale before. runtime.Caller cannot disagree with the compiler.
+	file     string
 	register func(*Server, Mux)
 }
 
@@ -46,23 +53,30 @@ func registerRoutes(name string, f func(*Server, Mux)) {
 	if name == "" || f == nil {
 		panic("server: registerRoutes needs a name and a function")
 	}
-	routeGroups = append(routeGroups, routeGroup{name: name, register: f})
+	file := "?"
+	if _, path, _, ok := runtime.Caller(1); ok {
+		file = filepath.Base(path)
+	}
+	routeGroups = append(routeGroups, routeGroup{name: name, file: file, register: f})
 }
 
-// Route is one registered pattern and the group that owns it.
+// Route is one registered pattern, the group that owns it, and the file it was
+// registered from.
 type Route struct {
 	Group   string
 	Pattern string
+	File    string
 }
 
 // recorder collects patterns instead of dispatching them.
 type recorder struct {
 	group string
+	file  string
 	out   *[]Route
 }
 
 func (r recorder) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.Request)) {
-	*r.out = append(*r.out, Route{Group: r.group, Pattern: pattern})
+	*r.out = append(*r.out, Route{Group: r.group, Pattern: pattern, File: r.file})
 }
 
 // RouteTable replays every registration and returns the patterns, sorted.
@@ -73,7 +87,7 @@ func (r recorder) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.R
 func RouteTable(s *Server) []Route {
 	var out []Route
 	for _, g := range routeGroups {
-		g.register(s, recorder{group: g.name, out: &out})
+		g.register(s, recorder{group: g.name, file: g.file, out: &out})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Pattern != out[j].Pattern {

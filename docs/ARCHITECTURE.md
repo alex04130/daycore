@@ -10,7 +10,7 @@
 | `internal/domain/` | 纯数据结构 + Repository 接口，零外部依赖 |
 | `internal/server/` | HTTP 路由、中间件、全部 handler、agent loop、cron Worker |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PostgreSQL/MySQL），每实体一文件 |
-| `internal/storage/mongostore/` | MongoDB 实现，每实体一 repo 文件（无测试） |
+| `internal/storage/mongostore/` | MongoDB 实现，每实体一 repo 文件；`bson_test.go` + 真机行为一致性套件（`make test-mongo`，CI 带 mongo:8） |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService（embed+DB override）、流式协议、vision 管线 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT(token.go)/签名 cookie(session.go) |
 | `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |

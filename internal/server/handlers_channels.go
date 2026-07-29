@@ -10,7 +10,11 @@ import (
 )
 
 func init() {
-	registerRoutes("admin (prompts)", func(s *Server, mux Mux) {
+	// Its own group: these are user-facing (bind your own QQ/OneBot account), not
+	// operator endpoints. They rode along under "admin (prompts)" when the routes
+	// were scattered out of server.go, which put four user routes under an admin
+	// heading in the route table.
+	registerRoutes("channels (user binds an account)", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/channels", s.handleChannelList)
 		mux.HandleFunc("POST /api/channels/{channel}/bind", s.handleChannelBind)
 		mux.HandleFunc("POST /api/channels/{channel}/verify", s.handleChannelVerify)

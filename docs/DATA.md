@@ -16,11 +16,19 @@
 | operations.go | OperationLog（**加 Domain 列**）, AICallLog, AdminStats, **OpDomain 常量 + OpDomainOf()** | 见下「操作域」 |
 | repository.go | 全部 Repository 接口 + Store 组合接口 | 新方法先在这里定义 |
 | searcher.go | Searcher/SearchQuery/SearchResult（+ 阶段5 MaterialFTS 能力接口） | |
+| wish.go | Wish{EffortMin} —— 许愿池 | 5 条 HTTP 路由 + `wishes` 表 |
+| proposal.go | Proposal + ProposalOp/ProposalRow + ProposalFilter | 批次 C 六表之首；「提案是统一资源」（虚影/确认卡/决策卡/审批同一个对象） |
+| coordination.go | Lease{Fence} + JobRun{Attempts,Status} | 选主与任务场次占有 —— 全仓唯一的互斥手段 |
+| derived.go | RapportState/RapportScore、RhythmProfile/RhythmDay、LocaleOverride | 读时派生的缓存 + 语言包 DB 层 |
+| phase.go | Phase（future/now/recon/stone） | 读时石化，无表 |
+| lock.go | LockLevel 常量 + 派生规则 | 配 `api/lock-rules.json` 契约夹具 |
+| mood_kind.go | 心情注册表（12 种 + valence） | 存 id 不存标签 —— 多语言扩展的前提 |
+| tempcontext.go / channel.go / feedback.go / errors.go | TempContext / ChannelBinding / FeedbackLog / 哨兵错误 | |
 
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
 
-- `sqlstore/`：每实体一文件；方言拆分 dialect_sqlite/postgres/mysql.go；测试 store_test.go（round-trip）。
-- `mongostore/`：每实体一 repo 文件，store.go 有 index specs；`bson_test.go` 覆盖序列化往返（不需要真机），**没有针对真实 Mongo 的测试** —— 行为一致性套件见 ARCHITECTURE「存储的 HTTP 转换层」下的 F8a。
+- `sqlstore/`：每实体一文件；方言拆分 dialect_sqlite/postgres/mysql.go；测试三份 —— `store_test.go`（round-trip）、`conformance_test.go`（与 mongostore 同一份行为套件）、`dialect_parity_test.go`（三方言 DDL 静态比对）。
+- `mongostore/`：每实体一 repo 文件，store.go 有 index specs；`bson_test.go` 覆盖序列化往返（不需要真机），`conformance_test.go` **跑真机 Mongo 的行为一致性套件**（`MONGO_TEST_DSN` 未设才 skip，`make test-mongo`；CI 的 backend job 带 mongo:8 service）。详见 ARCHITECTURE.md「行为一致性套件」。
 
 ## 新增实体的完整路径
 
@@ -30,7 +38,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 ## 给已有表加列（ColumnMigration 机制）
 
-1. `sqlstore/dialect.go`：`ColumnMigration{Table, Column, DDL}`；共享清单函数 `sessionColumnMigrations(textType)`——名字带 session 但**实际覆盖 sessions/memory_facts/users（阶段 2 起含 chat_messages）**，直接往里 append 即可，三方言自动获得（只有类型 token 不同：sqlite/pg "TEXT"，mysql "VARCHAR(64)"）。
+1. `sqlstore/dialect.go`：`ColumnMigration{Table, Column, DDL}`；共享清单函数 `sessionColumnMigrations(textType)`——名字带 session 但**实际覆盖六张表：sessions / memory_facts / users / chat_messages / operation_logs（`domain`）/ mood_checkins（`source`+`note`）**，直接往里 append 即可，三方言自动获得（只有类型 token 不同：sqlite/pg "TEXT"，mysql "VARCHAR(64)"）。
 2. 执行：`store.go` Migrate 先跑建表 `Migrations()`，再对每个 ColumnMigration 用 `ColumnExistsQuery()` 查列（sqlite pragma_table_info / pg+mysql information_schema），`sql.ErrNoRows` 才执行 DDL（ALTER ADD COLUMN 非幂等）。
 3. 同时改：三方言**建表 DDL** 也要加同列（新库直接建全）；sqlstore 实体文件的 SELECT/INSERT/Scan；mongostore doc struct（bson tag，mongo 无需迁移）。
 4. domain struct 加字段。
@@ -260,7 +268,7 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 ### 还没做的
 
-- **DB 覆盖层的表**：`SetOverrides` 的接口已就位，但 `locale_overrides` 表要跟**批次 C 的五张表一起建**（proposals / leases / job_runs / rapport / rhythm）—— 三方言 DDL 分两次改是计划明令避免的事，且作者不在本机跑 pg/mysql/mongo，方言分歧只能靠 review 抓。在那之前只有 files + embedded 两层生效。
+- ~~**DB 覆盖层的表**~~ **已完成**：`locale_overrides` 与批次 C 的五张表同批建好，接线（`server.ReloadLocaleOverrides`，启动时调一次）也在 2026-07-29 补上了。**三层今天是真的三层。**
 - **控制台的语言包分区**（列出已装语言 + 覆盖率、导出、粘贴导入、重载 `LOCALES_DIR`）：批次 F5，`Coverage`/`Export`/`Keys` 都已备好。
 
 ## 多实例与派生缓存的六张表（批次 C，2026-07-27）
@@ -274,7 +282,7 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 | `job_runs` | 每个任务「场次」的占有与审计 | **未接线**，批次 5 |
 | `rapport_states` | 默契评分缓存 + 账本游标 | **未接线**，批次 D |
 | `rhythm_profiles` / `rhythm_days` | 节律画像 + 每日首尾 | **未接线**，批次 5 |
-| `locale_overrides` | 消息目录的 DB 层（`i18n.Catalog.SetOverrides` 的接口早就在） | **未接线**，批次 F |
+| `locale_overrides` | 消息目录的 DB 层 | **已接线**（`server.ReloadLocaleOverrides`，2026-07-29）；控制台的编辑端点还没有 → 批次 F |
 
 **六张表今天全部是死重量** —— 建了、能 round-trip、有测试，但没有任何调用方。别以为提案已经在落库了。
 
@@ -356,9 +364,11 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - **未注册的 mood id 跳过而不是当中性**：不在注册表里的心情没有 valence，记成 0 会把每个均值都往中间拖。
 - **趋势在两段之内取无权均值**：问题是「那时候比现在差吗」，在旧的那一段里套衰减曲线回答的是另一个问题。两段各至少一条才给方向，否则 `unknown`（「说不准」和「没在动」是不同的答案）。
 - **代打卡权重更低**（`AgentWeight` 0.6）：`source=agent` 是从用户说的话里推断出来的，`source=user` 是他自己按的按钮。都算数，不等重（§12.1）。
-- **`POST /api/mood` 不接受 body 里的 source**，一律记 `user`。让客户端自己挑，就等于让它写出服务端会悄悄打折的打卡 —— 或者更糟，让一个前端 bug 把真实打卡重标成推断。agent 用自己的工具写 `agent`。
+- **`POST /api/mood` 不接受 body 里的 source**，一律记 `user`。让客户端自己挑，就等于让它写出服务端会悄悄打折的打卡 —— 或者更糟，让一个前端 bug 把真实打卡重标成推断。agent 代打卡时写 `agent`。⚠️ **不过现在没有心情打卡工具** —— `companionToolDefs` 的 11 个工具里没有它，所以生产代码里唯一写 `Source` 的地方就是 `POST /api/mood` 那条恒定 `user` 的路径。「agent 写 agent」是留好的位子，不是已经在跑的东西。
 
-**用得到的地方全部走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
+**设计上用得到的地方都要走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
+
+⚠️ **六处里现在只接了一处**（2026-07-29 核实）：`s.moodWindow` 全仓唯一的生产调用点在 `moodHistoryContext` 里 —— 也就是 companion 上下文注入。`internal/mood` 包在 `internal/server` 里除那一个文件之外零引用。上面那句是**设计意图**，其中默契与提案卡连表都还没接线。别照它去找已经存在的代码。
 
 **注入的是窗口不是最近五条**。原来的 `moodHistoryContext` 吐 `[{mood,at}×5]`，这会诱导模型把最上面那条当成今天的心情 —— 三周前一个糟糕的周二就这样染上了一个周四。现在吐的是 `{known, trend, tone, speakable, lastKind, daysSince, samples}`，`Stale` 时额外带一句 `"too old to assume; ask rather than presume"`：这条规则要用话说出来，不能指望模型从一个日期数字里推出来。
 
@@ -424,13 +434,13 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - **`ProposalOp.Args` 在两库回来的 Go 类型不同** —— SQL 走 JSON 得 `float64`/`[]interface{}`，Mongo 走 BSON 得 `int32`/`int64`/`primitive.A`。执行工具的 `args["minutes"].(float64)` 在 SQL 上成立、在 Mongo 上断言失败。**两库让执行器拿到不同类型比任何一个选择都糟**，所以 Mongo 侧的 `rows_json`/`ops_json` 也改成 JSON 字符串（字段名本来就叫 json），两边同样有损（>2^53 的整数掉精度 —— 工具参数不该带那种数）。
 - **对等测试自己的盲点**：它跳过了 `PRIMARY KEY` 行，于是 `rhythm_days` 与 `locale_overrides` 那两个「upsert 唯一依赖的复合主键」在三方言之间**没有任何东西在比**。已补。
 
-`mongostore` 因此有了第一批测试（`bson_test.go`，6 个，不需要真机）。
+`mongostore` 因此有了第一批测试（`bson_test.go`，7 个，不需要真机）—— 随后 `conformance_test.go` 让它第一次被真机测过。
 
 **仍未做的**（审查列出、判断为后续批次）：`ProposalFilter` 表达不了注意力阶梯的两个预算（没有 `level` 谓词、没有 `pushed_at`、没有计数）→ 批次 D 用得到时再加；proposals 没有保留策略（唯一一张没有 `Prune` 的新表）；`RapportState.FoldVersion` 存了但没有任何地方定义「当前版本是几」；`Proposal.OwnerInstance` 写了但不可查（崩溃清扫写不出来）。
 
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 
-`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`，各特性在自己文件的 `init()` 里注册。
+`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。⚠️ **机制在，搬迁没做**：12 条 `registerRevert` 目前全挤在 `handlers_ops.go` 自己的一个 `init()` 里，没有任何别的文件调用它 —— 照下面那句「住在写这条 op 的代码旁边」去 `handlers_plan.go` / `handlers_rules.go` / `handlers_memory.go` 找逆操作会一无所获。搬迁是批次 D 的事。
 
 **为什么**：switch 是错的形状 —— 每加一个写操作都要回到同一个文件改同一个函数，于是一批本来不相干的并行工作全撞在这里（计划里 `handlers_ops.go` 被 8 个工作项争）。映射表让逆操作住在**写这条 op 的代码旁边**，那也是别人会去找它的地方。
 

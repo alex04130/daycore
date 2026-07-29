@@ -1,4 +1,4 @@
-.PHONY: help run build test test-mongo check-i18n api-bundle api-check api-lock tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo check-i18n api-bundle api-check api-lock api-surface tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -29,6 +29,9 @@ api-check: ## Verify api/openapi.yaml matches the shards (also covered by go tes
 
 api-lock: ## Freeze the current contract surface at the current APIVersion.APIMinor
 	go run ./api/spec/bundle -lock
+
+api-surface: ## Regenerate the route table in docs/API_SURFACE.md from the registry
+	go test ./internal/server/ -run TestRouteSurfaceDoc -update
 
 vet: ## go vet
 	go vet ./...
