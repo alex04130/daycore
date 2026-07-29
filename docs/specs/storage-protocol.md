@@ -189,7 +189,7 @@ GET /v0/capabilities
 
 ### `format: exec` 的握手行
 
-存储适配层在握手那一行里**追加 `capabilities`**，这样后端在连上 socket 之前就能判断它能不能用 —— 一个 `conditionalWrite: false` 又没声明 `emulatedVia` 的适配层，后端会直接拒绝启动而不是先建连接再发现：
+存储适配层在握手那一行里**追加 `capabilities`**，这样后端在连上 socket 之前就能判断它能不能用 —— 一个 `conditionalWrite: false` 又没声明 `emulatedVia` 的适配层，后端不会先建连接再发现：
 
 ```json
 {"protocol":"0","transport":"unix","address":"/tmp/daycore-store-8f3a.sock","pid":12345,
@@ -197,6 +197,8 @@ GET /v0/capabilities
 ```
 
 `DAYCORE_ADAPTER_KIND=storage`。
+
+⚠️ **「不会用它」不等于「拒绝启动」**（2026-07-29 更正）。这一段先前写的是「后端会直接拒绝启动」。不对 —— 一个说不清自己能力的存储适配层是个**配置问题**，而拒绝启动恰好拿掉了唯一的补救入口。正确的表现是 [transport.md「存储型」](transport.md#存储型cli-说清楚--web-ui-仍然能上)那条：**CLI 把话说明白 + HTTP 照常起来只服务控制台 + 需要库的端点给统一的不可用信封**。本文档自己在 `emulatedVia` 那一节已经用的就是这个范式（照常起来 + 在启动日志和控制台里标出来）。
 
 ### `format: http` 的额外要求
 

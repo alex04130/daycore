@@ -217,7 +217,10 @@ func runInstall(dir string, force bool) error {
 	sb.WriteString("HOST=0.0.0.0\n")
 	sb.WriteString("PORT=8080\n\n")
 	sb.WriteString("# ─── Paths ───\n")
-	sb.WriteString(fmt.Sprintf("DATA_DIR=%s\n", dir))
+	// Only keys the server actually reads. DATA_DIR used to be written here and
+	// nothing ever read it, which is a quiet way to make an operator believe they
+	// configured something.
+	sb.WriteString("# Edited templates here override the embedded ones, file by file.\n")
 	sb.WriteString(fmt.Sprintf("PROMPTS_DIR=%s/prompts\n", dir))
 
 	envPath := filepath.Join(dir, ".env")

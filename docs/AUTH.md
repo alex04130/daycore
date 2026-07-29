@@ -45,8 +45,24 @@
 
 ## 鉴权旁路
 
-- `X-Admin-Token`（handlers_admin.go `adminAuthorized`）：ADMIN_TOKEN 设置时常量时间匹配；未设 → dev 全开 / prod 关闭。
+- `X-Admin-Token`（handlers_admin.go `adminAuthorized`）：ADMIN_TOKEN 设置时常量时间匹配；未设 → dev 全开 / prod 关闭。**⚠️ 待改造，见下。**
 - `X-Import-Token`（handlers_import.go `importSession`）：无 cookie 时按 token 解析会话（扩展直推）。
+
+### ⚠️ 管理面鉴权待改造（2026-07-29 记，落地在批次 F4）
+
+**先纠一个常被以为的问题**：token 走的是**请求头**，不是 URL 查询参数，比较也已经是 `subtle.ConstantTimeCompare`（`handlers_admin.go:23-28`）。所以「URL 会泄露」在现有实现上不成立，管理面也没有 EventSource（那是 token 被塞进 URL 的经典原因，因为 `EventSource` 设不了请求头）。**线上那一段是对的，问题在别处。**
+
+真正的暴露面有三处：
+
+1. **明文密钥长期躺在浏览器里。** 控制台把它存进 `sessionStorage`（`design-ui/liuli/admin/admin-store.js:19-26`），运维手输到密码框。控制台上任何一个 XSS 都能读走它 —— 而它**永不过期**，读走就是永久有效。
+2. **只能靠重新部署轮换。** 它是环境变量，没有 TTL、没有吊销、没有身份（谁改了那个模型配置，账本上分不出来）。对照 `dc_auth`：JWT 有 `JWT_TTL`，logout 靠服务端 token version 一次吊销全部 —— 同一套机制管理面一点没用上。
+3. **`ADMIN_TOKEN` 未设 = dev 全开。** 一个 `APP_ENV != production` 的部署，没设 token 就是一个**无鉴权的管理 API**。
+
+**方向**：机器路径（curl / CI）保留 `X-Admin-Token`；**人的路径换成一次登录交换** —— `POST /api/admin/session` 拿 admin 凭证换一个 httpOnly + Secure + SameSite=Strict 的短 TTL JWT cookie（`scope: admin`）。基建全都在：`internal/auth/token.go` 的签发与 token version 吊销、`ALLOWED_ORIGINS`、`COOKIE_SAMESITE`。这样明文密钥再也不进 JS 可读的存储；cookie 是 httpOnly，XSS 读不到（但**同源仍然用得上它**，所以 CSRF 要靠 SameSite=Strict + Origin 校验，不能只靠 cookie 本身）。
+
+⚠️ **cookie 方案有个前提：真的有 TLS。** `Secure` cookie 在纯 HTTP 上不会被发送，而 `deploy/nginx.conf` 只 `listen 80`、没有 ssl 段，`SECURE_COOKIES` 默认 `false`。所以：**头那条路不能删** —— 它在纯 HTTP 上照样能用（虽然那时候什么都在明文里），而 cookie 那条路会**静默地登不上**。控制台在这种情形下必须说清「你没有 TLS，所以管理登录不可用」，而不是给一个转圈的登录框。参考部署要不要加 TLS 段是另一件事，但**协议不能假设它已经有了**。
+
+⚠️ **与存储降级启动直接冲突的一条**：降级模式下没有 DB，**token version 吊销就不可用**（签发只要 `JWT_SECRET`，吊销要查库）。所以降级模式里那个 admin JWT 的 TTL 必须显著更短，而且 `ADMIN_TOKEN` 未设时**绝不能**沿用「dev 全开」—— 否则「存储挂了仍然把控制台端上来」就等于把一个无鉴权配置界面挂到网上。降级模式必须要求显式凭证，没有就只给一个说明页。
 
 ## 公开端点（无需 session）
 

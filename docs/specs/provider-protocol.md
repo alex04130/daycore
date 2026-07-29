@@ -50,7 +50,8 @@ POST /v1/search
 
 - **`text` 由适配层本地化**（按请求的 `locale`），因为只有它知道上游支持哪些语言。上游没有该语言就退回它自己的默认 —— 语言不对的天气预报仍然告诉你会下雨。
 - `code` 是 WMO 天气码，没有就填 `-1`。
-- **降级**：查询型按 `providers.yaml` 的顺序 fallback，与 `internal/weather` 现有的 chain + 30 分钟缓存同构。**缓存在 Daycore 侧，适配层不要自己再缓存**，否则「为什么数据是旧的」会说不清。
+- **不可用**：**不走后端的有序 fallback 链** —— 查询型能力注册成 agent 工具，源是工具的一个参数，enum 是当下可用的源，模型自己选（详见 [transport.md](transport.md#通用的失败语义)，与本文档下面「`manifest.description` 会进提示词」一节是同一条）。一个源内部的重试是那个源自己的事。
+- **缓存在 Daycore 侧，适配层不要自己再缓存**，否则「为什么数据是旧的」会说不清。天气是 30 分钟（`internal/weather`）。
 
 ### `manifest.description` 会进提示词
 

@@ -114,6 +114,60 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 - 启动清扫：Migrate 后 `store.Chats().FailPendingMessages` 把崩溃遗留的 pending 占位消息标为 error。
 - 关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` 等 in-flight HTTP → `srv.WaitBackground(shutdownCtx)` 等后台 agent（异步聊天/通道回复）→ `worker.Stop()`（等 `cron.Stop().Done()`）→ `cancelRoot()`。TempContext/ChannelBinding 两个 cleanup ticker 仍是自由 goroutine（无状态，进程退出即弃，无碍）。
 
+## 存储不可用时的降级启动（2026-07-29 定案，未实现）
+
+**决定**：存储不可用**不拒绝启动**。CLI 把话说明白，HTTP 照常起来只服务控制台与健康面，需要库的端点给统一的不可用信封。协议侧的措辞与理由在 [`docs/specs/transport.md`](specs/transport.md#存储型cli-说清楚--web-ui-仍然能上)，这里记落地事实。
+
+**现状是一条全或无的直线**：`main()` 只做 `run(logger)`，失败就一行 JSON 日志 + `os.Exit(1)`（`main.go:51-54`）；`run` 里每一步都是 `return fmt.Errorf(...)`。`storage.Open` 内部真的 `Ping`（`sqlstore/store.go:52`、`mongostore/store.go:41`），所以「库没起来」在 `main.go:75` 就退出了，连 `Migrate` 都到不了。
+
+**HTTP 层其实早就写好了答案，只是到不了**：`GET /api/healthz` 在 Ping 失败时返 503 `{"ok":false,"db":…,"error":"database unavailable"}`（`handlers_misc.go:21-27`）—— 进程既然拒绝启动，这段分支**永远执行不到**。所以这条改动是让代码自洽。
+
+### 启动路径上真正的硬依赖只有五处
+
+| `main.go` | 是什么 | 降级时怎么办 |
+|---|---|---|
+| `75-78` | `storage.Open`（含 Ping） | 不 return，换成 null store |
+| `81-83` | `store.Migrate` | 不 return，但**要更响** —— 表结构半成品比连不上更危险 |
+| `93-95` | `FailPendingMessages` | 已经是「失败也继续」（`err != nil` 时既不 return 也不 log —— 顺带记：这个静默吞错本身是缺陷） |
+| `107` | `ai.NewPromptService(store.Prompts())` | `prompts.go:144-146` **已有 nil-repo 降级语义**（读走内嵌、写报错），现成 |
+| `141-180` | channels 块（含 `ListAllVerified`） | 整块跳过 |
+
+`server.New` / `weather.New` / `search.NewMaterialSearcher` / `ai.LoadCatalog` / `auth.LoadOAuthProviders` **全都不碰库**；路由注册也不需要 store（`routes.go` 的 `RouteTable` 用零值 `Server` 就能跑）。所以 HTTP 面本身没有障碍。
+
+### ⚠️ 两个会让「起来一分钟后自己死」的 goroutine
+
+`main.go:135-136` 无条件启动的两个清理 ticker（`StartTempContextCleanup` / `StartChannelBindingCleanup`）**内部没有 recover**。store 为 nil 时它们在第一次 tick（1 分钟 / 10 分钟）就 nil-panic，**把整个进程带走** —— 而 `recoverMW` 只包 HTTP handler，管不到自由 goroutine。表现是「启动成功、一分钟后无声无息地死」，是这次改动里最容易踩且最难查的一个坑。
+
+### null store 胜过 nil store
+
+中间件链里只有 `userMW` 碰库（`middleware.go:138`），而且只在请求带**签名有效的 JWT** 时才碰。听起来无害 —— 但后果是：**浏览器只要还带着一个有效的 `dc_auth` cookie，连 `GET /` 的 index.html 都会 panic**，被 `recoverMW` 变成 JSON 500，用户看到白屏。「控制台能上」当场落空。
+
+所以传一个所有方法都返回 `domain.ErrUnavailable` 的桩，而不是 nil：
+
+- **不漏**。nil 方案要逐个 handler 检查（100 条路由），漏一个就是一次 panic；桩方案是「默认安全」。
+- 用 `RouteTable()` 在中间件层按路由分类挡掉也不行 —— 那张分类表得手工维护、必然漂移，而且 `userMW` 跑在路由裁决**之前**，它挡不住。
+- 代价是约 115 个方法的样板。生成它；`storagetest` 可以顺手断言它从不返回 `nil, nil`。
+
+### CLI 提示与 i18n
+
+运行期现在只有 slog JSON（`main.go:50`），失败就是 `{"level":"ERROR","msg":"fatal","err":"open db (sqlite): …"}` —— **仓库里没有任何「给人看的启动错误」先例**。唯一漂亮的 CLI 是 `daycore install` 子命令（`install.go:28-31` 的 heading/done/hint/prompt + ANSI 色），直接复用。
+
+**这会是第一条需要本地化的启动期文案，而它恰好可行**：`config.Load` 在打开存储**之前**就已经 `i18n.Std().LoadDir(LOCALES_DIR)`（`config.go:193-205`），所以那一刻文件层与内嵌层都在，只有 DB 覆盖层没有 —— 这正是「内嵌是地板」当初要覆盖的场景。
+
+### 安全：`ADMIN_TOKEN` 未设 = dev 全开，绝不能带进降级模式
+
+`adminAuthorized` 在 `ADMIN_TOKEN` 为空时返回 `!IsProduction()`（`handlers_admin.go:24-26`）。降级模式下 DB 支撑的会话全没了，管理面就是**唯一**的门 —— 一个 `APP_ENV != production` 的部署，存储一挂就变成挂在网上的**无鉴权配置界面**。降级模式必须要求显式凭证，没有就只给一个说明页。与 `docs/AUTH.md`「管理面鉴权待改造」同批设计。
+
+### ⚠️ 今天其实还没有控制台可上
+
+这一条必须写在前面，否则会以为改完 `main.go` 就完事了：
+
+- 控制台 web UI 目前只是 `design-ui/liuli/admin/` 的**纯 mock 原型（零 fetch）**；`web/frontend/src` 里 grep `admin` 零命中 —— **`STATIC_DIR` 里没有可上的控制台**。
+- 8 个分区里无 DB 仍有意义的三个（服务配置 / 模型 / OAuth，都是改文件不是改库）**后端端点一个都不存在**。
+- `DB_DSN` 只能从环境变量／`.env` 来，所以「无库时上 web UI 改配置」还需要写 `.env` + 重启确认（`restart-ack`）这套同样不存在的东西。
+
+**所以依赖链是 F1（配置分层）+ F4（admin 端点）+ F5（控制台前端）**。在那之前，降级启动能交付的是诚实的一半：**CLI 说清哪一项错了、该改什么**，并让 `/api/healthz` 的 503 第一次真正可达。
+
 ## 静态托管（static.go）
 
 - `STATIC_DIR`（默认 `web/frontend/dist`）非空且有 index.html 时：`/api/` 前缀永不被静态遮蔽；`/assets/` immutable 长缓存；其余 SPA fallback 回 index.html（no-cache）。
@@ -121,7 +175,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 配置（internal/config/config.go，环境变量）
 
-关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
+关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；**`PROMPTS_DIR`**（空=只用内嵌；设了则 `<dir>/<locale>/<key>.tmpl` 逐文件覆盖内嵌模板，见 AI.md）；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
 
 ## 仓库级布局
 

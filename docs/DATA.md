@@ -189,6 +189,10 @@ embedded  Go 字面量，只有 zh-CN / en-US  ← 兜底地板
 
 **内嵌的两种是地板不是全集**。它们只需覆盖「没有数据库也没有文件时仍能把页面画出来并说清为什么」。加一门语言是丢一个 `ja-JP.json` 进 `LOCALES_DIR`（或从控制台粘一份），**不是一次发版**。形状照抄 `prompt_overrides` —— 文件作种子、DB 覆盖、立即生效，这个仓库唯一把配置做对的地方。
 
+⚠️ **DB 那层 2026-07-29 才真正接上。** `domain.LocaleRepository` 在两个存储都实现了、`storagetest` 也测了，`i18n.Catalog` 也一直留着 `db` 那一层 —— 但**没有任何代码把两者连起来**，所以在那之前跑着的服务器其实只有文件层与内嵌层，上面这段描述有一层是假的。接线是 `server.ReloadLocaleOverrides`（启动时一次，控制台改完再一次），`internal/server/locales_test.go` 锁住它：覆盖生效、只盖被指定的那个 locale、DB 里加一门新语言会出现在 `Available()` 里、卸载又消失。
+
+**仓库测过 repository 却没测接线，这正是它能无声断掉的原因** —— repository 从来不是坏掉的那一半。同一天在提示词那边发现同型问题：`NewPromptServiceDisk` 无人调用、`config.Load` 不读 `PROMPTS_DIR`，而 `daycore install` 却把模板解出来并把这个键写进 `.env`（见 AI.md）。
+
 ```go
 type Text map[string]string                        // 一条消息的各语言版本
 func Register(key string, t Text)                  // 包 init 里注册内嵌兜底

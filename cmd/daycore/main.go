@@ -108,6 +108,14 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
+	// PROMPTS_DIR overlays edited templates onto the embedded defaults. Failing
+	// here is right: the operator put a file there on purpose, and silently
+	// running the embedded prompt instead would be a very quiet way to ignore it.
+	if n, err := prompts.LoadDiskDefaults(cfg.PromptsDir); err != nil {
+		return fmt.Errorf("load prompts from %s: %w", cfg.PromptsDir, err)
+	} else if n > 0 {
+		logger.Info("prompt templates overlaid from disk", "dir", cfg.PromptsDir, "files", n)
+	}
 
 	// Weather provider (adapter): configured primary + wttr.in fallback + cache.
 	weatherProvider := weather.New(weather.Options{
@@ -130,6 +138,13 @@ func run(logger *slog.Logger) error {
 		Weather:  weatherProvider,
 		Logger:   logger,
 	})
+
+	// Pull the database layer of the message catalog. Best-effort: a translation
+	// override that cannot be read is a degraded language, not a reason to refuse
+	// to boot — the file and embedded layers still render every page.
+	if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
+		logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
+	}
 
 	// Background cleanup for stale temp-context entries + expired binding tokens.
 	srv.StartTempContextCleanup(0)

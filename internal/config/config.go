@@ -50,8 +50,14 @@ type Config struct {
 	PublicBaseURL  string // external URL, used to build OAuth redirect URIs
 
 	// AI — model catalog + OAuth providers are loaded from these files by main.go.
-	ModelsConfigPath    string
-	OAuthConfigPath     string
+	ModelsConfigPath string
+	OAuthConfigPath  string
+	// PromptsDir overlays prompt templates from disk onto the embedded defaults
+	// (dir/<locale>/<key>.tmpl; absent files keep the embedded text). Empty = use
+	// embedded only. `daycore install` extracts the templates here and writes this
+	// key into the generated .env, so it must be read or the installer is setting
+	// up an override nothing honours.
+	PromptsDir          string
 	DefaultChatModel    string // model id from the catalog used for text chat
 	DefaultVisionModel  string // model id (caps.vision=true) used to read images
 	DefaultPlannerModel string // model id used for autonomous planning; "" = default chat model
@@ -128,6 +134,7 @@ func Load() (*Config, error) {
 		PublicBaseURL:           getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		ModelsConfigPath:        getEnv("MODELS_CONFIG", "config/models.yaml"),
 		OAuthConfigPath:         getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
+		PromptsDir:              getEnv("PROMPTS_DIR", ""),
 		DefaultChatModel:        getEnv("DEFAULT_CHAT_MODEL", "deepseek-chat"),
 		DefaultVisionModel:      getEnv("DEFAULT_VISION_MODEL", ""),
 		DefaultPlannerModel:     getEnv("DEFAULT_PLANNER_MODEL", ""),

@@ -68,22 +68,54 @@ func NewPromptService(repo domain.PromptRepository) (*PromptService, error) {
 	return s, nil
 }
 
-// NewPromptServiceDisk is like NewPromptService but loads defaults from disk
-// instead of the embedded filesystem. Useful when DATA_DIR is set (no embed).
-func NewPromptServiceDisk(repo domain.PromptRepository, dataDir string) (*PromptService, error) {
-	s := &PromptService{repo: repo, defaults: map[string]map[string]string{}}
+// LoadDiskDefaults overlays templates found under dir onto the embedded ones:
+// dir/<locale>/<key>.tmpl replaces that one default, anything absent keeps the
+// embedded text. It returns how many files were applied.
+//
+// Embedded is the floor, the same rule the message catalog uses — and for the
+// same reason. An all-or-nothing loader means `daycore install` has to extract
+// every template before the server will start, so editing one prompt costs you
+// the maintenance of twenty-two files: every later change to a shipped template
+// silently stops reaching you. Overlaying makes a partial extraction the normal
+// case.
+//
+// This exists because `daycore install` already writes the templates to
+// `<dir>/prompts/` and puts `PROMPTS_DIR` in the generated `.env` — for a while
+// nothing read it, so the installer was setting up an override the server
+// ignored.
+func (s *PromptService) LoadDiskDefaults(dir string) (int, error) {
+	if dir == "" {
+		return 0, nil
+	}
+	applied := 0
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, locale := range i18n.Embedded {
-		s.defaults[locale] = map[string]string{}
 		for _, key := range promptKeys {
-			path := filepath.Join(dataDir, "prompts", locale, key+".tmpl")
+			path := filepath.Join(dir, locale, key+".tmpl")
 			b, err := os.ReadFile(path)
+			if os.IsNotExist(err) {
+				continue
+			}
 			if err != nil {
-				return nil, fmt.Errorf("load prompt %q (%s) from %s: %w", key, locale, path, err)
+				return applied, fmt.Errorf("read prompt %q (%s) from %s: %w", key, locale, path, err)
+			}
+			if strings.TrimSpace(string(b)) == "" {
+				// A truncated file is a likelier explanation than "I meant to
+				// blank this prompt" — an empty system prompt is never intended.
+				return applied, fmt.Errorf("prompt %q (%s) at %s is empty", key, locale, path)
+			}
+			if _, err := template.New(key).Parse(string(b)); err != nil {
+				// Refuse at load, not at the first user request: a template that
+				// cannot parse would otherwise fail one feature at runtime with no
+				// hint that a file on disk is why.
+				return applied, fmt.Errorf("prompt %q (%s) at %s does not parse: %w", key, locale, path, err)
 			}
 			s.defaults[locale][key] = string(b)
+			applied++
 		}
 	}
-	return s, nil
+	return applied, nil
 }
 
 // normLocale collapses any tag onto a shipped locale, defaulting when unknown.
