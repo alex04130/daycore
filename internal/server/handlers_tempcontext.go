@@ -28,20 +28,16 @@ func (s *Server) StartTempContextCleanup(interval time.Duration) {
 	if interval <= 0 {
 		interval = 1 * time.Minute
 	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for range ticker.C {
-			n, err := s.store.TempContexts().Expire(context.Background())
-			if err != nil {
-				s.log.Warn("temp-context expire error", slog.String("err", err.Error()))
-				continue
-			}
-			if n > 0 {
-				s.log.Info("temp-context expired stale entries", slog.Int("count", n))
-			}
+	s.everyTick("temp-context expire", interval, func(ctx context.Context) {
+		n, err := s.store.TempContexts().Expire(ctx)
+		if err != nil {
+			s.log.Warn("temp-context expire error", slog.String("err", err.Error()))
+			return
 		}
-	}()
+		if n > 0 {
+			s.log.Info("temp-context expired stale entries", slog.Int("count", n))
+		}
+	})
 }
 
 // GET /api/temp-context?key=...

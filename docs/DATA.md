@@ -442,6 +442,17 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 **仍未做的**（审查列出、判断为后续批次）：`ProposalFilter` 表达不了注意力阶梯的两个预算（没有 `level` 谓词、没有 `pushed_at`、没有计数）→ 批次 D 用得到时再加；proposals 没有保留策略（唯一一张没有 `Prune` 的新表）；`RapportState.FoldVersion` 存了但没有任何地方定义「当前版本是几」；`Proposal.OwnerInstance` 写了但不可查（崩溃清扫写不出来）。
 
+## 节律信号记录（`internal/server/awake.go`，2026-07-29）
+
+**学习作业与 Protector 还没写，但记录先接上了**，因为 `MinDays=5` / `WindowDays=21` 意味着学习器落地时需要好几周历史，而**信号不能追认**。记录是 append-only、forward-only、目前无人读，所以提前打开零成本，买到的是唯一必须实时收集的那个输入。
+
+**「醒着」由调用点定义，不由路径名单定义**：挂在 `requireSession` 上，而两个机器直推端点（Canvas、ICS）走的是 `importSession`，入站通道消息根本不经过 HTTP handler。所以「插件在凌晨四点推了一批数据」不能冒充用户醒着。路径白名单能表达同一条规则，然后慢慢漂离它。
+
+- **节流 5 分钟／会话**（进程内）。读请求是常态，每次读都写一行等于把行更新放到热路径上，而日行只记当天第一分钟与最后一分钟 —— 相隔一分钟的两个信号与一个信号无法区分。5 分钟这个分辨率对 `IdleBreak`(3h)/`ProtectAfter`(20h) 有三个数量级余量。
+- 节流表有上限（20000），**满了整表丢弃**而不是扫最旧的：它是节流不是状态，冷表的代价是每个活跃会话多一次写；而一个永不生效的上限才是真隐患。
+- 写在 `GoTracked` 的 goroutine 上、用 `context.WithoutCancel`：写要活过响应，而中途断开的客户端当时确实是醒着的。
+- ⚠️ **时区暂用 `WORKER_DEFAULT_TZ`**，是部署级默认，所以别的时区的用户日界线画错了地方。记在错的时区仍好过不记（日键可从分钟重算，缺的那天不能），但学习器上线前必须修 —— 批次 ζ。
+
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 
 `switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。⚠️ **机制在，搬迁没做**：12 条 `registerRevert` 目前全挤在 `handlers_ops.go` 自己的一个 `init()` 里，没有任何别的文件调用它 —— 照下面那句「住在写这条 op 的代码旁边」去 `handlers_plan.go` / `handlers_rules.go` / `handlers_memory.go` 找逆操作会一无所获。搬迁是批次 D 的事。

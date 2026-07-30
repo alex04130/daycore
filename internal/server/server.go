@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"daycore/internal/ai"
 	"daycore/internal/auth"
@@ -52,7 +53,13 @@ type Server struct {
 	search      *search.Client
 	searcher    domain.Searcher
 	decisions   *decisionRegistry
-	worker      *Worker // set by main.go after construction; nil when channels are off
+	worker      *Worker // set by main.go after construction
+	// awake throttles rhythm signal writes. See awake.go — it is why
+	// requireSession, and not a list of paths, decides what counts as awake.
+	awake *awakeTracker
+	// scheduleOnUse gives a session its proactive cron entries the first time it
+	// is seen, replacing the boot-time enumeration of channel bindings.
+	scheduleOnUse atomic.Pointer[func(sid string)]
 
 	// defaultLocales is the language pair a user starts with before choosing
 	// their own. It is a default, not a restriction — see localePair.
@@ -101,6 +108,7 @@ func New(d Deps) *Server {
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
 		weather:     d.Weather, search: search.New(), searcher: d.Searcher,
+		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,
 	}
@@ -177,12 +185,17 @@ func requestIDFrom(ctx context.Context) string {
 	return v
 }
 
+// requireSession is the gate on every user-facing data endpoint — and therefore
+// also the definition of "the user was awake": machine pushes authenticate
+// through importSession instead, and inbound channel messages never reach an
+// HTTP handler. See awake.go.
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string, bool) {
 	sid := sessionIDFrom(r.Context())
 	if sid == "" {
 		s.writeErr(w, http.StatusUnauthorized, "no_session", "缺少会话，请先初始化会话")
 		return "", false
 	}
+	s.markAwake(sid)
 	return sid, true
 }
 

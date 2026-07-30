@@ -15,7 +15,6 @@ models:
     vision: false
     tools: true
     stream: true
-    deepseek_search: true
     context_window: 65536
     max_tokens: 4096
 
@@ -29,7 +28,6 @@ models:
     vision: false
     tools: true
     stream: true
-    deepseek_search: true
     context_window: 65536
     max_tokens: 4096
 

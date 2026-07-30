@@ -113,10 +113,13 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## main.go 启动/关停
 
-- 启动顺序：config.Load → store.Open+Migrate → catalog/prompts → server.New → Worker（cron：早报 07:30/晚报 21:00/2h deadline/30min replan，经绑定通道推送）→ channels Registry.StartAll(rootCtx) → inbound 消费循环。
+- 启动顺序：config.Load → store.Open+Migrate → catalog/prompts → server.New → locale 覆盖层 → 两个 cleanup ticker → **Worker（无条件启动）** → channels（仅当配了通道）→ inbound 消费循环。
+- **Worker 不再绑在 OneBot 上**（2026-07-29）。它曾经只在 `ONEBOT_WS_URL` 非空时启动，于是没绑 QQ 的用户拿不到早报、晚复盘、定时 auto-plan、deadline 巡检 —— 产品「主动」那一半被一个无关设置整体关掉。Worker 做的事没有一件需要通道：产出全部落库、由 App 读，推到通道只是可选的最后一步（`sendToChannels` 在 registry 为 nil 时只记日志，那个分支本来就有）。
+- **按用户排程改成首次请求时懒排**（`Server.SetScheduleOnUse`，由 `markAwake` 在节流放行时调一次，`ScheduleUser` 本身幂等）。原来的种子是「每个已验证的通道绑定」——同一个耦合的第二处。改用枚举会话则需要给 `SessionRepository` 加方法、四个后端各实现一遍，而且会给每个曾经调过一次 API 的人都挂上 cron 项。⚠️ 代价是**重启当天早上有个缺口**：那天还没发过请求的人没有 cron 项，07:00 重启后 07:30 的早报对他不触发。补它需要正是这里在回避的会话枚举，且必须与 Lease 选主同批（否则每个实例都会给每个用户排程）—— 批次 ζ。
 - inbound 消费：每消息经 `srv.GoTracked` 起 goroutine（背景 ctx，不绑请求），纳入 `Server.asyncWG`。
 - 启动清扫：Migrate 后 `store.Chats().FailPendingMessages` 把崩溃遗留的 pending 占位消息标为 error。
-- 关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` 等 in-flight HTTP → `srv.WaitBackground(shutdownCtx)` 等后台 agent（异步聊天/通道回复）→ `worker.Stop()`（等 `cron.Stop().Done()`）→ `cancelRoot()`。TempContext/ChannelBinding 两个 cleanup ticker 仍是自由 goroutine（无状态，进程退出即弃，无碍）。
+- 关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` 等 in-flight HTTP → `srv.WaitBackground(shutdownCtx)` 等后台 agent（异步聊天/通道回复 + 节律信号写入）→ `worker.Stop()`（等 `cron.Stop().Done()`）→ `cancelRoot()`。TempContext/ChannelBinding 两个 cleanup ticker 仍是自由 goroutine（无状态，进程退出即弃，无碍）。
+- **两个 cleanup ticker 现在逐 tick 收 panic**（`Server.everyTick`，2026-07-29）。它们原本是裸 `go func(){ for range ticker.C {…} }`，而 `recoverMW` 只包 HTTP handler —— 自由 goroutine 上的 panic 会带走整个进程。一次 tick panic 只杀那一次：清理失败是几行陈旧数据，清理循环停掉是无界增长。这也是降级启动的前置（store 为桩时不会 panic，但 nil store 会，症状是「启动成功、一分钟后无声死掉」）。
 
 ## 存储不可用时的降级启动（2026-07-29 定案，未实现）
 

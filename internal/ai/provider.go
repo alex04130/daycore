@@ -100,13 +100,21 @@ type ToolCallDelta struct {
 
 // Capabilities advertises what a model supports (declared in the catalog config).
 type Capabilities struct {
-	Vision         bool
-	Tools          bool
-	Stream         bool
-	Thinking       bool
-	ContextWindow  int
-	DeepseekSearch bool // enable native web_search server-side tool (DeepSeek Anthropic endpoint)
+	Vision        bool
+	Tools         bool
+	Stream        bool
+	Thinking      bool
+	ContextWindow int
 }
+
+// There used to be a DeepseekSearch flag here, declared in models.yaml and read
+// by nothing: no format consulted it, no tool was registered from it, and it
+// still shipped as `deepseek_search: true` on two models in the default config.
+// A capability that is advertised and unimplemented is worse than a missing one —
+// it is a claim. Vendor-native search comes back in batch F2, where
+// docs/specs/provider-protocol.md decides which of its two shapes it is (a
+// server-side tool that returns results, versus a prompt fragment that rides
+// with the model).
 
 // AIProvider is the contract every wire-format implementation satisfies.
 type AIProvider interface {

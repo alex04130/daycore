@@ -90,7 +90,14 @@ func run(logger *slog.Logger) error {
 
 	// A crash leaves async companion placeholders stuck in "pending" forever —
 	// sweep them to "error" so clients stop polling.
-	if n, err := store.Chats().FailPendingMessages(context.Background()); err == nil && n > 0 {
+	if n, err := store.Chats().FailPendingMessages(context.Background()); err != nil {
+		// Was swallowed by `err == nil && n > 0`: a database that pings but whose
+		// tables are broken failed here with no trace at all. Not fatal — the
+		// sweep is a convenience, and clients time out on their own — but it must
+		// be visible, because it is the first write of the process and therefore
+		// the earliest evidence that the store is not actually usable.
+		logger.Warn("could not sweep stale pending chat messages", "err", err)
+	} else if n > 0 {
 		logger.Info("marked stale pending chat messages as error", "count", n)
 	}
 
@@ -150,11 +157,15 @@ func run(logger *slog.Logger) error {
 	srv.StartTempContextCleanup(0)
 	srv.StartChannelBindingCleanup(0)
 
-	// Channels + proactive worker (only when a channel is configured).
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
+
+	// Channels are optional. A channel registry is only built when one is
+	// configured; the Worker gets nil and sendToChannels then logs instead of
+	// sending (that branch already existed).
+	var registry *channels.Registry
 	if cfg.OneBotWSURL != "" {
-		registry := channels.NewRegistry(logger)
+		registry = channels.NewRegistry(logger)
 		registry.Register(onebot.New(onebot.Config{
 			WSURL: cfg.OneBotWSURL,
 			Token: cfg.OneBotToken,
@@ -164,23 +175,42 @@ func run(logger *slog.Logger) error {
 				return err == nil && b != nil
 			},
 		}))
-		worker := server.NewWorker(srv, registry)
-		srv.SetWorker(worker)
+	}
 
+	// The proactive Worker starts unconditionally.
+	//
+	// It used to start only when ONEBOT_WS_URL was set, which meant a user who
+	// had not bound a QQ account got no morning brief, no evening review, no
+	// scheduled auto-plan and no deadline sweep — the whole proactive half of the
+	// product, switched off by an unrelated setting. Nothing the Worker does
+	// requires a channel: everything it produces lands in the database and is
+	// read by the app, and pushing to a channel is the optional last step.
+	worker := server.NewWorker(srv, registry)
+	srv.SetWorker(worker)
+	worker.Start()
+	defer worker.Stop()
+
+	// Sessions are scheduled on their first request after boot rather than
+	// enumerated here.
+	//
+	// The seed used to be "every verified channel binding", which is the same
+	// coupling in a second place. Enumerating sessions instead would need a new
+	// SessionRepository method across four backends, and it would schedule cron
+	// entries for everyone who ever hit the API once. Lazy scheduling costs one
+	// map lookup per request (ScheduleUser returns immediately when already
+	// scheduled) and self-limits to people actually using the thing.
+	//
+	// ⚠️ The cost is a gap on the morning of a restart: someone who has not made
+	// a request yet that day has no cron entry, so a 07:30 brief after an 07:00
+	// restart does not fire for them. Closing that needs the session enumeration
+	// this is avoiding, and it belongs with Lease-based election (batch ζ) —
+	// otherwise every instance would schedule every user.
+	srv.SetScheduleOnUse(func(sid string) {
+		worker.ScheduleUser(sid, cfg.WorkerDefaultTZ)
+	})
+
+	if registry != nil {
 		registry.StartAll(rootCtx)
-		worker.Start()
-		defer worker.Stop()
-
-		// Re-schedule proactive jobs for already-bound sessions.
-		if bindings, err := store.ChannelBindings().ListAllVerified(rootCtx); err == nil {
-			seen := map[string]bool{}
-			for _, b := range bindings {
-				if !seen[b.SessionID] {
-					seen[b.SessionID] = true
-					worker.ScheduleUser(b.SessionID, cfg.WorkerDefaultTZ)
-				}
-			}
-		}
 
 		// Consume inbound channel messages and drive the agent per message.
 		// Per-message goroutines run through GoTracked so graceful shutdown
@@ -192,6 +222,8 @@ func run(logger *slog.Logger) error {
 			}
 		}()
 		logger.Info("channels enabled", "onebot", cfg.OneBotWSURL)
+	} else {
+		logger.Info("no channel configured — proactive jobs still run, results stay in the app")
 	}
 
 	httpSrv := &http.Server{

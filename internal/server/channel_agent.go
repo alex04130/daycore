@@ -78,13 +78,17 @@ func (s *Server) StartChannelBindingCleanup(interval time.Duration) {
 	if interval <= 0 {
 		interval = 10 * time.Minute
 	}
-	go func() {
-		t := time.NewTicker(interval)
-		defer t.Stop()
-		for range t.C {
-			if n, err := s.store.ChannelBindings().ExpirePending(context.Background()); err == nil && n > 0 {
-				s.log.Info("expired pending channel tokens", "count", n)
-			}
+	s.everyTick("channel-binding expire", interval, func(ctx context.Context) {
+		n, err := s.store.ChannelBindings().ExpirePending(ctx)
+		if err != nil {
+			// Was swallowed: `err == nil && n > 0` logged only successes, so a
+			// cleanup that had been failing for weeks looked exactly like one with
+			// nothing to do.
+			s.log.Warn("channel-binding expire error", "err", err)
+			return
 		}
-	}()
+		if n > 0 {
+			s.log.Info("expired pending channel tokens", "count", n)
+		}
+	})
 }
