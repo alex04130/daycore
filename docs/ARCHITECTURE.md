@@ -54,7 +54,11 @@ lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回
 
 **加后端的验收标准就是这套套件通过**，包括计划中的 HTTP 转换层。这也是让第五个后端负担得起的唯一办法：两两分歧数随后端数平方增长，共享套件把它压平。
 
-⚠️ CI 里没有 Mongo，所以 CI 只跑 SQLite 那一半。真机那半靠 `make test-mongo` 手动跑 —— 这是已知缺口，不是「测过了」。
+**四个后端里三个已真机验证**（2026-07-29）：CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，套件对四个后端跑同一份，并且有一步**断言它们没有静默 skip**（跳过的套件读起来和通过的一样，而 DSN 环境变量正是那种会悄悄不再被设置的东西）。
+
+本机跑：`make test-mongo`（Mongo）、`make test-sql`（pg + MySQL，各用例自建自删 schema/数据库）。
+
+已实测：MySQL 34 张表 DDL 全部合法、29/29、原生 FULLTEXT ngram 可用。**Postgres 只在 CI 里跑过** —— 作者本机没有 pg，所以 pg 那一份在 CI 绿之前不算「测过了」。
 
 ## 存储的第五种后端：HTTP / 子进程转换层
 

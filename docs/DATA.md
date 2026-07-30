@@ -45,7 +45,9 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 ## 三方言对等测试（`dialect_parity_test.go`，2026-07-26）
 
-**只有 sqlite 被真机测过，CI 也没有 pg/mysql 容器**，这个洞放跑过三次真事故（见下）。它们全都是 DDL 字符串自身的性质，不需要跑引擎就能查，所以这个测试直接读三个方言 `Migrations()` 的返回值做静态比对。它不能替代真机，它是原本只有 code review 这一道防线之下的地板。
+这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
+
+⚠️ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 MySQL 已真机验证**（`conformance_real_test.go` + CI 的 mysql:8 service）：34 张表 DDL 全部合法、29 例行为套件全过、原生 FULLTEXT ngram 建得起来且能查。**Postgres 的真机验证靠 CI**（本机没有 pg），所以 pg 那一份在 CI 绿之前仍然只是「按文档写就」。
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -84,7 +86,9 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 - `search/material.go` MaterialSearcher：先探 `store.(domain.MaterialFTS)` → 原生索引带真实打分；ok=false/err（索引缺失、sqlite 查询词<3 rune、mongo 无 CJK 分词命中为空）→ 回退 `Materials().List` 子串扫描（Score=1，召回下限保证）。Index/Deindex 维持 no-op（四引擎全自动维护）。
 - 索引实现：SQLite FTS5 external-content 虚表 + 三触发器 + 建表时 rebuild 回填（`dialect_sqlite.go`，modernc.org/sqlite v1.34.4 验证带 FTS5+trigram）；PG tsvector 生成列('simple') + GIN（需 PG≥12）；MySQL FULLTEXT ngram；Mongo text index（store.go specs）。查询在 `sqlstore/fts.go` / `mongostore/fts.go`。
-- **ConditionalMigration 机制**（`dialect.go` + `store.go`）：`{Name, CheckQuery, DDLs}`，CheckQuery 无行才执行；失败只进 `Store.warnings`（main.go 启动打日志）不阻断启动；成败记录在 `Store.condApplied[name]`，FTS 查询据此短路。⚠️ 只测过 sqlite 真机；pg/mysql 的 DDL 语法按文档写就，首次接入时留意启动 warning。
+- **ConditionalMigration 机制**（`dialect.go` + `store.go`）：`{Name, CheckQuery, DDLs}`，CheckQuery 无行才执行；失败只进 `Store.warnings`（main.go 启动打日志）不阻断启动；成败记录在 `Store.condApplied[name]`，FTS 查询据此短路。✅ **sqlite 与 MySQL 已真机验证**（`TestNativeFTSBuildsOnRealEngines`：不只断言 `condApplied` 为真，还真发一次查询 —— 索引建起来不等于查询语法对，而查询语法错只在有人搜索时才报）。Postgres 待 CI。
+
+⚠️ 这个「失败只警告」的设计有个代价：索引没建起来 → `SearchMaterialsFTS` 按 `condApplied` 短路 → **永远静默跑子串兜底，而且没人会发现**（子串搜索也返回结果）。所以那个测试盯的正是这条。
 
 ## 块的锁定与重捞字段（2026-07-26 落地，体验内核 v2.3）
 

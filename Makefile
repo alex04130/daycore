@@ -1,4 +1,4 @@
-.PHONY: help run build test test-mongo check-i18n api-bundle api-check api-lock api-surface tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo test-sql check-i18n api-bundle api-check api-lock api-surface tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -10,6 +10,14 @@ run: ## Run the server (SQLite by default)
 
 build: ## Build a static binary into bin/
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN) ./cmd/daycore
+
+test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
+	@echo "needs a postgres on :5432 and a mysql on :3306 — each case creates and drops its own schema/database"
+	@echo "  docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=daycore -e POSTGRES_USER=daycore -e POSTGRES_DB=daycore postgres:16"
+	@echo "  docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=daycore -e MYSQL_DATABASE=daycore mysql:8"
+	PG_TEST_DSN='postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable' \
+	MYSQL_TEST_DSN='root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true' \
+	go test -count=1 -run 'TestConformancePostgres|TestConformanceMySQL|TestRealDialectNamespaces' -v ./internal/storage/sqlstore/
 
 test-mongo: ## Run the storage conformance suite against a real MongoDB
 	@echo "requires a mongod on 127.0.0.1:27017 — the suite creates and drops its own databases"

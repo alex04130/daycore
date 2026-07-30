@@ -17,12 +17,22 @@ jobs:
   backend:
     name: Backend (Go)
     runs-on: ubuntu-latest
-    # A real MongoDB, because the storage conformance suite
+    # Real MongoDB, PostgreSQL and MySQL, because the storage conformance suite
     # (internal/storage/storagetest) is the only thing asserting that the four
-    # backends BEHAVE the same, and until this service existed the Mongo half of
-    # it never ran anywhere except by hand. An adversarial review pass found
-    # about fifteen divergences between the two shipped stores precisely because
-    # mongostore had no integration coverage at all.
+    # backends BEHAVE the same, and for a long time only SQLite ever ran here.
+    #
+    # Mongo: an adversarial review found ~15 divergences between the two shipped
+    # stores precisely because mongostore had no integration coverage at all.
+    #
+    # Postgres and MySQL: their DDL was written from documentation and checked
+    # only by dialect_parity_test.go, which compares the three DDL strings to
+    # each other — a static check that cannot know whether any of them is legal.
+    # Three real incidents got through that gap, and every one was a
+    # first-statement failure that executing the DDL once would have caught:
+    # MySQL refusing a literal DEFAULT on TEXT (the server would not boot), a
+    # backticked reserved word in CREATE TABLE and in none of the five
+    # statements using it, and three tables missing the comma before their first
+    # inline KEY.
     services:
       mongo:
         image: mongo:8
@@ -36,8 +46,39 @@ jobs:
           --health-timeout 5s
           --health-retries 12
           --health-start-period 10s
+      postgres:
+        image: postgres:16
+        ports: ['5432:5432']
+        env:
+          POSTGRES_PASSWORD: daycore
+          POSTGRES_USER: daycore
+          POSTGRES_DB: daycore
+        options: >-
+          --health-cmd "pg_isready -U daycore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      mysql:
+        image: mysql:8
+        ports: ['3306:3306']
+        env:
+          MYSQL_ROOT_PASSWORD: daycore
+          MYSQL_DATABASE: daycore
+        # mysqladmin ping answers before the server accepts real connections, so
+        # authenticate as part of the check — otherwise the first test connects
+        # into a half-open server and fails in a way that looks like a code bug.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pdaycore --silent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --health-start-period 30s
     env:
       MONGO_TEST_DSN: mongodb://127.0.0.1:27017
+      # The suites create and drop their own schema/database per case, so these
+      # point at the server, not at the data.
+      PG_TEST_DSN: postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable
+      MYSQL_TEST_DSN: root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true
     steps:
       - uses: actions/checkout@v4
 
@@ -102,6 +143,24 @@ jobs:
         # Mongo half skips itself silently, which is how it went untested for
         # months.
         run: go test ./...
+
+      - name: assert the SQL conformance suites actually ran
+        # The whole point of the two new services is executing the DDL against a
+        # real server. A skipped suite reads as a passing one, and these DSNs are
+        # exactly the kind of thing that quietly stops being set.
+        run: |
+          out=$(go test -count=1 -run 'TestConformancePostgres|TestConformanceMySQL' -v ./internal/storage/sqlstore/ 2>&1)
+          echo "$out" | tail -60
+          for name in TestConformancePostgres TestConformanceMySQL; do
+            if echo "$out" | grep -q "SKIP: $name"; then
+              echo "::error::$name skipped itself — its DSN is not reaching the test"
+              exit 1
+            fi
+            if ! echo "$out" | grep -qE "PASS: $name/Lease"; then
+              echo "::error::$name did not run its cases"
+              exit 1
+            fi
+          done
 
       - name: assert the Mongo conformance suite actually ran
         # A skipped suite reads as a passing one, and MONGO_TEST_DSN is exactly
