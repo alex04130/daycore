@@ -10,7 +10,7 @@ models:
   - id: deepseek-chat
     format: openai
     base_url: https://api.deepseek.com
-    model: deepseek-chat
+    model: deepseek-v4-flash
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true
@@ -23,7 +23,7 @@ models:
   - id: deepseek-search
     format: anthropic
     base_url: https://api.deepseek.com/anthropic
-    model: deepseek-chat
+    model: deepseek-v4-flash
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true
@@ -35,7 +35,7 @@ models:
   - id: deepseek-reasoner
     format: openai
     base_url: https://api.deepseek.com
-    model: deepseek-reasoner
+    model: deepseek-v4-pro
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true

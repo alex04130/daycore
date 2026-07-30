@@ -54,11 +54,18 @@ lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回
 
 **加后端的验收标准就是这套套件通过**，包括计划中的 HTTP 转换层。这也是让第五个后端负担得起的唯一办法：两两分歧数随后端数平方增长，共享套件把它压平。
 
-**四个后端里三个已真机验证**（2026-07-29）：CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，套件对四个后端跑同一份，并且有一步**断言它们没有静默 skip**（跳过的套件读起来和通过的一样，而 DSN 环境变量正是那种会悄悄不再被设置的东西）。
+✅ **四个后端全部真机验证完毕**（2026-07-29）：
 
-本机跑：`make test-mongo`（Mongo）、`make test-sql`（pg + MySQL，各用例自建自删 schema/数据库）。
+| 后端 | 行为套件 | 建表 | 原生全文索引 |
+|---|---|---|---|
+| SQLite | 29/29 | ✅ | ✅ FTS5 external-content + 三触发器 |
+| PostgreSQL 16.14 | **29/29** | ✅ 34 张表 | ✅ tsvector 生成列 + GIN |
+| MySQL 8 | **29/29** | ✅ 34 张表 | ✅ FULLTEXT ngram |
+| MongoDB 8 | 29/29 | ✅ | ✅ text index |
 
-已实测：MySQL 34 张表 DDL 全部合法、29/29、原生 FULLTEXT ngram 可用。**Postgres 只在 CI 里跑过** —— 作者本机没有 pg，所以 pg 那一份在 CI 绿之前不算「测过了」。
+**pg 与 MySQL 是第一次真机执行**（此前只有 `dialect_parity_test.go` 的静态比对，而静态比对只能看出三份 DDL 互相不一致、看不出其中任何一份是否合法 —— 这个洞放跑过三次真事故）。原生索引那一列也是第一次验：不只断言 `condApplied` 为真，还真发一次查询，因为索引建起来不等于查询语法对，而查询语法错只在有人搜索时才报。
+
+CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，并有一步**断言它们没有静默 skip**（跳过的套件读起来和通过的一样，而 DSN 环境变量正是那种会悄悄不再被设置的东西）。本机跑：`make test-mongo` + `make test-sql`，各用例自建自删 schema/数据库。
 
 ## 存储的第五种后端：HTTP / 子进程转换层
 

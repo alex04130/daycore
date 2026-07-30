@@ -190,7 +190,23 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 			return answer.String()
 		}
 		appendAnswer(resp.Content)
-		if len(resp.ToolCalls) == 0 { // final answer already streamed as deltas
+		if len(resp.ToolCalls) == 0 {
+			// A provider that says it is calling tools and then delivers none has
+			// given us nothing to do and nothing to say. Ending the turn here would
+			// send `done` after zero text: the user watches the reply finish and
+			// finds it empty, with no error anywhere.
+			//
+			// Observed once live (grok-4.5 through a gateway: finish_reason
+			// "tool_calls", empty content, no tool_calls array). Not reproducible,
+			// so the cause is unknown — but the symptom is silent, which is reason
+			// enough to name it rather than to trust that it will not recur.
+			if resp.FinishReason == "tool_calls" && strings.TrimSpace(answer.String()) == "" {
+				s.log.Error("agent: provider signalled tool_calls but sent none",
+					"finish", resp.FinishReason, "model", provider.Model())
+				sink.fail("empty_tool_round", "对话服务返回了空结果，请再说一次")
+				return answer.String()
+			}
+			// final answer already streamed as deltas
 			sink.send(map[string]any{"type": "done"})
 			return answer.String()
 		}
