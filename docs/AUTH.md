@@ -68,6 +68,14 @@
 
 `GET /api/healthz`、`GET /api/version`、`GET /api/models`、`POST /api/session/init`、auth 系列（register/login/logout/providers/oauth/me）。
 
+**这份名单现在由测试强制**（`internal/server/auth_surface_test.go`）：对 `RouteTable()` 里每一条不在名单上的路由发一个不带任何凭证的请求，**必须收到 401**；反向也查 —— 名单里有而路由表里没有的条目是过期豁免，同样报错。
+
+⚠️ **2026-07-30 修掉的一个真洞**：`POST /api/ai/plan-text`、`plan-image`、`extract-schedule-image` 三条**只有 IP 限流、没有 `requireSession`** —— 也就是能连到这台机器的任何人都能烧运维的模型额度，而其中两条还是 vision（最贵的那种）。三方文档都说它们该鉴权：openapi 的全局 `security` 适用于它们（它们没有声明 `security: []`）、本文这张公开表从来没有它们。加 `requireSession` 是安全的：`sid` 在那个文件里零出现，三个 handler 从不碰会话，没有任何东西依赖匿名可用。
+
+顺带把另外四个 AI 端点的**认证提到了解析之前**（原来先 `readJSON` 后查会话，返回 400 而不是 401）。这不是洞，但先解析后认证会让未鉴权的调用方能探测 body 校验，也让「每条非公开路由都回 401」没法成为一条可检查的不变量。
+
+**自带凭证轨**（不走 session，因此也在名单上）：`X-Import-Token` 的两条导入、`X-Admin-Token` 的管理面、以及 `POST /api/channels/{channel}/verify` —— 最后这条是 body 里的绑定 token 作凭证，调用方是通道那一侧的 bot，按构造就没有会话。
+
 ## 密码
 
 argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混入，并发上限 4（auth/password.go）。

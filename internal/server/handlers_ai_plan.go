@@ -19,6 +19,18 @@ func init() {
 
 // POST /api/ai/plan-text — natural language → structured day plan (JSON).
 func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
+	// Session first, then rate limit. These three were rate-limited only, which
+	// made the most expensive endpoints in the product — two of them vision —
+	// reachable by anyone who could reach the host, spending the operator's model
+	// budget with an IP bucket as the only brake. Neither the contract nor the
+	// docs ever said that: openapi's global security applies (they do not declare
+	// `security: []`) and AUTH.md's public list does not include them.
+	//
+	// Safe to add: `sid` appears nowhere in this file — none of the three ever
+	// touched the session, so nothing depended on anonymous access.
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
@@ -82,6 +94,18 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/ai/plan-image — image → structured day plan via the vision pipeline.
 func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
+	// Session first, then rate limit. These three were rate-limited only, which
+	// made the most expensive endpoints in the product — two of them vision —
+	// reachable by anyone who could reach the host, spending the operator's model
+	// budget with an IP bucket as the only brake. Neither the contract nor the
+	// docs ever said that: openapi's global security applies (they do not declare
+	// `security: []`) and AUTH.md's public list does not include them.
+	//
+	// Safe to add: `sid` appears nowhere in this file — none of the three ever
+	// touched the session, so nothing depended on anonymous access.
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
@@ -151,6 +175,18 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 // rule candidates (returned for user confirmation; nothing is saved here — the
 // frontend saves confirmed rules via POST /api/rules/batch).
 func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Request) {
+	// Session first, then rate limit. These three were rate-limited only, which
+	// made the most expensive endpoints in the product — two of them vision —
+	// reachable by anyone who could reach the host, spending the operator's model
+	// budget with an IP bucket as the only brake. Neither the contract nor the
+	// docs ever said that: openapi's global security applies (they do not declare
+	// `security: []`) and AUTH.md's public list does not include them.
+	//
+	// Safe to add: `sid` appears nowhere in this file — none of the three ever
+	// touched the session, so nothing depended on anonymous access.
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}

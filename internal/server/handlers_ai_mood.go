@@ -18,6 +18,14 @@ func init() {
 
 // POST /api/ai/mood — mood → warm text response.
 func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
+	// Authenticate before parsing. These read the session further down anyway, so
+	// the check was never missing — only late, which let an unauthenticated caller
+	// probe body validation and spend the parser. Auth first is also what makes
+	// "every non-public route answers 401" a checkable invariant
+	// (auth_surface_test.go) rather than a per-handler habit.
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
