@@ -1,3 +1,34 @@
+/api/mood/kinds:
+  get:
+    operationId: listMoodKinds
+    tags: [mood]
+    summary: The mood registry, localized. Frontends render from this.
+    description: >
+      The vocabulary of moods this installation knows, with the label already
+      resolved for the caller's language (Accept-Language, or the session's
+      pair). A frontend MUST render from this rather than keeping its own list:
+      the id is what gets stored, and a client that invents its own ids writes
+      check-ins the mood window silently discards.
+
+
+      Valence is deliberately not exposed. It is a coarse internal number used to
+      read a trend, never a score to show anyone.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kinds:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string, example: happy }
+                      emoji: { type: string, example: "😊" }
+                      name: { type: string, example: 开心 }
 /api/mood:
   get:
     operationId: listMood
@@ -20,6 +51,14 @@
       letting a client pick would let it write check-ins the server quietly
       discounts. note is whatever the user chose to add; it is never asked
       for.
+
+
+      mood is a registry id from GET /api/mood/kinds, never a display string.
+      An unknown id is rejected with 400 unknown_mood rather than stored: a
+      value the registry cannot resolve has no valence, and a check-in with no
+      valence is not a weaker signal, it is no signal. (The shipped frontend
+      used to send "😊 开心" here, which meant every check-in was invisible to
+      the companion.)
     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mood], properties: { mood: { type: string }, aiResponse: { type: string }, exerciseOffered: { type: string }, theme: { type: string }, note: { type: string } } } } } }
     responses: { '200': { description: OK } }
   patch:

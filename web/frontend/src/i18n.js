@@ -210,9 +210,6 @@
       // mood
       md_title: '现在感觉怎么样？',
       md_sub: '选一个最接近的',
-      mood_great: '很好', mood_calm: '平静', mood_excited: '兴奋', mood_grateful: '感恩',
-      mood_tired: '累了', mood_stressed: '压力大', mood_anxious: '焦虑', mood_sad: '难过',
-      mood_angry: '生气', mood_bored: '无聊', mood_lonely: '孤独', mood_sick: '不舒服',
       md_history: '最近打卡',
       md_exercise_done_badge: '已练习',
       md_offer_breathing: '要不要来一轮 4-7-8 呼吸？两分钟就好。',
@@ -525,9 +522,6 @@
 
       md_title: 'How are you feeling?',
       md_sub: 'Pick the closest one',
-      mood_great: 'Great', mood_calm: 'Calm', mood_excited: 'Excited', mood_grateful: 'Grateful',
-      mood_tired: 'Tired', mood_stressed: 'Stressed', mood_anxious: 'Anxious', mood_sad: 'Sad',
-      mood_angry: 'Angry', mood_bored: 'Bored', mood_lonely: 'Lonely', mood_sick: 'Unwell',
       md_history: 'Recent check-ins',
       md_exercise_done_badge: 'Practiced',
       md_offer_breathing: 'How about one round of 4-7-8 breathing? Two minutes.',

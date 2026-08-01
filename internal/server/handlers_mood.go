@@ -6,10 +6,12 @@ import (
 	"strings"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 )
 
 func init() {
 	registerRoutes("moods", func(s *Server, mux Mux) {
+		mux.HandleFunc("GET /api/mood/kinds", s.handleMoodKinds)
 		mux.HandleFunc("GET /api/mood", s.handleMoodList)
 		mux.HandleFunc("POST /api/mood", s.handleMoodCreate)
 		mux.HandleFunc("PATCH /api/mood", s.handleMoodPatch)
@@ -53,6 +55,25 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 mood")
 		return
 	}
+	// The stored value is a registry id, never a display string.
+	//
+	// The shipped frontend used to send `emoji + " " + localizedName` ("😊 开心"),
+	// which `MoodKindByID` could not resolve — so `mood.Read` skipped every sample
+	// and the companion was told "no check-ins" no matter how many times the user
+	// checked in. The feature looked fine from the outside: the row saved, the
+	// mood page answered. Only the thing that consumed it was empty.
+	//
+	// It was also localized, so the same feeling was a different string per UI
+	// language — the exact reason ids and not labels are what gets stored.
+	//
+	// Rejecting here rather than accepting and hoping: a value the registry cannot
+	// resolve has no valence, and a check-in with no valence is not a weaker
+	// signal, it is no signal.
+	if _, known := domain.MoodKindByID(body.Mood); !known {
+		s.writeErr(w, http.StatusBadRequest, "unknown_mood",
+			"未知的心情 id —— 请从 GET /api/mood/kinds 取值")
+		return
+	}
 	// Source is set here, never read from the body. A check-in that arrives on
 	// this endpoint is the user pressing a button; the agent records its own
 	// through its tool. Letting a client claim source=agent would let it write
@@ -90,4 +111,38 @@ func (s *Server) handleMoodPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// GET /api/mood/kinds — the mood registry, localized.
+//
+// Frontends render from this instead of keeping their own list. The shipped one
+// kept its own and the two drifted into different vocabularies: four ids named
+// differently for the same emoji, two the frontend had and the backend did not
+// (bored, lonely), two the backend had and the frontend did not (neutral,
+// sleepless). With four frontends coming, "everyone keeps their own copy" is not
+// a bug that gets fixed once — it is one that happens four more times.
+//
+// Valence is deliberately NOT exposed. The domain comment calls it coarse and
+// says it is never shown to the user — putting it in the contract is how it ends
+// up rendered as a score, and "your week was -4" is precisely the shame the
+// product's底色 forbids.
+//
+// Shaped like GET /api/materials/categories, which solved the same problem.
+func (s *Server) handleMoodKinds(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	locale := s.requestLocale(r)
+	kinds := domain.MoodKinds()
+	out := make([]map[string]any, 0, len(kinds))
+	for _, k := range kinds {
+		out = append(out, map[string]any{
+			// The label goes through the catalog, not through k.Names directly:
+			// reading the struct would skip the database and file layers, which is
+			// the whole point of having them (a language pack renames a mood
+			// without a rebuild).
+			"id": k.ID, "emoji": k.Emoji, "name": i18n.T(domain.MoodNameKey(k.ID), locale),
+		})
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"kinds": out})
 }

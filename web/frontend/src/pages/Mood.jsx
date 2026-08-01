@@ -8,12 +8,17 @@ import S from '../store.js';
 import I18N, { t } from '../i18n.js';
 import { useStore, useToast } from '../ui.jsx';
 
-const MOODS = [
-  ['😊', 'mood_great'], ['😌', 'mood_calm'], ['🤩', 'mood_excited'], ['🥰', 'mood_grateful'],
-  ['😪', 'mood_tired'], ['😣', 'mood_stressed'], ['😰', 'mood_anxious'], ['😢', 'mood_sad'],
-  ['😠', 'mood_angry'], ['😑', 'mood_bored'], ['🫥', 'mood_lonely'], ['🤒', 'mood_sick'],
-];
-const NEGATIVE = { mood_tired: 'stretch', mood_stressed: 'breathing', mood_anxious: 'grounding', mood_sad: 'breathing', mood_angry: 'breathing', mood_lonely: 'grounding', mood_sick: 'stretch', mood_bored: 'stretch' };
+// The list is fetched from GET /api/mood/kinds — see store.moodKinds. This file
+// used to hold its own twelve, which drifted from the backend's twelve: four
+// were named differently for the same emoji, two existed only here (bored,
+// lonely) and two only there (neutral, sleepless).
+//
+// NEGATIVE stays local because which exercise to offer is a UI decision, not a
+// property of the mood. It is keyed by backend id.
+const NEGATIVE = {
+  tired: 'stretch', stressed: 'breathing', anxious: 'grounding', down: 'breathing',
+  irritable: 'breathing', unwell: 'stretch', sleepless: 'stretch',
+};
 
 // ============ Breathing (4-7-8, 3 rounds) ============
 function BreathingEx({ onDone, onClose }) {
@@ -139,19 +144,22 @@ function GroundingEx({ onDone, onClose }) {
 export default function MoodPage() {
   const st = useStore();
   const toast = useToast();
-  const [picked, setPicked] = useState(null);   // mood key
+  const [picked, setPicked] = useState(null);   // backend mood id
+  const [kinds, setKinds] = useState([]);       // from GET /api/mood/kinds
   const [thinking, setThinking] = useState(false);
   const [reply, setReply] = useState(null);      // {text, exercise, checkinId}
   const [exercise, setExercise] = useState(null); // {kind, checkinId}
 
-  async function pick(emoji, key) {
+  async function pick(id) {
     if (thinking) return;
-    setPicked(key); setReply(null); setThinking(true);
-    const moodText = emoji + ' ' + t(key);
-    const ex = NEGATIVE[key] || null; // computed BEFORE persisting (v1 bug fix)
+    setPicked(id); setReply(null); setThinking(true);
+    const ex = NEGATIVE[id] || null; // computed BEFORE persisting (v1 bug fix)
     try {
-      const text = await S.moodAIResponse(moodText);
-      const checkin = await S.addMood({ mood: moodText, aiResponse: text, exerciseOffered: ex });
+      // The id goes over the wire, not a display string: the backend resolves it
+      // through its registry, and a localized label would mean the same feeling
+      // is a different value per UI language.
+      const text = await S.moodAIResponse(id);
+      const checkin = await S.addMood({ mood: id, aiResponse: text, exerciseOffered: ex });
       setReply({ text, exercise: ex, checkinId: checkin.id });
     } catch (e) {
       toast(t(e.code === 'rate_limited' ? 'err_rate_limited' : 'err_generic'));
@@ -166,6 +174,14 @@ export default function MoodPage() {
     toast(t('ex_completed_toast'));
   }
   const exLabel = { breathing: 'ex_breathing', stretch: 'ex_stretch', grounding: 'ex_grounding' };
+  useEffect(() => {
+    // Labels come localized from the server, so the switch in §1.1 re-renders
+    // them without this page owning a translation table.
+    let alive = true;
+    S.moodKinds().then((k) => { if (alive) setKinds(k); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   const exOffer = { breathing: 'md_offer_breathing', stretch: 'md_offer_stretch', grounding: 'md_offer_grounding' };
   const fmtWhen = (isoStr) => I18N.fmtDayLabel(isoStr.slice(0, 10), S.todayIso()) + ' ' + I18N.fmtTime(new Date(isoStr));
 
@@ -173,8 +189,8 @@ export default function MoodPage() {
     <div className="dc-page-enter" data-screen-label="心情">
       <UI.SectionHeader title={t('md_title')} subtitle={t('md_sub')} />
       <div className="dc-mood-grid dc-mt-20">
-        {MOODS.map(([emoji, key]) => (
-          <UI.MoodTile key={key} emoji={emoji} label={t(key)} selected={picked === key} onClick={() => pick(emoji, key)} />
+        {kinds.map((k) => (
+          <UI.MoodTile key={k.id} emoji={k.emoji} label={k.name} selected={picked === k.id} onClick={() => pick(k.id)} />
         ))}
       </div>
 

@@ -368,7 +368,17 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - **未注册的 mood id 跳过而不是当中性**：不在注册表里的心情没有 valence，记成 0 会把每个均值都往中间拖。
 - **趋势在两段之内取无权均值**：问题是「那时候比现在差吗」，在旧的那一段里套衰减曲线回答的是另一个问题。两段各至少一条才给方向，否则 `unknown`（「说不准」和「没在动」是不同的答案）。
 - **代打卡权重更低**（`AgentWeight` 0.6）：`source=agent` 是从用户说的话里推断出来的，`source=user` 是他自己按的按钮。都算数，不等重（§12.1）。
-- **`POST /api/mood` 不接受 body 里的 source**，一律记 `user`。让客户端自己挑，就等于让它写出服务端会悄悄打折的打卡 —— 或者更糟，让一个前端 bug 把真实打卡重标成推断。agent 代打卡时写 `agent`。⚠️ **不过现在没有心情打卡工具** —— `companionToolDefs` 的 11 个工具里没有它，所以生产代码里唯一写 `Source` 的地方就是 `POST /api/mood` 那条恒定 `user` 的路径。「agent 写 agent」是留好的位子，不是已经在跑的东西。
+- **`POST /api/mood` 不接受 body 里的 source**，一律记 `user`。让客户端自己挑，就等于让它写出服务端会悄悄打折的打卡 —— 或者更糟，让一个前端 bug 把真实打卡重标成推断。agent 代打卡时写 `agent`。
+
+⚠️ **2026-07-30 修掉的一条数据正确性 bug**：现役前端存的是 `emoji + " " + 本地化名`（`"😊 开心"`），而 `mood.Read` 用 `MoodKindByID` 解析、解不出就跳过 —— 于是**每一条打卡对心情窗口都不存在**，`moodHistoryContext` 永远回 `{"known":false,"why":"no check-ins"}` 注进 companion 提示词。看起来一切正常：行存下了、心情页的 AI 也回应了，唯一的症状是助手从不提起你最近怎么样。
+
+而且存的是本地化字符串，所以同一个心情中英用户存的是不同的值 —— 正是「存 id 不存标签」这条规则要防的。
+
+两边的词表当时已经是**两套不同的集合**（`great` vs `happy`、`grateful` vs `loved`、`sad` vs `down`、`angry` vs `irritable`、`sick` vs `unwell`；前端独有 `bored`/`lonely`，后端独有 `neutral`/`sleepless`）—— 这是计划里待决问题 ⑦ 一直没拍板的后果。**以后端注册表为准**（它有 `Valence` 与双 locale `Names`），前端改成从 `GET /api/mood/kinds` 取。
+
+写侧现在**拒绝**未知 id（400 `unknown_mood`）：解析不出的值没有 valence，而没有 valence 的打卡不是弱信号，是没有信号。三条回归测试端到端锁住这个接缝 —— 单测两侧都会通过（仓库存了给它的东西，窗口正确地跳过了它读不懂的东西），错的只有中间那一道缝。
+
+⚠️ **不过现在没有心情打卡工具** —— `companionToolDefs` 的 11 个工具里没有它，所以生产代码里唯一写 `Source` 的地方就是 `POST /api/mood` 那条恒定 `user` 的路径。「agent 写 agent」是留好的位子，不是已经在跑的东西。
 
 **设计上用得到的地方都要走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
 

@@ -299,6 +299,18 @@ async function patchAssignment(id, changes) {
 }
 
 // ---------- mood ----------
+// The mood vocabulary comes from the backend registry, not from a list kept
+// here. Keeping our own is what let the two drift into different vocabularies —
+// and what made every check-in invisible to the companion, because we were
+// storing "😊 开心" where the backend looks up an id.
+let moodKindsCache = null;
+async function moodKinds() {
+  if (!moodKindsCache) {
+    const res = await api.get('/api/mood/kinds');
+    moodKindsCache = res.kinds || [];
+  }
+  return moodKindsCache;
+}
 async function moodAIResponse(moodText) {
   const res = await api.post('/api/ai/mood', { mood: moodText });
   return res.response || '';
@@ -484,7 +496,7 @@ const S = {
   createRule, patchRule, deleteRule, saveRulesBatch,
   importCanvas, icsCandidates, shotCandidates,
   patchAssignment,
-  moodAIResponse, addMood, completeMoodExercise,
+  moodKinds, moodAIResponse, addMood, completeMoodExercise,
   aiTheme, createTheme, patchTheme, deleteTheme,
   patchSession, register, login, logout, genToken,
   addMemoryFact, deleteMemoryFact, clearMemory,
