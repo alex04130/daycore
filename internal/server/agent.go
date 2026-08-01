@@ -265,7 +265,21 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 // frames while accumulating tool-call fragments. ok=false means an error frame
 // and done were already sent.
 func (s *Server) streamRound(ctx context.Context, sink agentSink, provider ai.AIProvider, req ai.ChatRequest) (*ai.ChatResponse, bool) {
-	stream, err := provider.ChatStream(ctx, req)
+	// Route through StreamViaChat when the format cannot stream tool calls.
+	//
+	// Only the openai format parses delta.tool_calls; anthropic drops tool_use
+	// blocks and ollama reads content only. This loop used to call ChatStream
+	// unconditionally, which meant `DEFAULT_CHAT_MODEL=claude` — a model that
+	// ships in config/models.yaml with tools: true — produced a companion whose
+	// every tool call vanished on the way back. Nothing logged it: the model
+	// asked to write to the plan, the format threw the request away, and the loop
+	// saw a turn with no tool calls and ended.
+	//
+	// StreamViaChat exists for precisely this and had no production caller. The
+	// cost is that the round is not incremental — the user waits for the whole
+	// answer instead of watching it type — which is a real regression in feel and
+	// a much smaller one than the feature not working.
+	stream, err := s.openRound(ctx, provider, req)
 	if err != nil {
 		s.log.Error("agent stream", "err", err)
 		sink.fail("stream_error", "对话服务出了点问题，请稍后再试")
@@ -345,3 +359,15 @@ var wrapUpNudgeText = i18n.Reg("agent.wrapUpNudge", i18n.Text{
 })
 
 func wrapUpNudge(locale string) string { return i18n.T(wrapUpNudgeText, locale) }
+
+// openRound picks the streaming path: native when the format carries tool calls,
+// the Chat-backed bridge otherwise. Requests with no tools always stream
+// natively — there is nothing to lose and the incremental text is the point.
+func (s *Server) openRound(ctx context.Context, provider ai.AIProvider, req ai.ChatRequest) (<-chan ai.Chunk, error) {
+	if len(req.Tools) == 0 || ai.StreamsToolCalls(provider) {
+		return provider.ChatStream(ctx, req)
+	}
+	s.log.Debug("agent: format cannot stream tool calls, falling back to a non-streamed round",
+		"model", provider.Model())
+	return ai.StreamViaChat(ctx, provider, req)
+}

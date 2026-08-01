@@ -48,6 +48,21 @@ obj, ok := extractJSONObject(resp)   // handlers_ai_helpers.go：取首 { 到末
 - 三分支：chat 模型自带 vision → 直接给图；无 vision 无 tools → 转 catalog 的 vision 模型；无 vision 有 tools → read_image/zoom_image 工具循环 ≤6 轮，超轮强制无工具出 JSON。
 - 传图：raw base64（**无 `data:` 前缀**）+ mime，`ContentPart{Type: PartImage}`。
 
+## ⚠️ 只有 openai format 能流式送工具调用（2026-08-01 修）
+
+`ToolCallDelta` 在三个 format 里的出现次数：**openai 1、anthropic 0、ollama 0**。anthropic 的 `ChatStream` 只处理 `content_block_delta` 与 `message_stop`，`tool_use` 块与 `input_json_delta` **落地丢弃**；ollama 只读 `Message.Content`。
+
+而 `config/models.yaml` 里 `claude` 与 `deepseek-search` 都是 anthropic format、都写着 `tools: true`。所以把 `DEFAULT_CHAT_MODEL` 指向它们中任何一个，**companion 的工具会全部失效** —— 模型请求写计划，format 把请求扔了，loop 看到一轮没有工具调用就结束。任何地方都不报错。
+
+修法用的是仓库里**早就为此存在、却没有生产调用方**的那座桥：`ai.StreamViaChat`（它的注释写着 "for formats whose ChatStream cannot carry tool calls yet (anthropic/ollama)"）。
+
+- 新增可选接口 `ai.ToolStreamer` —— 它是 **format 的属性不是模型的属性**，所以不做成 `Capabilities` 字段：那样就得在 `models.yaml` 里声明，而运维无从知道我们的 anthropic 实现有没有解析 `tool_use` 块。
+- `ai.StreamsToolCalls(p)` 对**不表态的 provider 一律判否**。两个方向的代价不对称：猜「否」的代价是一轮不增量（用户等整段而不是看它打字），猜「是」的代价是每个工具调用静默消失。
+- `agent.openRound` 据此选路；**没有工具的请求永远走原生流式**（没什么可失去，增量文本正是重点）。
+- `internal/ai/toolstream_test.go` 断言三个 format 的声明与实现相符，并要求**新增 format 必须在同一次改动里加一行** —— 这正是重点。
+
+⚠️ 这个 bug 的形状值得记住：它不是某个函数写错了，是**换一行配置就悄悄坏掉**。单独测任何一个 format 都是通过的。
+
 ## 上下文压缩（server/context.go）
 
 `maybeCompress`：估算 token 超 60% 阈值 → flash 模型压缩滑窗 → 开环提取为 memory，可回写 ChatThread.Summary。

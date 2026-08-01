@@ -1,46 +1,157 @@
-# Daycore · 给 AI 助手的入口
+# Daycore — 给 AI 助手的仓库指南
 
-这个文件曾经是 845 行的仓库指南。**2026-07-29 收缩成一份指路**，因为它烂掉了：上次实质更新是 2026-07-25，之后路由改分散注册、openapi 改生成、批次 C 六张表、存储行为一致性套件、三层语言目录五次大改，一次都没落到它身上。
+> 本文件是对仓库的「指路 + 铁律」：先读它确定去哪、别踩什么，再按「文档地图」进 `docs/` 读细节。`docs/` 是**实时项目文档**（这个仓库现在是什么样），`docs/specs/` 是**对外协议**（别人要照着实现什么）。本文件 2026-08-01 全面核对重写。
 
-烂掉的文档比没有文档更贵。它是给 AI 助手看的入口，所以每一条过期都会**被照着执行**：
+## 这是什么
 
-- §10.1 教「在 `server.go` 的 `Handler()` 里 `mux.HandleFunc`」—— 那里已经没有集中清单了，而且照做还会漏掉契约同步，`go test` 直接红。
-- §4 的目录树把 `api/openapi.yaml` 当手写文件 —— 它是生成物，手改会被 `make api-bundle` 覆盖。
-- §6 说 `Store` 有 16 个子 repository（实为 27）、`mongostore` 是一个 1419 行单文件且无测试（实为 26 个文件 + 真机行为套件）。
-- §9.4 只说「提示词双语 + 前端 `i18n.js` 平行 key」，漏掉了现在最要紧的那条：**Go 里的用户可见文案必须走 `i18n.Register` + `i18n.T`**。照它写会写出不可翻译的字符串。
+Daycore 是一个面向学生的「AI 自主规划 + 温和陪伴」应用（v2 beta）：把 Canvas 作业成绩、课程表、长期习惯交给它，每天一键生成合理的日程（`keep_manual` 保护手动改过的块），再通过聊天随口微调。功能面：重复/长期日程（含墓碑）、Canvas/ICS/截图导入、陪伴聊天（SSE 流式 + 11 个 agent 工具）、每用户长期记忆、主题工作室、心情打卡、一键撤销（append-only 操作日志）、收件箱/决策卡、许愿池、多语言（用户自选一主一副）。
 
-它独有的那几节已经搬走，没有内容丢失：代码约定与分步骨架 → [`docs/DEVELOPING.md`](docs/DEVELOPING.md)，加 AI wire-format 的骨架 → [`docs/AI.md`](docs/AI.md)。
+仓库根即实现面，无子项目分层：**Go 单二进制后端 + Vite/React 前端 + Chrome MV3 插件**，全部在一个 module 里。
 
-## 从哪读起
+## 仓库布局
 
-1. **[`CLAUDE.md`](CLAUDE.md)** —— 仓库铁律、布局、常用事实。**先读这个。**
-2. **[`docs/DEVELOPING.md`](docs/DEVELOPING.md)** —— 项目结构、代码约定、「加一条路由 / 一个工具 / 一个模型 / 一门语言」的分步骨架、开发命令。
+```
+cmd/daycore/           入口：main.go（装配）+ install.go（提示词模板导出器，walk embed FS）
+internal/              Go 后端（详见「代码组织与模块划分」）
+api/                   API 契约唯一权威：openapi.yaml（生成物）+ FRONTEND_HANDOFF.md
+  spec/                openapi 源：head.yaml + paths/<tag>.yaml（一个 tag 一个文件）+ components.yaml + bundle/ 合并器
+  lock-rules.json      锁派生规则契约夹具
+web/frontend/          现役 React 前端（Vite；将来被 design-ui 四端替换，替换完成前不要动它）
+design-ui/             设计原型（只读参考，不参与构建）：四套前端 + core/daycore-core.js 共享 mock + HANDOFF/ 交接文档
+docs/                  实时项目文档（架构/认证/Agent/数据/AI/路由总表/开发者手册/体验内核）
+docs/specs/            对外协议：transport / storage-protocol / provider-protocol / frontend-manifest
+extension/             Chrome MV3 插件（抓 Canvas → POST /api/import/canvas），无打包器
+deploy/                Dockerfile（纯 API 镜像）/ docker-compose.yml / nginx.conf
+config/                models.yaml（AI 模型目录，加模型零代码）/ oauth.example.yaml
+locales/               <locale>.json 语言包目录（加语言零代码）；目前只有 README.md
+testdata/              canvas-export.sample.json / sample.ics（端到端冒烟夹具）
+tools/wirelog/         日志反代：看发给 provider 的原始请求（make wirelog）
+```
 
-然后按问题去：
+## 技术栈
+
+- **后端**：Go 1.23（module `daycore`），零 CGO（`modernc.org/sqlite` 纯 Go）。关键依赖：`pgx/v5`、`go-sql-driver/mysql`、`mongo-driver`、`golang-jwt/jwt/v5`、`x/crypto`（argon2id）、`godotenv`、`yaml.v3`；间接：`gorilla/websocket`（OneBot）、`robfig/cron/v3`（Worker）。**四个存储后端**：SQLite / PostgreSQL / MySQL（同一 `Dialect` 抽象）+ MongoDB（独立实现）。
+- **前端**：React 18.3 + Vite 6，`react-markdown` + `remark-gfm` + `remark-math` + `rehype-katex` + `katex`。设计系统已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`。
+- **AI**：三个 wire-format（`formats/{openai,anthropic,ollama}`，自注册），模型目录 `config/models.yaml` 驱动，加模型零代码。
+- **插件**：Chrome MV3 纯静态文件，无构建步骤。
+- 许可证 **LGPL-3.0-or-later**（`COPYING.LESSER` + `COPYING`）；引新依赖前确认协议兼容（Apache-2.0/MIT/BSD/MPL-2.0 可以，GPL-only/SSPL/专有不行）。
+
+## 构建与验证命令
+
+```bash
+# 后端（全部在仓库根）
+go run ./cmd/daycore          # 开发跑（默认 SQLite，:8080；cp .env.example .env 后生效）
+make build                    # CGO_ENABLED=0 → bin/daycore 静态单文件
+make test                     # 先跑 i18n 校验再 go test ./...
+make test-mongo               # 行为一致性套件对真机 MongoDB（需 mongod :27017）
+make test-sql                 # 行为套件对真机 PostgreSQL :5432 + MySQL :3306
+make test-models              # 活体模型工具调用测试（花钱，绝不上 CI）
+make api-bundle / api-check / api-lock / api-surface   # openapi 重建 / 校验 / 锁版 / 路由表重生成
+make wirelog                  # 日志反代（看发给 provider 的原始请求）
+
+# 前端
+cd web/frontend && npm install && npm run dev     # :5173，/api 代理到 :8080
+cd web/frontend && npm run build                  # 产出 dist/，Go 用 STATIC_DIR 托管
+node web/frontend/scripts/check-i18n.mjs          # zh-CN/en-US key 对齐校验（CI 门禁）
+
+# 改动后的必跑项：gofmt -l . 必须为空（CI 有门禁，直接红）
+go build ./... && go vet ./... && go test ./...
+```
+
+## 运行时架构
+
+- **装配顺序**（`cmd/daycore/main.go`）：config.Load → store.Open+Migrate → catalog/prompts → server.New → locale 覆盖层 → 两个 cleanup ticker → **Worker（无条件启动**，不再绑 OneBot）→ channels（仅当配了通道）→ inbound 消费循环。关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` → `WaitBackground` → `worker.Stop()`。
+- **中间件链**（全局单链，无分组）：`recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → dataSessionMW → mux`。三个身份中间件**「解析不强制」**（有效才注入 ctx，从不拦截）；真正的鉴权在 handler 内 `requireSession`（无 sid → 401 `no_session`）或 `adminAuthorized`。
+- **路由注册模式**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){…})`，注册表在 `internal/server/routes.go`。**不要去 `server.go` 加路由** —— 那里只剩静态 `/` 一条。`RouteTable(*Server)` 用零值 Server 重放注册（读路由表不需要数据库）。当前 **101 条路由 / 22 个组**（`docs/API_SURFACE.md` 是生成物，`make api-surface` 重生成）。
+- **存储注册模式**：`internal/storage/registry.go` 的 `storage.Register(dbType, opener)`，sqlstore/mongostore 在 `init()` 自注册，main.go blank import。`domain.Store` 是组合接口（约 179 个方法），**业务代码只 import `domain`，绝不直接引用具体 store** —— 漏一个 accessor 是编译错误，这正是两个 store 同步的强制手段。
+- **版本三层，不要混**（唯一真源 `internal/version/version.go`，同步 `web/frontend/package.json`）：
+  1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`2.<minor>.<patch>-beta`；`GET /api/healthz`、设置页显示）。
+  2. **API 契约版本** `APIVersion=1` / `APIMinor=1`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
+  3. 各前端自己的版本号（在各自子仓库，与本仓解耦）。
+- **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。11 个 key。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。
+- **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，11 个工具定义在 `agent_tools.go` 的 `companionToolDefs`。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。
+- **Worker**（`internal/server/worker.go`）：cron 驱动；产出全部落库、由 App 读，推到通道只是可选的最后一步。按用户排程是**首次请求时懒排**（`SetScheduleOnUse`，`markAwake` 节流放行时调一次；⚠️ 代价是重启当天早上有个缺口）。三个定时时刻由节律派生：`PlanAt = Wake − 3h30m`（默认 04:00）、`BriefAt = Wake`（07:30）、`ReviewAt = Sleep − 90m`（21:00）。另有 deadline 巡检、20h 关怀（Protector）。
+- **多语言三层**（`internal/i18n/`）：DB `locale_overrides` → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US。**给后端加一门语言是丢一个翻译文件，不用改代码、不用发版**；内嵌两种是「地板」不是全集。用户自选一主一副（`SessionPrefs.PrimaryLocale`/`SecondaryLocale`），部署只给默认值（`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`）。⚠️ 前端还不是这样 —— `web/frontend/src/i18n.js` 是硬编码双语言字典。
+
+## 代码组织与模块划分
+
+| 包 | 职责 |
+|---|---|
+| `internal/domain/` | 纯数据结构 + Repository/Store 接口，零外部依赖 |
+| `internal/server/` | 路由、中间件、全部 handler、agent loop、cron Worker（一个文件一组 handler） |
+| `internal/storage/sqlstore/` | SQL 三方言（SQLite/PG/MySQL，`Dialect` 抽象），每实体一文件；三份 DDL 由 `dialect_parity_test.go` 静态比对 |
+| `internal/storage/mongostore/` | MongoDB，每实体一 repo 文件；`bson_test.go`（免真机）+ `conformance_test.go`（真机行为套件） |
+| `internal/storage/storagetest/` | **行为一致性套件**（29 例）：所有后端跑同一份，加后端的验收标准 |
+| `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
+| `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
+| `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |
+| `internal/config/` | 环境变量配置（godotenv） |
+| `internal/search/` | web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS 优先 + 子串兜底） |
+| `internal/weather/` | WeatherProvider registry（open-meteo/qweather/owm/wttr.in，30min 缓存） |
+| `internal/version/` | 版本唯一真源（构建版本 + API 契约版本，别混） |
+| `internal/rapport/` `internal/rhythm/` `internal/mood/` | 默契评分与主动性门控 / 节律学习 + 20h 关怀 / 心情窗口（趋势+衰减+新鲜度）—— 三个都是纯函数、零存储、读时派生 |
+| `internal/schedule/` `internal/ics/` `internal/timeutil/` | 重复规则展开引擎 / 最小 iCalendar+RRULE 解析器（零依赖）/ 石化线与墙钟换算 |
+| `internal/i18n/` | locale 协商 + 三层消息目录 + 用户级一主一副 `Pair` |
+
+## 代码约定
+
+- **副作用永远服务端执行**：前端决不能直接调 store 写操作，必须经过 agent 工具或 HTTP handler —— 撤销体系整个建立在这条上。
+- **所有写路径必须调 `s.logOp`**（append-only 操作日志，`detail` 存 before/after 快照；**撤销是从 before 快照逐键重建的**，快照不全等于撤不回来）。best-effort（丢错不拦）。撤销注册表在 `handlers_ops.go`（`registerRevert(action, h)`，注册重复 panic；没注册的 action 返回 `irreversible`）。`revert` 自己永不可注册为可撤销。
+- **错误处理四类**：agent 工具失败 → `toolResult{OK:false, ErrMsg}`（不中断 loop，注回上下文让模型重试）；HTTP handler → `s.writeErr(w, status, stableCode, humanMessage)`（**不要只给 humanMessage**，前端靠 stableCode 做 i18n）；存储层「找不到」→ 统一 `domain.ErrNotFound`；AI 流出错 → `chunk.Err` → SSE error 帧 + **done**（客户端必须收到 done）。
+- **永不信任客户端上送的上下文**：companion handler 不接收 `todayPlan`/`moodHistory`/`date` 等，全部由服务端从 store 组装；对话历史做角色白名单（客户端不能注入 `system` 轮次）。
+- **文件命名**：Go `snake_case.go`；React `PascalCase.jsx`（页面/组件）、`camelCase.js`（工具/状态）。
+- **Go 里的用户可见文案一律 `i18n.Register` + `i18n.T`/`Tf`**，不要写 `if HasPrefix(locale,"en")`，也**不要直接 `i18n.Pick`**（绕开 DB/文件两层，让字符串变成不可翻译的）。同一 key 注册两次会 panic。带 `%` 动词的条目新语言必须保留同样的动词与顺序。
+- **存储层取舍规则**：凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段**必须是列**；其余可以进 JSON blob。需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，三方言都支持）。`NormalizeDSN` 模式：代码依赖的连接参数（SQLite `busy_timeout`+WAL、MySQL `clientFoundRows`）由方言自己补，不写进文档等运维抄全。
+- **给已有表加列走 `ColumnMigration`**（`sqlstore/dialect.go` 的 `sessionColumnMigrations`，实际覆盖六张表），同时改三方言建表 DDL 与 mongostore doc struct；MySQL 的 TEXT 一律可空、读侧 COALESCE；新表不要用需要引号的列名。
+- **实时文档铁律**：任何代码改动必须在同一批修改中更新 `docs/` 对应文件；加/删路由连着改 `api/spec/paths/<tag>.yaml` → `make api-bundle` → 升 `APIMinor` → `make api-surface`，三样都有测试盯着，漏一样就红。
+
+## 测试策略
+
+- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：29 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
+- **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
+- **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
+- **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。
+- **CI 四个 job**（`.github/workflows/ci.yml`）：backend（gofmt 门禁 + openapi 解析与 Go struct 字段核对 + vet + test，带 mongo:8/postgres:16/mysql:8 三个 service，并**断言套件没有静默 skip** + 静态二进制产物）、frontend（check-i18n + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像，不推送）。
+- **其他测试网**：`bson_test.go`（免真机序列化往返）、`phase_test.go` + `api/testdata/petrify-vectors.json`（DST 行为表驱动，将来 TS 侧 vendored 同一份）、`livemodel_test.go`（`make test-models`，花钱）、`handlers_ops_test.go`（撤销注册表非空/重复 panic）、`locales_test.go`（三层接线）。
+
+## 部署
+
+- **单二进制模式**（推荐）：`cd web/frontend && npm run build` → `make build` → 上传 `bin/daycore` + `config/` + `web/frontend/dist`；`STATIC_DIR` 指向 dist，Go 同时托管前端与 `/api`（`/assets/` immutable 长缓存，SPA fallback 回 index.html；`STATIC_DIR=""` 或无构建产物 = 纯 API 模式）。
+- **生产环境变量**：`APP_ENV=production` 后 `JWT_SECRET`/`COOKIE_SECRET` 缺失直接启动失败；**`ADMIN_TOKEN` 不是可选的**（不设时管理面鉴权退化成「只看 `APP_ENV` 是不是 production」，而管理面含 `GET`/`DELETE /api/admin/db/table/{name}` 裸库读删）；`SECURE_COOKIES=true`；`PUBLIC_BASE_URL` 给 OAuth 回调用；`HOST=127.0.0.1` 只监听本机由 nginx 对外。环境变量完整清单在 `docs/ARCHITECTURE.md`（`.env.example` 是常用子集，缺 9 项）。
+- **nginx**：`proxy_buffering off` 是 SSE 硬要求，`proxy_read_timeout 300s`（AI 请求慢）。样例 `deploy/nginx.conf`。
+- **Docker**：`deploy/Dockerfile` 是纯 API 镜像（不 COPY 前端产物），`docker-compose.yml` 带 postgres/mysql/mongo 三个本地开发 profile（`make db-postgres` 等）。
+- **数据库**：`DB_TYPE`/`DB_DSN` 一键切换 sqlite/postgres/mysql/mongodb。**MongoDB 是推荐部署**，但四个后端都要能跑（行为套件守着）。
+- **浏览器插件**：设置页生成 Import Token，插件填服务器地址 + token；**Chrome 会弹窗请求该域名的访问权限，必须允许**（MV3 下没有 host permission 的跨域 fetch 被 CORS 拦掉）。
+
+## 安全注意事项
+
+- **凭证双轨**（cookie + header，header 优先）：匿名 session `dc_sid`（`sid.<hmac>`，HMAC-SHA256 keyed by COOKIE_SECRET，MaxAge 400 天）↔ `X-Session-Token`；登录用户 `dc_auth`（JWT HS256，claims 含 `tv`，MaxAge=JWT_TTL）↔ `Authorization: Bearer`。**token_version 撤销**：登出时 `IncrementTokenVersion`，全设备 JWT 即失效。cookie 统一 HttpOnly / Secure=`SECURE_COOKIES` / SameSite=`COOKIE_SAMESITE`（none 需 Secure，值不对启动失败）。
+- **CORS 四分支**（`corsMW`）：`/api/import/*` 前缀 `ACAO:*` 无 credentials（插件直推，token 鉴权）；`ALLOWED_ORIGINS` 含 `*` 时反射 `*` 且**明确不与 credentials 组合**（防 CSRF）；显式 allowlist 回显 origin + credentials；其余不设头。OPTIONS 一律 204 短路。header 轨凭证必触发 preflight → 天然免 CSRF。
+- **管理面**：`X-Admin-Token` 常量时间比较（`subtle.ConstantTimeCompare`），走请求头不走 URL。已知待改造：明文密钥长期躺在控制台 `sessionStorage`、永不过期、无法轮换（方向：一次登录换短 TTL JWT cookie，批次 F4）。
+- **密码**：argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混入，并发上限 4。
+- **有意公开的信息披露**：`GET /api/healthz` 免鉴权返回 `db`/`env`/`version`/`channel`，是知情取舍（插件「测试连接」有真消费者）；ping 失败时**不回传驱动错误原文**（含 DSN 与主机片段）。
+- **AI 端点鉴权**：所有 AI 端点必须 `requireSession`（2026-07-30 补的洞：三条 AI 端点只有 IP 限流，任何人都能烧模型额度）。限流：`AI_RATE_LIMIT_PER_MIN`(30)/IP、`AUTH_RATE_LIMIT_PER_MIN`(10)；`MAX_IMAGE_BYTES`(8MiB)。
+- **第三方文本进 LLM 的注入面**（`docs/specs/` 贯穿规则）：客户端提供、要进 LLM 的文本（provider 描述、前端 `theme.rules`）**未经运维批准不使用** —— 没主张或没批准就按结构化字段机械生成，注入面默认为零。
+- **部署事故史**：README 里有一段「注释写在续行 `\` 之后导致 `APP_ENV` 等五项丢失、管理面敞开」的真实事故，照 README 部署时必须把注释放独立行。
+
+## 文档地图
 
 | 想知道 | 看 |
 |---|---|
+| 仓库铁律、布局、常用事实（本文件的浓缩版） | [`CLAUDE.md`](CLAUDE.md) |
 | 架构、包结构、中间件、启动关停、配置分层 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | 实体、四个存储后端、加表加列、迁移事故史 | [`docs/DATA.md`](docs/DATA.md) |
 | 认证三轨、CORS、鉴权旁路 | [`docs/AUTH.md`](docs/AUTH.md) |
-| agent loop、工具带、决策卡 | [`docs/AGENT.md`](docs/AGENT.md) |
-| provider、提示词分层、加 wire-format | [`docs/AI.md`](docs/AI.md) |
+| agent loop、SSE 帧协议、工具带、决策卡 | [`docs/AGENT.md`](docs/AGENT.md) |
+| provider、提示词三层、加 wire-format | [`docs/AI.md`](docs/AI.md) |
 | 有哪些 HTTP 路由、各在哪个文件 | [`docs/API_SURFACE.md`](docs/API_SURFACE.md)（生成的） |
 | 端无关的产品语义（时间三层、提案、注意力阶梯、默契） | [`docs/EXPERIENCE_CORE.md`](docs/EXPERIENCE_CORE.md) |
+| 加路由/工具/模型/语言的分步骨架、开发命令 | [`docs/DEVELOPING.md`](docs/DEVELOPING.md) |
 | **别人照着实现什么**（存储 / provider / 前端适配层） | [`docs/specs/`](docs/specs/README.md) |
 | API 契约 | [`api/openapi.yaml`](api/openapi.yaml)（**生成物**，源在 [`api/spec/`](api/spec/README.md)）+ [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) |
 
-## 三条最容易踩的
+## 最容易踩的三条
 
 1. **`api/openapi.yaml` 是生成物。** 改 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`。文件名必须等于 operation 的 tag，合并器会强制。
 2. **路由在自己的 handler 文件里注册**（`init()` 里 `registerRoutes`），不在 `server.go`。加一条路由要连着改 openapi 分片、升 `APIMinor`、跑 `make api-surface` —— 三样都有测试盯着，漏一样就红。
 3. **`docs/` 与代码同批更新。** 这不是风格要求：这个文件本身就是不守它的后果。
-
-## 验证
-
-```bash
-gofmt -l .                      # 必须空，CI 有门禁
-go build ./... && go vet ./... && go test ./...
-make test-mongo                 # 真机 Mongo 那半（本机要有 mongod）
-node web/frontend/scripts/check-i18n.mjs
-```

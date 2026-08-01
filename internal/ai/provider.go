@@ -116,6 +116,31 @@ type Capabilities struct {
 // server-side tool that returns results, versus a prompt fragment that rides
 // with the model).
 
+// ToolStreamer marks a provider whose ChatStream carries tool calls.
+//
+// It is a property of the wire format, not of the model, so it is an optional
+// interface rather than a Capabilities field: a Capabilities field would have to
+// be declared in models.yaml, where an operator has no way of knowing whether
+// our anthropic implementation happens to parse tool_use blocks yet.
+//
+// Only the openai format emits ToolCallDelta today. anthropic's ChatStream
+// handles content_block_delta and message_stop and drops tool_use entirely;
+// ollama's reads Message.Content only. Callers that need tool calls must route
+// those through StreamViaChat — see its comment, which was written for exactly
+// this and then never called.
+type ToolStreamer interface {
+	StreamsToolCalls() bool
+}
+
+// StreamsToolCalls reports whether p delivers tool calls over ChatStream. A
+// provider that does not say is assumed not to: the failure mode of guessing
+// wrong in that direction is one non-streamed round, and in the other direction
+// it is every tool call silently vanishing.
+func StreamsToolCalls(p AIProvider) bool {
+	ts, ok := p.(ToolStreamer)
+	return ok && ts.StreamsToolCalls()
+}
+
 // AIProvider is the contract every wire-format implementation satisfies.
 type AIProvider interface {
 	Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error)

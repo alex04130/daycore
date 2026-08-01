@@ -340,3 +340,7 @@ func truncate(b []byte) string {
 	}
 	return string(b)
 }
+
+// StreamsToolCalls reports true: this format parses delta.tool_calls and emits
+// ToolCallDelta per index. It is the only one that does.
+func (p *provider) StreamsToolCalls() bool { return true }
