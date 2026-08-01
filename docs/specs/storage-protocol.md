@@ -6,7 +6,7 @@
 
 ## 这是什么，不是什么
 
-Daycore 的存储抽象是 `domain.Store`：26 个 repository 接口、179 个方法、四个原生实现（sqlite / postgres / mysql / mongodb）。这个协议让**第五种存储不必用 Go 写在仓库里** —— 写一个适配器，说这套协议，就能接。
+Daycore 的存储抽象是 `domain.Store`：**27 个 repository 接口、115 个方法**（2026-07-30 用 AST 数过；此前抬头写的「26 / 179」两个数字都是错的）、四个原生实现（sqlite / postgres / mysql / mongodb）。这个协议让**第五种存储不必用 Go 写在仓库里** —— 写一个适配器，说这套协议，就能接。
 
 **它是兼容层，不是性能层。** 每次读都过一趟进程边界，而 companion 组一次提示词要读八次库。原生适配器是快路径，这条是「原生适配器写不出来」时的那条路。
 
@@ -30,7 +30,71 @@ Daycore 的存储抽象是 `domain.Store`：26 个 repository 接口、179 个�
 
 所以：**实现 `?ifMatch=` 和 `PATCH … where=` 才算实现了这个协议。** 缺了它们的适配器不是「功能少一点」，是不正确。
 
-存储本身没有条件写不是死路 —— 适配层可以用一把锁模拟出来，但**必须由适配层补，不能由 Daycore 降级**，而且那把锁本身仍然需要一个不可再少的原语。见「如果你的存储没有条件写」。
+存储本身没有条件写不是死路 —— 可以用一把锁模拟出来。**谁来补见下面「补救归谁」那一节**（2026-07-30 修正：先前这里写着「必须由适配层补，不能由 Daycore 降级」，那条太死，已经改了）。
+
+## 基础集 + 可选扩展集（RISC-V 那个形状）
+
+**协议小，但可扩展。** 一个实现只需要做基础集；高阶能力做成**具名可选集**，由 `capabilities` 如实声明，Daycore 按声明决定走原生还是走补救。
+
+### 基础集（`base`）—— 不做就接不上
+
+| | |
+|---|---|
+| `get` / `put` / `delete` / `insert` | 其中 **insert 在 id 冲突时必须失败而不是覆盖** |
+| `query`，谓词 `eq` `in` `lt` `lte` `gt` `gte` `exists` `notExists` | 单字段、AND 组合 |
+| `?ifMatch=` 与 `PATCH … where=` | 条件写，见上 |
+| `count` | |
+| `capabilities` | 自述，也是健康检查 |
+
+### 可选扩展集
+
+| 扩展 | 内容 | 缺了怎么办 |
+|---|---|---|
+| `or` | 谓词的 OR 组合 | Daycore 拆成多次 `query` 再合并去重 —— **正确性等价**，代价是往返次数 |
+| `like` | 子串匹配 | 同上，或退回全量扫 + 本地过滤（有上限） |
+| `offset` | `query` 的跳过 N | 拉 `limit+offset` 条再本地丢弃；分页很深时代价显著 |
+| `fulltext` | 原生全文索引 | 退回 `like`／子串扫描，**召回下限保证**（现有 `MaterialSearcher` 就是这么分层的） |
+| `conditionalWrite` | 原生条件写 | **不一样，见下** |
+| `batch` | 一次多个操作 | 逐条发 |
+
+声明形状：
+
+```
+GET /v0/capabilities
+  200 {
+    "protocol": "0",
+    "base": true,
+    "extensions": ["or", "offset", "fulltext"],   // 有哪些高阶集
+    "conditionalWrite": true,                      // false 时必须同时声明 emulatedVia
+    "maxBatch": 100
+  }
+```
+
+**未声明的扩展 = 没有**，Daycore 走补救路径，并在控制台标出「这个能力靠模拟」。**不允许「声明了但其实做不对」** —— 那比不声明糟得多，因为补救路径不会被启用。
+
+## 补救归谁：两类，不能混为一谈
+
+先前这份文档一刀切写「必须由适配层补」。那条不对，也不是协议该管的 —— **补救在转换层里做，只要它正确，就是合法的**。真正要区分的是补救**能不能保住原来的保证**：
+
+### 甲类 · 补救保正确，只花性能（`or` / `like` / `offset` / `fulltext`）
+
+这些是**纯查询重写**。OR 拆成几次 AND 查询再合并去重，结果集与原生一模一样；差别只有往返次数。`fulltext` 退回子串扫描会**少召回**，但不会返回错的东西 —— 这是仓库里已经在用的分层（`search/material.go` 先探原生索引、失败退子串，`Score=1` 作召回下限）。
+
+**这一类 Daycore 侧补，理直气壮。** 它甚至该由 Daycore 补而不是适配层：Daycore 知道自己的查询形状与预算，适配层只看得见一个孤立请求，让它去猜怎么拆 OR 只会拆得更差。
+
+### 乙类 · 补救会动摇保证（`conditionalWrite`）
+
+条件写不一样。用一把锁模拟出来的 CAS **在锁正确时**等价，锁不正确时是**静默的错误**（不是慢，是错）。而分布式锁的正确性依赖的东西（租约、fence、时钟）不在这份协议的可见范围内。
+
+所以乙类的规则保持严格，但理由说清楚了：
+
+- 能原生做就原生做。三大 SQL 引擎都能，Mongo 本来就能。
+- 做不到就**在适配层里补**，因为锁必须贴着数据待的地方 —— 隔着一次网络的锁，持锁者与被保护的写之间多一个可能失败的跃点，那正是丢正确性的地方。
+- 必须声明 `emulatedVia`，Daycore 在启动日志与控制台标出来。**运维有权知道自己的正确性是靠一层模拟撑着的。**
+
+一句话：**甲类补在 Daycore 侧（它知道得更多），乙类补在适配层侧（它离数据更近）。**
+
+⚠️ 与之相关的一条**代码现状**：`domain/proposal.go:308` 有一句「禁止 Go 侧补救」的注释。那句针对的是**乙类**（提案行级接受的 `rev` CAS），不是通用规则 —— 按本节重新读它。
 
 ## 操作（8 个）
 
@@ -56,8 +120,13 @@ POST /v0/query/{coll}
   200 {"docs":[{"doc":{...},"rev":3}, …]}
 ```
 
-`op` 的封闭集合：`eq` `ne` `lt` `lte` `gt` `gte` `in` `exists` `notExists`。
-没有 `or`、没有 `like`、没有正则 —— 现有 179 个方法都不需要，而每加一个都是适配器要正确实现的一件事。
+**基础集的 `op`**：`eq` `ne` `lt` `lte` `gt` `gte` `in` `exists` `notExists`。单字段、AND 组合。
+
+`or` 与 `like` 是**可选扩展集**，不在基础集里（见上）。
+
+⚠️ 这里先前写着「没有 `or`、没有 `like` —— 现有 179 个方法都不需要」。**那句话是假的**：`sqlstore` 里 6 个文件用了 `OR`（`derived.go` `coordination.go` `proposals.go` `oplog.go` `users.go` `material_repo.go`），`material_repo.go` 用了 `LIKE`；其中 `derived.go` 与 `coordination.go` 的 OR **正是上面那张「靠条件写的东西」表里第 5 行和第 2 行的机制**，而 `proposals.go` 的两处正是批次 D 要扩的那个 filter。协议自述与代码不符，是这份文档自己没跟上，不是代码越界了。
+
+`offset` 同理是扩展集：基础集只有键集游标 `after`，但 `material_repo.go` 的分页要 offset。
 
 `after` 是**键集游标**（不是 offset）：按 `order` 的字段逐个比较，严格大于/小于。`OpLogs().Scan` 的重放路径依赖它 —— 见「游标语义」。
 
@@ -105,15 +174,9 @@ POST /v0/count/{coll}
   200 {"count": 128, "sum": {"useful": 91}}
 ```
 
-```
-GET /v0/capabilities
-  200 {
-    "protocol": "0",
-    "conditionalWrite": true,        // false 时必须同时声明 emulatedVia，见「如果你的存储没有条件写」
-    "features": ["fulltext"],        // 可选能力
-    "maxBatch": 100
-  }
-```
+形状见上面「基础集 + 可选扩展集」。要点：`extensions` 列出高阶集，**没列 = 没有**，Daycore 走补救；`conditionalWrite: false` 时必须同时声明 `emulatedVia`。
+
+⚠️ `features` 这个旧字段名已被 `extensions` 取代（2026-07-30）。旧名字里塞的 `"fulltext"` 语义没变，只是它现在是一个具名扩展集而不是一个自由标签。
 
 ## 三条容易做错的语义
 
@@ -137,7 +200,7 @@ GET /v0/capabilities
 
 ## 如果你的存储没有条件写
 
-`conditionalWrite: false` 是允许的，但**必须由适配层自己补上**，不是由 Daycore 降级。
+`conditionalWrite: false` 是允许的。它属于**乙类补救**（见「补救归谁」）：由适配层补，因为锁必须贴着数据待的地方。甲类（`or`/`like`/`offset`/`fulltext`）不受本节约束。
 
 ### 不可再少的那一个原语
 
@@ -174,6 +237,7 @@ GET /v0/capabilities
 - **一次写从 1 个往返变成 4 个**（抢、读、写、放）。存储型适配层已经在进程边界之外了，四倍往返意味着 companion 组一次提示词的八次读写会变成三十几次。
 - **一把错的锁比没有锁更糟**：没有锁时问题是「偶尔丢更新」，锁写错时问题是「整张表卡死」，而后者只在生产的并发下出现。
 - 所以：**能原生做条件写就原生做。** 三大 SQL 引擎都能（`json_set`/`jsonb_set`/`JSON_SET` 配 `WHERE json_extract(...)`，已在 SQLite 上实测一条语句成立），Mongo 的 `$set`/`$min`/`$max` 本来就是。锁是给真的做不到的存储留的门，不是省事的路。
+- 这是**乙类补救**（见「补救归谁」）：它动摇的是保证本身，不是性能。甲类（`or`/`like`/`offset`/`fulltext`）不受这一节约束，那些由 Daycore 侧补。
 
 适配层在 capabilities 里如实声明：
 

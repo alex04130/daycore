@@ -21,7 +21,7 @@
 **无状态请求／响应，天然可并发。** 用 HTTP 或 `exec`，不要用 WebSocket —— 没有需要保持的状态，长连接只是负担。
 
 ```
-GET  /v1/manifest
+GET  /v0/manifest
   200 {
     "name": "my-weather",
     "displayName": "我的天气源",
@@ -36,14 +36,14 @@ GET  /v1/manifest
 ```
 
 ```
-POST /v1/weather
+POST /v0/weather
   {"location":"北京","lat":39.9,"lon":116.4,"date":"2026-07-29","days":3,"tz":"Asia/Shanghai","locale":"zh-CN"}
   200 {"location":"北京","days":[
         {"date":"2026-07-29","code":3,"text":"阴","tempMin":22,"tempMax":31,"precipProb":40}, …]}
 ```
 
 ```
-POST /v1/search
+POST /v0/search
   {"query":"…","limit":5,"locale":"zh-CN"}
   200 {"results":[{"title":"…","url":"…","snippet":"…"}]}
 ```
@@ -110,6 +110,8 @@ OneBot 11 标准本身有三种接入方式，现有实现只覆盖第一种，*
 
 规则在 [transport.md](transport.md)：HTTP 状态码语义、超时与重试、子进程握手与生命周期、`providers.yaml` 形状。以下是本协议特有的。
 
+⚠️ **路径前缀 2026-07-30 从 `/v1/` 改成 `/v0/`。** `transport.md` 是四种适配层共用的规范，它在共用的 HTTP 一章里规定路径统一带 `/v0/`；这份分册当时写的是 `/v1/`。共用规范与分册打架，正是 transport.md 建立起来要消灭的那类漂移 —— **共用的那份赢**。（版本号本身仍然各走各的：适配协议的版本在 `manifest.protocol` 里，与路径前缀是两件事。）
+
 ### `format: exec` 的握手行
 
 适配层在握手那一行里**追加 `manifest`**，这样后端在建连接之前就知道它是谁、能干什么，控制台也能在它还没就绪时先把名字和 logo 显示出来：
@@ -126,7 +128,7 @@ OneBot 11 标准本身有三种接入方式，现有实现只覆盖第一种，*
 ### `format: http` 的额外要求
 
 - 查询型是**冷路径**（天气 30 分钟缓存一次、搜索按需），所以不要求 keep-alive，但要能承受被并发调用。
-- `GET /v1/manifest` 必须便宜，它同时是健康检查。
+- `GET /v0/manifest` 必须便宜，它同时是健康检查。
 - **不要在适配层里重试**。后端知道 deadline 与预算，适配层的重试只会把一次超时变成三次。
 
 ### `format: ws`（仅通道型）

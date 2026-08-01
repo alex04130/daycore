@@ -64,6 +64,16 @@
 
 ⚠️ **与存储降级启动直接冲突的一条**：降级模式下没有 DB，**token version 吊销就不可用**（签发只要 `JWT_SECRET`，吊销要查库）。所以降级模式里那个 admin JWT 的 TTL 必须显著更短，而且 `ADMIN_TOKEN` 未设时**绝不能**沿用「dev 全开」—— 否则「存储挂了仍然把控制台端上来」就等于把一个无鉴权配置界面挂到网上。降级模式必须要求显式凭证，没有就只给一个说明页。
 
+## 有意公开的信息披露
+
+`GET /api/healthz` 免鉴权地返回 `db`（存储引擎名）、`env`、`version`、`channel`。**这是知情的取舍，不是疏忽**，记在这里免得每次审计都重新「发现」一遍：
+
+- `db` **有真消费者** —— 浏览器插件的「测试连接」按钮把它显示给用户（`extension/options.js:107`），那是部署的拥有者在检查自己的服务器。
+- `version`/`channel` 无论如何都是公开的：`GET /api/version` 按设计就是公开的（前端要在建立会话之前协商契约）。所以在 healthz 里藏它们毫无意义。
+- 剩下的边际侦察价值只有「引擎名 + 环境名」。handler 已经划过一次线，而且划在更要紧的地方：ping 失败时**不回传驱动的错误原文**，因为那里面有 DSN 与主机片段。
+
+⚠️ 但这条意味着一件事要记住：**healthz 的响应随存储后端变化**。所以它不能被当成「与后端无关的契约面」来引用 —— 第五个存储后端接上来时，这个字段会返回一个新值，而 openapi 里它是 `type: string` 无枚举，这是对的。
+
 ## 公开端点（无需 session）
 
 `GET /api/healthz`、`GET /api/version`、`GET /api/models`、`POST /api/session/init`、auth 系列（register/login/logout/providers/oauth/me）。
