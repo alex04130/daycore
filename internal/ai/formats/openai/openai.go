@@ -51,7 +51,15 @@ type chatReq struct {
 	Stop           []string    `json:"stop,omitempty"`
 	Tools          []wireTool  `json:"tools,omitempty"`
 	ResponseFormat *respFormat `json:"response_format,omitempty"`
-	CacheKey       string      `json:"-"` // header only, not serialized
+	// prompt_cache_key is a top-level BODY field, not a header. It shipped as
+	// `json:"-"` plus a Header.Set, which sends nothing OpenAI reads.
+	//
+	// Zero impact today — nothing in the repo sets ChatRequest.CacheKey, so the
+	// wrong encoding never went out. That is worth saying plainly rather than
+	// filing it as a leak: a field having a bug and a field having callers are
+	// different things, and conflating them is how a three-line fix gets sold as
+	// an incident.
+	CacheKey string `json:"prompt_cache_key,omitempty"`
 }
 
 type respFormat struct {
@@ -177,9 +185,6 @@ func (p *provider) post(ctx context.Context, body chatReq) (*http.Response, erro
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.cfg.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
-	}
-	if body.CacheKey != "" {
-		httpReq.Header.Set("prompt-cache-key", body.CacheKey)
 	}
 	return p.http.Do(httpReq)
 }

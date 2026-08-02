@@ -157,6 +157,7 @@ func run(logger *slog.Logger) error {
 		OAuth:    oauthMgr,
 		Searcher: search.NewMaterialSearcher(store),
 		Weather:  weatherProvider,
+		Blobs:    blobStore,
 		Logger:   logger,
 	})
 

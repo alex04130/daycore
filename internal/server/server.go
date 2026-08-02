@@ -13,6 +13,7 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/auth"
+	"daycore/internal/blob"
 	"daycore/internal/config"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -32,7 +33,10 @@ type Deps struct {
 	OAuth    *auth.OAuthManager
 	Searcher domain.Searcher
 	Weather  domain.WeatherProvider
-	Logger   *slog.Logger
+	// Blobs is the file bus. nil is a supported configuration — every feature
+	// that needs bytes checks and says so.
+	Blobs  blob.Store
+	Logger *slog.Logger
 }
 
 // Server holds the dependencies and exposes an http.Handler.
@@ -50,6 +54,7 @@ type Server struct {
 	limiter     *rateLimiter
 	authLimiter *rateLimiter
 	weather     domain.WeatherProvider
+	blobs       blob.Store
 	search      *search.Client
 	searcher    domain.Searcher
 	decisions   *decisionRegistry
@@ -107,7 +112,7 @@ func New(d Deps) *Server {
 		prompts: d.Prompts, hasher: d.Hasher, tokens: d.Tokens, cookies: d.Cookies,
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
-		weather:     d.Weather, search: search.New(), searcher: d.Searcher,
+		weather:     d.Weather, blobs: d.Blobs, search: search.New(), searcher: d.Searcher,
 		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,
