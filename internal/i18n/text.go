@@ -37,7 +37,7 @@ func Pick(t Text, locale string) string {
 }
 
 // matchKey walks the fallback chain over a sorted key list, asking usable()
-// whether a candidate counts. Sorted input plus the Supported-first sweep is
+// whether a candidate counts. Sorted input plus the Embedded-first sweep is
 // what keeps the last resort from depending on Go's map iteration order — the
 // same gap must render the same way on every request.
 func matchKey(keys []string, usable func(string) bool, locale string) (string, bool) {

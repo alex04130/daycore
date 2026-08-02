@@ -1,6 +1,10 @@
-// Package channels defines the pluggable messaging channel framework.
-// Each platform (QQ/OneBot, WeChat, Feishu, Telegram) implements the Channel
-// interface. The Registry manages their lifecycle.
+// Package channels defines the pluggable messaging channel framework: a
+// platform implements the Channel interface and the Registry manages its
+// lifecycle.
+//
+// One implementation exists today — QQ via OneBot 11 (onebot/). WeChat, Feishu
+// and Telegram are plausible next ones, not present ones; the interface was
+// shaped with them in mind but nothing here speaks them.
 package channels
 
 import (

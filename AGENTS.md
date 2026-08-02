@@ -84,6 +84,7 @@ go build ./... && go vet ./... && go test ./...
 | `internal/storage/storagetest/` | **行为一致性套件**（29 例）：所有后端跑同一份，加后端的验收标准 |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
+| `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说 |
 | `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |
 | `internal/config/` | 环境变量配置（godotenv） |
 | `internal/search/` | web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS 优先 + 子串兜底） |
@@ -147,6 +148,7 @@ go build ./... && go vet ./... && go test ./...
 | provider、提示词三层、加 wire-format | [`docs/AI.md`](docs/AI.md) |
 | 有哪些 HTTP 路由、各在哪个文件 | [`docs/API_SURFACE.md`](docs/API_SURFACE.md)（生成的） |
 | 端无关的产品语义（时间三层、提案、注意力阶梯、默契） | [`docs/EXPERIENCE_CORE.md`](docs/EXPERIENCE_CORE.md) |
+| 战略认知、商业化方案、陪伴边界、全功能审计（讨论注入，待裁决后并入 ROADMAP/EXPERIENCE_CORE） | [`docs/STRATEGY.md`](docs/STRATEGY.md) |
 | 加路由/工具/模型/语言的分步骨架、开发命令 | [`docs/DEVELOPING.md`](docs/DEVELOPING.md) |
 | **别人照着实现什么**（存储 / provider / 前端适配层） | [`docs/specs/`](docs/specs/README.md) |
 | API 契约 | [`api/openapi.yaml`](api/openapi.yaml)（**生成物**，源在 [`api/spec/`](api/spec/README.md)）+ [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) |

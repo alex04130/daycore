@@ -9,7 +9,7 @@ import (
 // ModelConfig is the fully-resolved description of one model the app can use.
 // It is produced from the catalog config (api key already resolved from env).
 type ModelConfig struct {
-	ID        string         // catalog id used everywhere in the app (e.g. "deepseek-chat")
+	ID        string         // catalog id used everywhere in the app (e.g. "chat"); see models.yaml
 	Format    string         // which registered wire format builds it ("openai"/"anthropic"/...)
 	BaseURL   string         // API base URL
 	APIKey    string         // resolved secret

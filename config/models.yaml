@@ -5,9 +5,15 @@
 # caps: vision/tools/stream are declared, not auto-detected. The vision model is
 # whichever entry has `vision: true` (or DEFAULT_VISION_MODEL). The default chat
 # model is DEFAULT_CHAT_MODEL (env), which must match an id below.
+#
+# `id` is OUR stable name; `model` is the vendor's, and the vendor's is the half
+# that rots — they retire and rename on their own schedule. Rotating to a newer
+# upstream model is a one-line edit to `model:` and touches nothing else, which
+# only works if ids say what an entry is FOR rather than what is behind it today.
+# See models.example.yaml.
 models:
-  # ── DeepSeek (OpenAI-compatible) — default chat model ──────────────────────
-  - id: deepseek-chat
+  # ── Default chat (DeepSeek, OpenAI-compatible) ─────────────────────────────
+  - id: chat
     format: openai
     base_url: https://api.deepseek.com
     model: deepseek-v4-flash
@@ -18,9 +24,10 @@ models:
     context_window: 65536
     max_tokens: 4096
 
-  # ── DeepSeek reasoner — thinking model (set DEFAULT_PLANNER_MODEL to use) ──
-  # ── DeepSeek Anthropic-format — native web_search server-side tool ──────────
-  - id: deepseek-search
+  # ── Same model over Anthropic format — meant for native web_search ─────────
+  # ⚠️ ToolDef.ServerSide has no implementation in any format (see docs/AI.md),
+  # so this entry currently behaves as plain Anthropic-format DeepSeek.
+  - id: chat-search
     format: anthropic
     base_url: https://api.deepseek.com/anthropic
     model: deepseek-v4-flash
@@ -31,8 +38,8 @@ models:
     context_window: 65536
     max_tokens: 4096
 
-  # ── DeepSeek reasoner — thinking model (set DEFAULT_PLANNER_MODEL to use) ──
-  - id: deepseek-reasoner
+  # ── Thinking model for auto-plan (set DEFAULT_PLANNER_MODEL=planner) ───────
+  - id: planner
     format: openai
     base_url: https://api.deepseek.com
     model: deepseek-v4-pro
@@ -47,8 +54,19 @@ models:
       thinking:
         enabled: true
 
-  # ── OpenAI GPT-4o — vision-capable (used for image→plan if enabled) ─────────
-  - id: gpt-4o
+  # ── Vision (Anthropic Messages API) — image→plan, material screenshots ─────
+  - id: vision
+    format: anthropic
+    base_url: https://api.anthropic.com
+    model: claude-sonnet-5
+    api_key_env: ANTHROPIC_API_KEY
+    vision: true
+    tools: true
+    stream: true
+    context_window: 200000
+
+  # ── Alternative vision / chat (OpenAI) ─────────────────────────────────────
+  - id: openai
     format: openai
     base_url: https://api.openai.com/v1
     model: gpt-4o
@@ -58,19 +76,8 @@ models:
     stream: true
     context_window: 128000
 
-  # ── Anthropic Claude (Messages API) — alternative chat/vision ───────────────
-  - id: claude
-    format: anthropic
-    base_url: https://api.anthropic.com
-    model: claude-3-5-sonnet-latest
-    api_key_env: ANTHROPIC_API_KEY
-    vision: true
-    tools: true
-    stream: true
-    context_window: 200000
-
-  # ── Local Ollama (llava) — offline vision, no API key ───────────────────────
-  - id: llava
+  # ── Local Ollama — offline vision, no API key ──────────────────────────────
+  - id: local
     format: ollama
     base_url: http://localhost:11434
     model: llava

@@ -7,7 +7,7 @@
 | 文档 | 内容 | 状态 |
 |---|---|---|
 | [transport.md](transport.md) | **传输层，四种适配层共用**：HTTP 状态码语义与重试规则、子进程握手与生命周期、`providers.yaml` 形状 | 定案，未实现 |
-| [storage-protocol.md](storage-protocol.md) | 第五种存储怎么接：8 个操作、**条件写为什么不能省**、没有条件写时的锁配方 | 定案，未实现（批次 F8b） |
+| [storage-protocol.md](storage-protocol.md) | 第五种存储怎么接：8 个操作、**基础集 + 具名可选扩展集**（RISC-V 那个形状）、**条件写为什么不能省**、没有条件写时的锁配方 | 定案，未实现（批次 F8b） |
 | [provider-protocol.md](provider-protocol.md) | 天气 / 搜索 / 消息通道怎么接 | 定案，未实现（批次 F2） |
 | [frontend-manifest.md](frontend-manifest.md) | 前端怎么握手、主题 token 空间怎么归自己 | 定案，未实现（批次 F7） |
 

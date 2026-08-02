@@ -89,6 +89,8 @@ server {
 
 > 也可以完全不用 nginx：`HOST=`（留空监听所有网卡）+ `PORT=443` 前面挂 Caddy，或直接 `PORT=8080` 裸跑测试。Docker：`make docker && docker compose -f deploy/docker-compose.yml up app`。
 
+> ⚠️ **只跑一个实例。** 后台的主动任务（早报、晚复盘、deadline 巡检）现在由每个进程各自排程，没有选主。起第二份副本 = 用户收到两遍推送。换成 PostgreSQL/MySQL/MongoDB 是为了备份与运维，不代表可以多副本 —— 选主在 `docs/ROADMAP.md` 的 ζ 批次。
+
 浏览器插件直推：打开插件设置，把「Daycore 服务器地址」改成 `https://day.example.com`，粘贴应用设置页生成的 Import Token，点「保存」——**Chrome 会弹窗请求该域名的访问权限，必须允许**（MV3 下没有 host permission 的跨域 fetch 会被 CORS 拦掉）。点「测试连接」可立即验证地址与权限是否就绪。
 
 ### 本地测试版 vs 服务器部署版
@@ -100,7 +102,7 @@ server {
 | `HOST` | 显式 `HOST=`（空值）= 全网卡；**完全不设**且非 production 会被强制改写成 `127.0.0.1` | `127.0.0.1`（nginx 前置时）；直接暴露则显式留空 |
 | `SECURE_COOKIES` | `false` | `true`（HTTPS 后必须） |
 | `PUBLIC_BASE_URL` | `http://localhost:8080` | `https://你的域名`（OAuth 回调依赖它） |
-| 数据库 | SQLite 单文件（缺省） | SQLite 即可；多实例/备份需求换 `postgres`/`mysql`/`mongodb`（`DB_TYPE`+`DB_DSN`） |
+| 数据库 | SQLite 单文件（缺省） | SQLite 即可；备份/运维需求换 `postgres`/`mysql`/`mongodb`（`DB_TYPE`+`DB_DSN`） |
 | CORS | Vite 代理下无需配置 | 同源部署无需配置；仅当前端另起域名才设 `ALLOWED_ORIGINS` |
 | 插件直推 | `http://localhost:8080` | `https://你的域名`（`/api/import/*` 已对任意 Origin 放行，token 鉴权） |
 | AI 限流 | 缺省 30 req/min/IP | 按需调 `AI_RATE_LIMIT_PER_MIN` |
@@ -171,6 +173,8 @@ SECURE_COOKIES=true DEEPSEEK_API_KEY=sk-… \
 `ADMIN_TOKEN` is **not optional**: without it, admin auth degrades to "is `APP_ENV` production?" (`handlers_admin.go:24`), and the admin surface includes raw `GET`/`DELETE /api/admin/db/table/{name}`. Keep comments on their own lines — a `#` after a trailing `\` silently breaks the continuation.
 
 Front it with nginx (swap `server_name`, add TLS; `proxy_buffering off` is required for SSE) as shown in the Chinese section above, or skip nginx entirely and expose the Go server directly. Docker: `make docker && docker compose -f deploy/docker-compose.yml up app`.
+
+⚠️ **Run exactly one instance.** Proactive background jobs (morning brief, evening review, deadline sweep) are scheduled per-process with no leader election, so a second replica means every user gets everything twice. Switching to PostgreSQL/MySQL/MongoDB buys you backups and operational tooling, not replicas — leader election is batch ζ in `docs/ROADMAP.md`.
 
 For the browser extension: open its Options, set the Daycore server URL to `https://day.example.com`, paste the Import Token from the app's Settings, and hit Save — **Chrome will prompt for access to that origin and you must allow it** (under MV3 a cross-origin fetch without a host permission is blocked by CORS). "Test connection" verifies the URL and the grant right away.
 

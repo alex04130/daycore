@@ -1,8 +1,13 @@
-// Package rhythm learns when a person is usually awake, so the Daemon can put
-// its scheduled work where it belongs: auto-plan in the quiet hours, the
-// morning brief at the hour they actually get up, the evening review before
-// they turn in. The alternative is a fixed 07:00 brief, which is a small daily
-// insult to anyone who does not get up at 07:00.
+// Package rhythm learns when a person is usually awake, so that scheduled work
+// can go where it belongs: auto-plan in the quiet hours, the morning brief at
+// the hour they actually get up, the evening review before they turn in. The
+// alternative is a fixed 07:00 brief, which is a small daily insult to anyone
+// who does not get up at 07:00.
+//
+// Status: this package computes the profile; the Worker does not read it yet
+// and still schedules from WORKER_DEFAULT_TZ. Signals are being recorded now
+// (see server/awake.go) precisely because they cannot be backfilled — the
+// learning needs MinDays of history before it can answer anything at all.
 //
 // Everything here is a pure function of a slice of signals plus a clock — no
 // storage, no timers, no background state. Like petrification and rapport, a

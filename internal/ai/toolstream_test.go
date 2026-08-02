@@ -16,7 +16,7 @@ import (
 //
 // The failure this guards is configuration-shaped, which is why it is not caught
 // by any test of a single format: config/models.yaml ships `claude` and
-// `deepseek-search` on the anthropic format with `tools: true`, and pointing
+// `chat-search` on the anthropic format with `tools: true`, and pointing
 // DEFAULT_CHAT_MODEL at either used to give a companion whose every tool call
 // vanished. The model asked to write to the plan, the format dropped the
 // tool_use block, and the loop saw a turn with no tool calls and ended — no

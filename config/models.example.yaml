@@ -1,38 +1,66 @@
 # Example AI model catalog. Copy to config/models.yaml and edit.
+#
 # Supported `format` values are whatever wire-format packages are registered
 # (built-in: openai, anthropic, ollama). Add a new format = implement it under
 # internal/ai/formats/<name> + RegisterFormat + recompile, then reference it here.
+#
+# ⚠️ THE UPSTREAM MODEL NAMES BELOW GO STALE. Vendors retire and rename models on
+# their own schedule, so treat every `model:` value here as "was real when this
+# was written", not as a recommendation. Check the vendor's current model list
+# before copying.
+#
+# That is exactly why `id` and `model` are two fields:
+#
+#   id     — YOUR name for this catalog entry. DEFAULT_CHAT_MODEL, the admin
+#            console and the database all reference this. Keep it stable.
+#   model  — the vendor's name, the perishable half. Rotating to a new upstream
+#            model is a one-line edit here and touches nothing else.
+#
+# Give ids that say what the entry is *for* ("chat", "planner", "vision"), not
+# which model happens to be behind it today. An id like `gpt-4o` becomes a lie
+# the moment you point it somewhere else, and you cannot rename it without
+# touching every deployment's env.
+
 models:
-  - id: deepseek-chat            # the id you reference as DEFAULT_CHAT_MODEL
+  - id: chat                     # the id you reference as DEFAULT_CHAT_MODEL
     format: openai               # OpenAI Chat Completions wire format
     base_url: https://api.deepseek.com
-    model: deepseek-chat         # upstream model name (defaults to id)
+    model: deepseek-v4-flash     # upstream name (defaults to id if omitted)
     api_key_env: DEEPSEEK_API_KEY
     tools: true
     stream: true
     context_window: 65536
 
-  - id: gpt-4o
+  - id: planner                  # set DEFAULT_PLANNER_MODEL=planner to use
     format: openai
-    base_url: https://api.openai.com/v1
-    model: gpt-4o
-    api_key_env: OPENAI_API_KEY
-    vision: true                 # mark vision-capable models so they can read images
+    base_url: https://api.deepseek.com
+    model: deepseek-v4-pro
+    api_key_env: DEEPSEEK_API_KEY
     tools: true
     stream: true
+    thinking: true
+    context_window: 65536
+    max_tokens: 8192
+    extra_body:
+      thinking:
+        enabled: true
 
-  - id: claude
+  - id: vision                   # mark vision-capable models so they can read images
     format: anthropic
     base_url: https://api.anthropic.com
-    model: claude-3-5-sonnet-latest
+    model: claude-sonnet-5
     api_key_env: ANTHROPIC_API_KEY
     vision: true
     tools: true
     stream: true
+    context_window: 200000
 
-  - id: llava
+  # Any OpenAI-compatible gateway works with format: openai — point base_url at
+  # it. This is how you reach a self-hosted vLLM, an aggregator, or a regional
+  # provider without writing code.
+  - id: local
     format: ollama
     base_url: http://localhost:11434
-    model: llava
+    model: llava                 # no api_key_env: Ollama needs none
     vision: true
     stream: true

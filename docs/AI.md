@@ -1,6 +1,6 @@
 # AI 子系统
 
-> 实时文档：改 provider/prompts/vision 必须同批更新本文件。最后全面核对：2026-07-14。
+> 实时文档：改 provider/prompts/vision 必须同批更新本文件。最后全面核对：2026-08-02。
 
 ## Provider 与 Catalog（internal/ai/）
 
@@ -8,6 +8,26 @@
 - formats/：openai（最完整，流式 tool_calls + 夹具测试）、anthropic（text-only 流式）、ollama（NDJSON）。
 - Catalog（models.go，config/models.yaml）：`DefaultChat()` / `Vision()` / `Planner()`；模型条目支持 extra_body/max_tokens/thinking。
 - StreamAccumulator（stream.go）按 index 拼合流式 tool_calls。
+
+## 模态层（modality.go / generators.go，2026-08-02 落地）
+
+**只有地基，没有接任何一家。** 类型系统能表达所有常见模态的进与出；具体接哪家、哪个音色、画什么图不在这一层。
+
+**模态**（`Modality`）：`text` / `image` / `audio` / `document` / `video`。`Modalities` 是**排序存储**的集合 —— 由它派生的任何东西（工具定义、提示词里的能力行）必须逐字节稳定，不稳定会静默毁掉提示词缓存（见 `specs/transport.md`）。
+
+**三种载运形式**（`Carriage`），因为厂商真的不一样，装成一种就会造出「声称支持、一半静默失败」的假能力：
+
+| | 是什么 | 谁需要它 |
+|---|---|---|
+| `inline` | base64 进请求体 | 通用兜底；小图片在多数厂商只有这一条路 |
+| `url` | 厂商自己去取 | Anthropic document、OpenAI file input；也让对象存储直接给签名 URL，省一次代理 |
+| `file_id` | 先传到厂商，这是句柄 | **不是优化** —— Qwen-Long / Kimi 这类国产 OpenAI 兼容网关只认这条（传 `/v1/files` 后把 `fileid://…` 塞进 **system 消息**，不是 content part） |
+
+**能力发现一律靠可选接口断言**，不进 `AIProvider`：`PartCarrier`（`CarriagesFor`）、`ToolStreamer`、`ImageGenerator`、`SpeechSynthesizer`、`Transcriber`、`Embedder`，各有 `As*` 助手函数。**沉默一律当「不支持」** —— 猜低只多一次 base64 往返，猜高是用户看着模型无视了他的附件。
+
+`ContentPart{Type, Text, MIME, Data, URL, FileID, Name}` 是消息里的一段；`ChatResponse.Parts` 装产物，`ChatResponse.Usage` 装用量（含 `CachedTokens` / `ReasoningTokens`）。⚠️ `Usage` **目前没有任何写入方** —— `AICallLogRepository` 那张表因此永远是空的（见 `ROADMAP.md` 已知缺口）。
+
+`GeneratedMedia` 拿的是字节不是 `blob.Ref`：这一层不许依赖存储层，而且 OpenAI 的图像端点现在只返回 base64，字节本来就是实际到手的东西。落不落盘由调用方决定。
 
 ## 提示词（prompts.go）
 
@@ -52,7 +72,7 @@ obj, ok := extractJSONObject(resp)   // handlers_ai_helpers.go：取首 { 到末
 
 `ToolCallDelta` 在三个 format 里的出现次数：**openai 1、anthropic 0、ollama 0**。anthropic 的 `ChatStream` 只处理 `content_block_delta` 与 `message_stop`，`tool_use` 块与 `input_json_delta` **落地丢弃**；ollama 只读 `Message.Content`。
 
-而 `config/models.yaml` 里 `claude` 与 `deepseek-search` 都是 anthropic format、都写着 `tools: true`。所以把 `DEFAULT_CHAT_MODEL` 指向它们中任何一个，**companion 的工具会全部失效** —— 模型请求写计划，format 把请求扔了，loop 看到一轮没有工具调用就结束。任何地方都不报错。
+而 `config/models.yaml` 里 `vision` 与 `chat-search` 都是 anthropic format、都写着 `tools: true`。所以把 `DEFAULT_CHAT_MODEL` 指向它们中任何一个，**companion 的工具会全部失效** —— 模型请求写计划，format 把请求扔了，loop 看到一轮没有工具调用就结束。任何地方都不报错。
 
 修法用的是仓库里**早就为此存在、却没有生产调用方**的那座桥：`ai.StreamViaChat`（它的注释写着 "for formats whose ChatStream cannot carry tool calls yet (anthropic/ollama)"）。
 

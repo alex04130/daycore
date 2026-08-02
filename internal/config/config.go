@@ -86,7 +86,10 @@ type Config struct {
 	// Empty in development = open; required to be non-empty effect in production.
 	AdminToken string
 
-	// Channels — OneBot (QQ). Empty OneBotWSURL disables the channel/worker.
+	// Channels — OneBot (QQ). Empty OneBotWSURL disables the channel only: the
+	// Worker runs unconditionally since 2026-07-29, because rhythm learning,
+	// auto-plan and the care window are not things a QQ binding should gate.
+	// With no channel, proactive output is persisted and not pushed.
 	OneBotWSURL string
 	OneBotToken string
 	// WorkerDefaultTZ is the IANA timezone proactive briefs are scheduled in
@@ -146,7 +149,7 @@ func Load() (*Config, error) {
 		PromptsDir:              getEnv("PROMPTS_DIR", ""),
 		BlobStore:               getEnv("BLOB_STORE", ""),
 		DataDir:                 getEnv("DATA_DIR", ""),
-		DefaultChatModel:        getEnv("DEFAULT_CHAT_MODEL", "deepseek-chat"),
+		DefaultChatModel:        getEnv("DEFAULT_CHAT_MODEL", "chat"),
 		DefaultVisionModel:      getEnv("DEFAULT_VISION_MODEL", ""),
 		DefaultPlannerModel:     getEnv("DEFAULT_PLANNER_MODEL", ""),
 		AIRequestTimeout:        getDuration("AI_REQUEST_TIMEOUT", 120*time.Second),
