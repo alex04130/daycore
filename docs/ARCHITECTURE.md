@@ -128,6 +128,24 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 - 关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` 等 in-flight HTTP → `srv.WaitBackground(shutdownCtx)` 等后台 agent（异步聊天/通道回复 + 节律信号写入）→ `worker.Stop()`（等 `cron.Stop().Done()`）→ `cancelRoot()`。TempContext/ChannelBinding 两个 cleanup ticker 仍是自由 goroutine（无状态，进程退出即弃，无碍）。
 - **两个 cleanup ticker 现在逐 tick 收 panic**（`Server.everyTick`，2026-07-29）。它们原本是裸 `go func(){ for range ticker.C {…} }`，而 `recoverMW` 只包 HTTP handler —— 自由 goroutine 上的 panic 会带走整个进程。一次 tick panic 只杀那一次：清理失败是几行陈旧数据，清理循环停掉是无界增长。这也是降级启动的前置（store 为桩时不会 panic，但 nil store 会，症状是「启动成功、一分钟后无声死掉」）。
 
+## 文件总线（`internal/blob`，2026-08-01 落地本机磁盘）
+
+Daycore 此前**没有地方放一个字节**：上传 ≤1 MiB 的被 base64 塞进 `temp_contexts` 一小时 TTL，更大的字节直接丢；图片只能以 base64 内联在请求里到达模型；`Material.StorageRef` 是三方言建了列、Mongo 也持久化、openapi 也发布，却**没有任何代码生产或解析过一个 ref** 的空壳。四个功能在等同一样东西 —— 图片上传、PDF、文生图、给适配层子进程递产物。
+
+**注册表形状照抄 `internal/storage`**：驱动名选实现，驱动 `init()` 自注册，`main.go` blank import。加一个后端是一个包加一次 `Register` —— 与数据库层同一个交易，理由也一样（没人该为了指向自己的对象存储而 fork 这个仓库）。计划中的驱动：本机 / 从机 / S3 / OSS / COS / 七牛 / 又拍 / OBS / KS3 / OneDrive / DB blob 列，外加 `http` 与 `exec` 两个通用兜底。
+
+**`Store` 不是鉴权**。它把 id 映射到字节，对会话一无所知 —— 与参考 MCP 那套「文件总线是哑的、编排器决定谁能读」同构。发 ref 的人负责决定谁能用它。**也不是数据库**：没有列举、没有查询、没有事务，一个只会 PUT/GET 的后端是合法实现，这正是「指向 S3、或一个目录、或一个列」能成为真选项而不是口号的原因。
+
+`URLSigner` 是**可选**接口：对象存储都能签，而签不了的两个（本地目录、数据库列）恰好是代理转发很便宜的那两个。所以调用方永远要有代理路径，把签名当优化。
+
+**`DATA_DIR` 是仓库的第一个可写路径。** 此前每个目录配置（`STATIC_DIR`/`LOCALES_DIR`/`PROMPTS_DIR`/`MODELS_CONFIG`）都是只读输入，`internal/` 里没有一处 `os.WriteFile`。`BLOB_STORE` 为空 = 没有文件总线，这是**受支持的配置**：需要它的功能各自检查并说明，而不是让进程为一个多数部署第一天用不到的能力拒绝启动。
+
+本机驱动的三个要点：**先写临时文件再 rename**（同目录内 rename 是原子的，读者永不会看到半个 blob，崩溃留下的是游离临时文件而不是看起来像数据的截断文件）；**rename 前 sync**（否则崩溃可能留下一个名字对、内容空的文件，而那正是这套动作要防的）；**ref 必须是本 store 铸的 64 位十六进制**，因为 ref 来自外部（数据库列、工具参数），把攻击者选的字符串拼到根目录上正是文件总线变成任意文件读的方式。
+
+**行为套件先于第二个驱动存在**（`internal/blob/blobtest`，11 例）。存储层是用昂贵的方式学到这一课的：两个后端上线、没有任何测试断言它们行为相同，事后审查找出约十五处分歧。两两分歧数随后端数平方增长，而上面那张驱动清单很长。
+
+其中一条值得单独说：**相同内容必须产生不同的 ref**。内容寻址会让两个用户的相同上传共享存储，然后一个人的删除会拿走另一个人的文件 —— 或者更糟，用户能探测某个文件是否已存在。去重不值这个代价。
+
 ## 存储不可用时的降级启动（2026-07-29 定案，未实现）
 
 **决定**：存储不可用**不拒绝启动**。CLI 把话说明白，HTTP 照常起来只服务控制台与健康面，需要库的端点给统一的不可用信封。协议侧的措辞与理由在 [`docs/specs/transport.md`](specs/transport.md#存储型cli-说清楚--web-ui-仍然能上)，这里记落地事实。
@@ -189,7 +207,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 配置（internal/config/config.go，环境变量）
 
-关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；**`PROMPTS_DIR`**（空=只用内嵌；设了则 `<dir>/<locale>/<key>.tmpl` 逐文件覆盖内嵌模板，见 AI.md）；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
+关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；**`BLOB_STORE`**（文件总线驱动名，空=没有）/**`DATA_DIR`**（唯一的可写路径，`local` 驱动用）；**`PROMPTS_DIR`**（空=只用内嵌；设了则 `<dir>/<locale>/<key>.tmpl` 逐文件覆盖内嵌模板，见 AI.md）；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
 
 ## 仓库级布局
 

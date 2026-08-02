@@ -17,6 +17,7 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/auth"
+	"daycore/internal/blob"
 	"daycore/internal/channels"
 	"daycore/internal/channels/onebot"
 	"daycore/internal/config"
@@ -36,6 +37,9 @@ import (
 	_ "daycore/internal/weather/openweathermap"
 	_ "daycore/internal/weather/qweather"
 	_ "daycore/internal/weather/wttrin"
+
+	// Register blob drivers (self-register via init()).
+	_ "daycore/internal/blob/localfs"
 
 	// Register database drivers (self-register via init()).
 	_ "daycore/internal/storage/mongostore"
@@ -122,6 +126,16 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("load prompts from %s: %w", cfg.PromptsDir, err)
 	} else if n > 0 {
 		logger.Info("prompt templates overlaid from disk", "dir", cfg.PromptsDir, "files", n)
+	}
+
+	// File bus. Optional: a deployment without one simply has no feature that
+	// needs bytes, and refusing to boot over that would be worse than saying so.
+	blobStore, err := blob.Open(cfg.BlobStore, cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("open blob store (%s): %w", cfg.BlobStore, err)
+	}
+	if blobStore != nil {
+		logger.Info("file bus enabled", "store", blobStore.Name(), "dir", cfg.DataDir)
 	}
 
 	// Weather provider (adapter): configured primary + wttr.in fallback + cache.

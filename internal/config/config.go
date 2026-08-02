@@ -52,6 +52,15 @@ type Config struct {
 	// AI — model catalog + OAuth providers are loaded from these files by main.go.
 	ModelsConfigPath string
 	OAuthConfigPath  string
+	// BlobStore selects the file-bus driver ("local", …; empty = no file bus).
+	// Every feature that needs one checks and degrades to saying so, because
+	// running without it is a supported configuration.
+	BlobStore string
+	// DataDir is the only writable path Daycore has. Every other directory
+	// setting (StaticDir, LocalesDir, PromptsDir, ModelsConfigPath) is a
+	// read-only input — before the file bus, nothing in internal/ wrote a file at
+	// all. Used by the "local" blob driver.
+	DataDir string
 	// PromptsDir overlays prompt templates from disk onto the embedded defaults
 	// (dir/<locale>/<key>.tmpl; absent files keep the embedded text). Empty = use
 	// embedded only. `daycore install` extracts the templates here and writes this
@@ -135,6 +144,8 @@ func Load() (*Config, error) {
 		ModelsConfigPath:        getEnv("MODELS_CONFIG", "config/models.yaml"),
 		OAuthConfigPath:         getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
 		PromptsDir:              getEnv("PROMPTS_DIR", ""),
+		BlobStore:               getEnv("BLOB_STORE", ""),
+		DataDir:                 getEnv("DATA_DIR", ""),
 		DefaultChatModel:        getEnv("DEFAULT_CHAT_MODEL", "deepseek-chat"),
 		DefaultVisionModel:      getEnv("DEFAULT_VISION_MODEL", ""),
 		DefaultPlannerModel:     getEnv("DEFAULT_PLANNER_MODEL", ""),
