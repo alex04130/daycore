@@ -122,7 +122,14 @@ func (c *chain) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Fore
 	return nil, errors.New("weather: no provider available")
 }
 
-// ─── cache wrapper (per location|days|locale, 30 min) ────────────────────────
+// ─── cache wrapper (per provider|location|days|locale, 30 min) ───────────────
+
+// cacheMaxEntries bounds the map. The key contains a location that arrives as
+// free text from the model (toolGetWeather passes args.Location straight
+// through), so without a bound an agent asking about many places grows this
+// forever, each entry holding a multi-day forecast. It is a cache: dropping
+// entries costs one extra upstream call, never a wrong answer.
+const cacheMaxEntries = 512
 
 type cached struct {
 	inner domain.WeatherProvider
@@ -142,20 +149,57 @@ func newCached(inner domain.WeatherProvider, ttl time.Duration) *cached {
 
 func (c *cached) Name() string { return c.inner.Name() }
 
+// cacheKey namespaces by the wrapped provider.
+//
+// Today that is nearly redundant — one provider is wrapped — but the moment a
+// source becomes something the caller picks (the planned `source` parameter on
+// get_weather), a shared key means one source serving another's answer: ask for
+// qweather, receive a half-hour-old open-meteo forecast under its name. Keying
+// on the provider costs one string concat and removes the whole class.
+func (c *cached) cacheKey(q domain.WeatherQuery) string {
+	return c.inner.Name() + "|" +
+		strings.ToLower(strings.TrimSpace(q.Location)) + "|" +
+		strconv.Itoa(q.Days) + "|" + q.Locale
+}
+
 func (c *cached) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
-	key := strings.ToLower(strings.TrimSpace(q.Location)) + "|" + strconv.Itoa(q.Days) + "|" + q.Locale
+	key := c.cacheKey(q)
 	c.mu.Lock()
 	if e, ok := c.m[key]; ok && time.Now().Before(e.exp) {
 		c.mu.Unlock()
 		return e.fc, nil
 	}
 	c.mu.Unlock()
+
 	fc, err := c.inner.Lookup(ctx, q)
 	if err != nil {
 		return nil, err
 	}
+
+	now := time.Now()
 	c.mu.Lock()
-	c.m[key] = cacheEntry{fc: fc, exp: time.Now().Add(c.ttl)}
+	if len(c.m) >= cacheMaxEntries {
+		c.evictLocked(now)
+	}
+	c.m[key] = cacheEntry{fc: fc, exp: now.Add(c.ttl)}
 	c.mu.Unlock()
 	return fc, nil
+}
+
+// evictLocked drops expired entries, and everything if that was not enough.
+//
+// Expired-first because those are free to lose. The wholesale drop after that is
+// deliberate rather than an LRU: an LRU here would need per-entry access
+// bookkeeping to protect a 30-minute cache of a call that takes one HTTP
+// request, and a bound that is never actually enforced is the real hazard — this
+// map previously had none at all and never removed an expired entry either.
+func (c *cached) evictLocked(now time.Time) {
+	for k, e := range c.m {
+		if !now.Before(e.exp) {
+			delete(c.m, k)
+		}
+	}
+	if len(c.m) >= cacheMaxEntries {
+		c.m = make(map[string]cacheEntry, cacheMaxEntries/2)
+	}
 }
