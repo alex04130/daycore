@@ -160,6 +160,7 @@ func (s *Server) toolMyNewTool(ctx context.Context, sid, rawArgs string) toolRes
 
 | 想知道 | 看 |
 |---|---|
+| **做什么、按什么顺序、为什么是这个顺序** | `docs/ROADMAP.md` |
 | 这个仓库现在是什么样、为什么这样 | `docs/ARCHITECTURE.md` `docs/DATA.md` `docs/AUTH.md` `docs/AGENT.md` `docs/AI.md` |
 | 有哪些 HTTP 路由 | `docs/API_SURFACE.md` + `api/openapi.yaml`（唯一权威；**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**） |
 | 端无关的产品语义（时间三层、提案、注意力阶梯、默契） | `docs/EXPERIENCE_CORE.md` |

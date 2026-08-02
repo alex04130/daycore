@@ -145,7 +145,7 @@ func toWireMessages(msgs []ai.Message) []wireMsg {
 			for _, pt := range m.Parts {
 				if pt.Type == ai.PartImage {
 					parts = append(parts, imagePart{Type: "image_url", ImageURL: imageURL{
-						URL: fmt.Sprintf("data:%s;base64,%s", pt.ImageMime, pt.ImageBase64),
+						URL: fmt.Sprintf("data:%s;base64,%s", pt.MIME, pt.Data),
 					}})
 				} else {
 					parts = append(parts, textPart{Type: "text", Text: pt.Text})

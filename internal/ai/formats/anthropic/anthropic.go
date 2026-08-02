@@ -139,7 +139,7 @@ func toBlocks(m ai.Message) []block {
 		for _, pt := range m.Parts {
 			if pt.Type == ai.PartImage {
 				blocks = append(blocks, block{Type: "image", Source: &imgSource{
-					Type: "base64", MediaType: pt.ImageMime, Data: pt.ImageBase64,
+					Type: "base64", MediaType: pt.MIME, Data: pt.Data,
 				}})
 			} else {
 				blocks = append(blocks, block{Type: "text", Text: pt.Text})

@@ -92,7 +92,7 @@ func directVision(ctx context.Context, p AIProvider, systemPrompt, imageB64, mim
 			{Role: RoleSystem, Content: systemPrompt},
 			{Role: RoleUser, Parts: []ContentPart{
 				{Type: PartText, Text: "请读取这张图片，提取日程信息并按格式返回 JSON。"},
-				{Type: PartImage, ImageBase64: imageB64, ImageMime: mime},
+				{Type: PartImage, Data: imageB64, MIME: mime},
 			}},
 		},
 		JSONMode:    jsonMode,
@@ -158,7 +158,7 @@ func askVision(ctx context.Context, vision AIProvider, question, b64, mime strin
 	resp, err := vision.Chat(ctx, ChatRequest{
 		Messages: []Message{{Role: RoleUser, Parts: []ContentPart{
 			{Type: PartText, Text: question},
-			{Type: PartImage, ImageBase64: b64, ImageMime: mime},
+			{Type: PartImage, Data: b64, MIME: mime},
 		}}},
 		Temperature: 0.2,
 		MaxTokens:   1200,

@@ -17,20 +17,61 @@ const (
 	RoleTool      Role = "tool"
 )
 
-// PartType distinguishes multimodal content parts.
-type PartType string
+// PartType distinguishes multimodal content parts. It mirrors Modality one for
+// one — the alias exists because the old two-value form is threaded through the
+// vision pipeline and the three formats, and renaming it there buys nothing.
+type PartType = Modality
 
 const (
-	PartText  PartType = "text"
-	PartImage PartType = "image"
+	PartText     = ModalityText
+	PartImage    = ModalityImage
+	PartAudio    = ModalityAudio
+	PartDocument = ModalityDocument
+	PartVideo    = ModalityVideo
 )
 
 // ContentPart is one piece of a (possibly multimodal) message.
+//
+// One struct for every modality rather than a type per kind: the formats all
+// serialise these the same way (a discriminator plus bytes plus a MIME type),
+// and a per-kind hierarchy would make "iterate the parts and encode each one"
+// into a type switch in three places that each has to grow whenever a modality
+// is added.
+//
+// Exactly one carriage field is set. Which one a caller may use depends on the
+// provider — see CarriagesFor — because the difference is real: a 30 MB PDF
+// cannot be inlined, and several gateways accept documents *only* as a
+// pre-uploaded file id.
 type ContentPart struct {
-	Type        PartType
-	Text        string
-	ImageBase64 string // raw base64 (no data: prefix)
-	ImageMime   string // e.g. "image/png"
+	Type PartType
+	Text string // Type == PartText
+
+	// MIME describes the bytes, whatever carries them ("image/png",
+	// "application/pdf", "audio/ogg"). Required for every non-text part: the
+	// formats need it, and guessing from magic bytes here would overrule the
+	// caller's own validation.
+	MIME string
+
+	// Data is raw base64 with no `data:` prefix (CarriageInline).
+	//
+	// Named Data rather than the old ImageBase64 because it is no longer only
+	// images. There were five references in the whole repo, so renaming outright
+	// beat keeping a compatibility accessor that would let two names for one
+	// value drift apart.
+	Data string
+
+	// URL the provider should fetch (CarriageURL). Also how an object-store file
+	// bus hands over a signed URL instead of proxying bytes through Daycore.
+	URL string
+
+	// FileID is a handle to bytes already uploaded to the provider
+	// (CarriageFileID).
+	FileID string
+
+	// Name is the original filename where there was one. Providers show it to
+	// the model for documents, and it is often the only clue about what a file
+	// is for.
+	Name string
 }
 
 // ToolDef describes a function the model may call. Parameters is a JSON Schema
@@ -74,9 +115,32 @@ type ChatRequest struct {
 
 // ChatResponse is a non-streaming reply.
 type ChatResponse struct {
-	Content      string
-	ToolCalls    []ToolCall
+	Content   string
+	ToolCalls []ToolCall
+	// Parts carries non-text output — a drawn image, synthesised speech, or a
+	// provider's structured content blocks. Content stays the plain-text
+	// rendering so that every existing caller keeps working and only the ones
+	// that care about pixels have to look further.
+	Parts        []ContentPart
 	FinishReason string
+	// Usage is what the call cost. Every provider returns it and all three
+	// formats currently discard it, which is why token spend, latency per model
+	// and the AICallLog table are all unanswerable today. Zero means the format
+	// did not report it, not that the call was free.
+	Usage Usage
+}
+
+// Usage is the token accounting a provider reports.
+type Usage struct {
+	PromptTokens     int
+	CompletionTokens int
+	// CachedTokens is the prompt portion served from the provider's cache. It is
+	// the only direct evidence that prompt caching is working — the alternative
+	// is inferring it from latency, which is noise.
+	CachedTokens int
+	// ReasoningTokens is billed but not shown, so a model that thinks a lot looks
+	// cheap by output length and is not.
+	ReasoningTokens int
 }
 
 // Chunk is one streamed delta. Done=true (or a closed channel) ends the stream.
@@ -100,11 +164,47 @@ type ToolCallDelta struct {
 
 // Capabilities advertises what a model supports (declared in the catalog config).
 type Capabilities struct {
+	// Vision is "this model reads images". Kept as its own bool because three
+	// call sites branch on it and because it is what an operator writes in
+	// models.yaml; In/Out below are the general form and Vision is folded into
+	// them by LoadCatalog.
 	Vision        bool
 	Tools         bool
 	Stream        bool
 	Thinking      bool
 	ContextWindow int
+
+	// In and Out are the modalities this model accepts and produces.
+	//
+	// Two sets rather than one because they are genuinely independent: a model
+	// that reads images may not draw them, one that speaks may not listen, and
+	// the common case today — text in, text out, images in — is expressible only
+	// if the directions are separate.
+	//
+	// Empty means "text only", so a models.yaml entry written before modalities
+	// existed keeps meaning what it meant.
+	In  Modalities
+	Out Modalities
+}
+
+// Accepts reports whether the model takes this modality as input. Text is always
+// accepted: a model that cannot read text is not one this repo can drive.
+func (c Capabilities) Accepts(m Modality) bool {
+	if m == ModalityText {
+		return true
+	}
+	if m == ModalityImage && c.Vision {
+		return true
+	}
+	return c.In.Has(m)
+}
+
+// Produces reports whether the model can emit this modality.
+func (c Capabilities) Produces(m Modality) bool {
+	if m == ModalityText {
+		return true
+	}
+	return c.Out.Has(m)
 }
 
 // There used to be a DeepseekSearch flag here, declared in models.yaml and read

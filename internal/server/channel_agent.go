@@ -32,7 +32,7 @@ func (s *Server) HandleInbound(ctx context.Context, reg *channels.Registry, msg 
 		return
 	}
 	if ch := reg.Channel(msg.Channel); ch != nil {
-		if err := ch.Send(ctx, msg.ExternalID, answer); err != nil {
+		if err := ch.Send(ctx, msg.ExternalID, channels.Text(answer)); err != nil {
 			s.log.Warn("channel reply failed", "channel", msg.Channel, "err", err)
 		}
 	}

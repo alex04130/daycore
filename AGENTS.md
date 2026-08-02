@@ -139,6 +139,7 @@ go build ./... && go vet ./... && go test ./...
 | 想知道 | 看 |
 |---|---|
 | 仓库铁律、布局、常用事实（本文件的浓缩版） | [`CLAUDE.md`](CLAUDE.md) |
+| **总规划：做什么、按什么顺序、为什么** | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | 架构、包结构、中间件、启动关停、配置分层 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | 实体、四个存储后端、加表加列、迁移事故史 | [`docs/DATA.md`](docs/DATA.md) |
 | 认证三轨、CORS、鉴权旁路 | [`docs/AUTH.md`](docs/AUTH.md) |

@@ -2,6 +2,7 @@ package onebot
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -188,7 +189,7 @@ func (a *Adapter) handleFrame(ctx context.Context, raw []byte) {
 
 	// Rate limit: max 10 messages per 60 seconds per user.
 	if a.rateLimit(externalID) {
-		_ = a.Send(ctx, externalID, "消息太频繁，请稍后再试")
+		_ = a.Send(ctx, externalID, channels.Text("消息太频繁，请稍后再试"))
 		return
 	}
 
@@ -213,19 +214,90 @@ func (a *Adapter) handleFrame(ctx context.Context, raw []byte) {
 	}
 }
 
-func (a *Adapter) Send(ctx context.Context, externalID string, msg string) error {
+// Features reports what OneBot can carry.
+//
+// Images and audio are OneBot 11 message segments; files are not (the standard
+// has no private-message file segment, implementations that offer one do it
+// through their own extension API). Markdown is plain text on QQ — sending it
+// shows the asterisks.
+func (a *Adapter) Features() channels.Features {
+	return channels.Features{
+		Images: true,
+		Audio:  true,
+		Files:  false,
+		// QQ renders markdown literally, so a reply with ** in it reads worse
+		// than the same reply without.
+		Markdown: false,
+	}
+}
+
+func (a *Adapter) Send(ctx context.Context, externalID string, msg channels.Outbound) error {
 	a.mu.Lock()
 	conn := a.conn
 	a.mu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("not connected")
 	}
+	segments := a.segments(msg)
+	if len(segments) == 0 {
+		return nil // nothing to say and nothing to show
+	}
 	payload := map[string]any{
 		"action": "send_private_msg",
 		"params": map[string]any{
 			"user_id": externalID,
-			"message": msg,
+			"message": segments,
 		},
 	}
 	return conn.WriteJSON(payload)
+}
+
+// segments builds the OneBot 11 message array.
+//
+// The array form rather than the plain string: a string can only be text, and
+// mixing text with an image is the normal case (here is your day / here is the
+// picture of it). OneBot accepts either, and the array is a superset.
+func (a *Adapter) segments(msg channels.Outbound) []map[string]any {
+	var out []map[string]any
+	if msg.Text != "" {
+		out = append(out, map[string]any{
+			"type": "text",
+			"data": map[string]any{"text": msg.Text},
+		})
+	}
+	for _, at := range msg.Attachments {
+		seg := a.segment(at)
+		if seg == nil {
+			// Reporting rather than dropping: a caller that sent an attachment
+			// believed the user would see it, and a reply referring to a picture
+			// nobody received is worse than one that never mentioned it.
+			a.cfg.Log.Warn("onebot: cannot carry attachment", "kind", at.Kind, "mime", at.MIME)
+			continue
+		}
+		out = append(out, seg)
+	}
+	return out
+}
+
+func (a *Adapter) segment(at channels.OutAttachment) map[string]any {
+	// OneBot takes a `file` field that may be a URL, a path, or base64 with this
+	// exact prefix. Base64 is what a local file bus can offer without exposing a
+	// public URL, so it is the fallback rather than the exception.
+	file := at.URL
+	if file == "" && len(at.Data) > 0 {
+		file = "base64://" + base64.StdEncoding.EncodeToString(at.Data)
+	}
+	if file == "" {
+		return nil
+	}
+	switch at.Kind {
+	case "image":
+		return map[string]any{"type": "image", "data": map[string]any{"file": file}}
+	case "audio":
+		// OneBot calls it "record". The name is a historical accident of the
+		// protocol, not a different thing.
+		return map[string]any{"type": "record", "data": map[string]any{"file": file}}
+	default:
+		return nil
+	}
 }

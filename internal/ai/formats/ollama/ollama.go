@@ -104,7 +104,7 @@ func (p *provider) buildReq(req ai.ChatRequest, stream bool) chatReq {
 			var text strings.Builder
 			for _, pt := range m.Parts {
 				if pt.Type == ai.PartImage {
-					wm.Images = append(wm.Images, pt.ImageBase64)
+					wm.Images = append(wm.Images, pt.Data)
 				} else {
 					text.WriteString(pt.Text)
 				}

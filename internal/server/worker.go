@@ -348,7 +348,7 @@ func (w *Worker) sendToChannels(ctx context.Context, sid, text string) {
 			w.log.Warn("worker: unknown channel", "channel", b.Channel)
 			continue
 		}
-		if err := ch.Send(ctx, b.ExternalID, text); err != nil {
+		if err := ch.Send(ctx, b.ExternalID, channels.Text(text)); err != nil {
 			w.log.Warn("worker: channel send failed",
 				"sid", sid, "channel", b.Channel, "externalId", b.ExternalID, "err", err)
 		}

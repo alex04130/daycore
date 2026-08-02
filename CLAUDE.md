@@ -8,6 +8,7 @@
 - `web/frontend/` — **现役** Vite+React 前端，生产由 Go 二进制托管 `STATIC_DIR`。**将来会被四端替换**，替换完成前不要动它（任何时刻都要有能跑的东西）。
 - `design-ui/` — **设计原型**（只读参考，不参与构建）：四套范式级不同的前端（琉璃·长卷 / 纸屿·顺流 / 汀·此刻 / 琉璃初版）+ `core/daycore-core.js` 共享 mock + `HANDOFF/` 交接文档 + `_ds/` 设计系统。重建时逐行对照它。**注意其 `API_CONTRACT.md` 的路径命名不是权威**，详见该目录 `CLAUDE.md` 顶部裁决。
 - `api/` — API 契约唯一权威：`openapi.yaml` + `FRONTEND_HANDOFF.md`。**`openapi.yaml` 是生成物**，改的是 `api/spec/paths/<tag>.yaml`（一个 tag 一个文件），然后 `make api-bundle`；`go test ./...` 会因它过期而红。
+- `docs/ROADMAP.md` — **总规划**：做什么、按什么顺序、为什么是这个顺序（排序原则是「成本曲线」，不是并发度）。规划此前只活在仓库外的计划文件里，那是个断点。
 - `docs/` — **实时项目文档**（架构/认证/Agent/数据/AI/路由总表/开发者手册）+ `EXPERIENCE_CORE.md`（端无关语义总纲，v2.3）。
 - `docs/specs/` — **对外协议**（别人照着实现什么）：`transport.md` 传输层四种适配层共用（HTTP 语义 + 子进程握手与生命周期）、`storage-protocol.md`、`provider-protocol.md`、`frontend-manifest.md`。改协议要同时想「第三方照这个写会不会踩坑」。
 - `extension/` — Chrome MV3 插件（抓 Canvas → 推 `POST /api/import/canvas`）。

@@ -25,10 +25,67 @@ type Attachment struct {
 	Name     string
 }
 
+// Outbound is a message going to a platform.
+//
+// A struct rather than a string because on a chat platform the picture *is* the
+// interface: there is no view to render a timetable into, so an assistant that
+// can only emit text is a crippled one there. The protocol has always declared
+// `features: {attachments: true}` — this is the Go side finally being able to
+// express it.
+type Outbound struct {
+	Text        string
+	Attachments []OutAttachment
+	// ReplyTo threads the message where the platform supports it.
+	ReplyTo string
+}
+
+// OutAttachment is one file going out.
+//
+// Bytes or a URL, never a blob.Ref: an adapter may be a separate process (see
+// docs/specs/transport.md), and a reference into Daycore's file bus means
+// nothing on the other side of that boundary. Resolving a ref into whichever
+// form a given channel wants is the caller's job — the same split that keeps
+// internal/ai free of storage.
+type OutAttachment struct {
+	Kind string // "image" | "audio" | "file"
+	MIME string
+	// Data is the bytes. Preferred for images on platforms that accept uploads.
+	Data []byte
+	// URL is used when the platform fetches rather than receives, or when the
+	// file bus can sign a URL and save Daycore from proxying the bytes twice.
+	URL  string
+	Name string
+}
+
+// Text builds a plain outbound message. Most call sites want exactly this and
+// should not have to write a struct literal to say so.
+func Text(s string) Outbound { return Outbound{Text: s} }
+
+// Features is what a platform can actually receive.
+//
+// The spec's phrasing is the rule: a capability declaration is not a
+// suggestion. A channel that reports markdown:false must not be sent markdown,
+// and one that reports Images:false must be given words instead of a picture —
+// silently dropping the attachment would leave the user with a reply that
+// refers to something they cannot see.
+type Features struct {
+	Images   bool
+	Audio    bool
+	Files    bool
+	Markdown bool
+	// MaxTextRunes is 0 when the platform does not say. Callers that split long
+	// replies need it; QQ in particular truncates rather than rejecting.
+	MaxTextRunes int
+}
+
 // Channel is implemented by every messaging platform adapter.
 type Channel interface {
 	Name() string // e.g. "onebot"
-	Send(ctx context.Context, externalID string, msg string) error
+	Send(ctx context.Context, externalID string, msg Outbound) error
+	// Features reports what this platform accepts. An adapter that cannot answer
+	// should report text-only rather than guess upward: sending an image that
+	// silently vanishes is worse than sending a sentence.
+	Features() Features
 	Start(ctx context.Context, inbound chan<- InboundMsg) error
 	Stop() error
 }
