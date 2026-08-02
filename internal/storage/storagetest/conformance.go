@@ -104,6 +104,7 @@ var cases = []suiteCase{
 	{"Locale/ConcurrentFirstWrite", localeRace},
 	{"OpLog/RevertedByIsExact", opLogRevertedBy},
 	{"OpLog/ScanIsOldestFirstFromACursor", opLogScan},
+	{"Upsert/EmptyCanvasIDIsRefused", upsertEmptyKey},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1112,5 +1113,37 @@ func opLogScan(t *testing.T, h Harness) {
 	}
 	if rest[0].ID != all[2].ID {
 		t.Errorf("resume started at %q, want %q", rest[0].ID, all[2].ID)
+	}
+}
+
+// An empty canvas id is not "no key" — courses and assignments both carry a
+// UNIQUE index on (session_id, canvas_id), so every keyless row wants the same
+// slot. Without a guard the upsert finds the previous keyless row and overwrites
+// it in place, keeping its id: two manual entries collapse into one, the first
+// is gone, and nothing anywhere returns an error. Measured before the guard
+// existed, that is exactly what happened.
+//
+// The four backends have to agree because the failure is invisible from above:
+// a caller that got away with it on Mongo would lose rows the day someone moved
+// the deployment to Postgres.
+func upsertEmptyKey(t *testing.T, h Harness) {
+	s := h.Store()
+	if _, err := s.Assignments().UpsertByCanvasID(bg(), &domain.Assignment{
+		SessionID: "s1", Title: "读第三章", Source: "manual",
+	}); !errors.Is(err, domain.ErrMissingUpsertKey) {
+		t.Errorf("assignment upsert with no canvas id: got %v, want ErrMissingUpsertKey", err)
+	}
+	if _, err := s.Courses().UpsertByCanvasID(bg(), &domain.Course{
+		SessionID: "s1", Name: "软件设计",
+	}); !errors.Is(err, domain.ErrMissingUpsertKey) {
+		t.Errorf("course upsert with no canvas id: got %v, want ErrMissingUpsertKey", err)
+	}
+	// The refusal must not have written anything on its way out.
+	list, err := s.Assignments().List(bg(), "s1", domain.AssignmentFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("a refused upsert still wrote %d row(s)", len(list))
 	}
 }

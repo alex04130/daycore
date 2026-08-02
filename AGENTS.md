@@ -81,7 +81,7 @@ go build ./... && go vet ./... && go test ./...
 | `internal/server/` | 路由、中间件、全部 handler、agent loop、cron Worker（一个文件一组 handler） |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PG/MySQL，`Dialect` 抽象），每实体一文件；三份 DDL 由 `dialect_parity_test.go` 静态比对 |
 | `internal/storage/mongostore/` | MongoDB，每实体一 repo 文件；`bson_test.go`（免真机）+ `conformance_test.go`（真机行为套件） |
-| `internal/storage/storagetest/` | **行为一致性套件**（29 例）：所有后端跑同一份，加后端的验收标准 |
+| `internal/storage/storagetest/` | **行为一致性套件**（30 例）：所有后端跑同一份，加后端的验收标准 |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
 | `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说 |
@@ -108,7 +108,7 @@ go build ./... && go vet ./... && go test ./...
 
 ## 测试策略
 
-- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：29 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
+- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：30 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
 - **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
 - **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
 - **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。

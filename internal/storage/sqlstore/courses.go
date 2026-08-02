@@ -16,6 +16,9 @@ const courseSelect = `SELECT id, session_id, canvas_id, name, course_code, curre
 	current_grade, created_at, updated_at FROM courses`
 
 func (r courseRepo) UpsertByCanvasID(ctx context.Context, c *domain.Course) (*domain.Course, error) {
+	if c.CanvasID == "" {
+		return nil, domain.ErrMissingUpsertKey
+	}
 	now := nowMillis()
 	res, err := r.exec(ctx,
 		`UPDATE courses SET name = ?, course_code = ?, current_score = ?, current_grade = ?, updated_at = ?

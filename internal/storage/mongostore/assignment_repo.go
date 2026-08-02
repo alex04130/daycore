@@ -84,6 +84,9 @@ func (r assignmentRepo) List(ctx context.Context, sessionID string, f domain.Ass
 }
 
 func (r assignmentRepo) UpsertByCanvasID(ctx context.Context, a *domain.Assignment) (*domain.Assignment, error) {
+	if a.CanvasID == "" {
+		return nil, domain.ErrMissingUpsertKey
+	}
 	now := time.Now().UTC()
 	status := a.Status
 	if status == "" {

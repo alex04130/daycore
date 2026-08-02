@@ -34,6 +34,9 @@ func (d courseDoc) toDomain() *domain.Course {
 type courseRepo struct{ *Store }
 
 func (r courseRepo) UpsertByCanvasID(ctx context.Context, c *domain.Course) (*domain.Course, error) {
+	if c.CanvasID == "" {
+		return nil, domain.ErrMissingUpsertKey
+	}
 	now := time.Now().UTC()
 	filter := bson.M{"session_id": c.SessionID, "canvas_id": c.CanvasID}
 	_, err := r.c("courses").UpdateOne(ctx, filter, bson.M{
