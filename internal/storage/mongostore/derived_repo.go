@@ -32,7 +32,23 @@ func (r rapportRepo) Get(ctx context.Context, sessionID string) (*domain.Rapport
 		return nil, err
 	}
 	if d.Scores == nil {
-		d.Scores = map[string]domain.RapportScore{}
+		// Unreadable scores are not an error to propagate — they are a cache to
+		// throw away, and the caller re-folds from the ledger where the truth
+		// was anyway.
+		//
+		// Throwing it away has to include the cursor and the fold version.
+		// Keeping the cursor tells the caller "fold forward from here" over
+		// scores of zero, so every operation before that point is skipped
+		// forever and the rebuilt reading permanently understates — and because
+		// the version still matches, the next read takes the same path and it
+		// never heals. sqlstore returns early for exactly this reason
+		// (sqlstore/derived.go); Mongo used to return the cursor anyway, which
+		// is the one outcome that comment forbids.
+		return &domain.RapportState{
+			SessionID: d.SessionID,
+			Scores:    map[string]domain.RapportScore{},
+			UpdatedAt: d.UpdatedAt,
+		}, nil
 	}
 	return &domain.RapportState{
 		SessionID: d.SessionID, Scores: d.Scores,
@@ -175,9 +191,7 @@ func (r rhythmRepo) Observe(ctx context.Context, sessionID, day string, minute i
 }
 
 func (r rhythmRepo) Days(ctx context.Context, sessionID string, limit int) ([]domain.RhythmDay, error) {
-	if limit <= 0 {
-		limit = 30
-	}
+	limit = domain.ListLimit(limit, domain.RhythmDaysDefault, domain.RhythmDaysMax)
 	cur, err := r.c("rhythm_days").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "day", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {

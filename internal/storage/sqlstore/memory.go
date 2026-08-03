@@ -94,7 +94,7 @@ func (r memoryRepo) ListImports(ctx context.Context, sessionID string, limit int
 	}
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, source, items, summary, created_at FROM import_history
-		 WHERE session_id = ? ORDER BY created_at DESC`+limitClause(limit, 20, 500), sessionID)
+		 WHERE session_id = ? ORDER BY created_at DESC`+limitClause(limit, domain.ImportListDefault, domain.ImportListMax), sessionID)
 	if err != nil {
 		return nil, err
 	}

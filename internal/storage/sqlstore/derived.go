@@ -256,7 +256,7 @@ func (r rhythmRepo) Observe(ctx context.Context, sessionID, day string, minute i
 func (r rhythmRepo) Days(ctx context.Context, sessionID string, limit int) ([]domain.RhythmDay, error) {
 	rows, err := r.query(ctx,
 		`SELECT session_id, day, first_min, last_min, signals FROM rhythm_days
-		 WHERE session_id = ? ORDER BY day DESC`+limitClause(limit, 30, 400), sessionID)
+		 WHERE session_id = ? ORDER BY day DESC`+limitClause(limit, domain.RhythmDaysDefault, domain.RhythmDaysMax), sessionID)
 	if err != nil {
 		return nil, err
 	}

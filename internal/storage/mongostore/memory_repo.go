@@ -96,9 +96,7 @@ func (r memoryRepo) AddImport(ctx context.Context, rec *domain.ImportRecord) (*d
 }
 
 func (r memoryRepo) ListImports(ctx context.Context, sessionID string, limit int) ([]domain.ImportRecord, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = domain.ListLimit(limit, domain.ImportListDefault, domain.ImportListMax)
 	cur, err := r.c("import_history").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)).
 			SetProjection(bson.M{"payload": 0}))

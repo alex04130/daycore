@@ -12,9 +12,7 @@ import (
 type moodRepo struct{ *Store }
 
 func (r moodRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.MoodCheckin, error) {
-	if limit <= 0 {
-		limit = 10
-	}
+	limit = domain.ListLimit(limit, domain.MoodListDefault, domain.MoodListMax)
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, source, note, created_at
 		 FROM mood_checkins WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)

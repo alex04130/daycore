@@ -105,6 +105,7 @@ var cases = []suiteCase{
 	{"OpLog/RevertedByIsExact", opLogRevertedBy},
 	{"OpLog/ScanIsOldestFirstFromACursor", opLogScan},
 	{"Upsert/EmptyCanvasIDIsRefused", upsertEmptyKey},
+	{"List/LimitDefaultAndCeilingAgree", listLimitsAgree},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1145,5 +1146,57 @@ func upsertEmptyKey(t *testing.T, h Harness) {
 	}
 	if len(list) != 0 {
 		t.Errorf("a refused upsert still wrote %d row(s)", len(list))
+	}
+}
+
+// Every list method resolves its limit through domain.ListLimit, so the default
+// page size and the ceiling are the same number on every backend.
+//
+// Both halves had gone wrong in the obvious ways. ListImports defaulted to 20
+// rows on SQL and 50 on Mongo, so the same call returned different history
+// depending on the deployment. And the ceiling — whose reason sqlstore's own
+// limitClause comment states plainly, "an unbounded LIMIT reachable from a
+// query parameter is a way to ask the server to materialise a whole table" —
+// was applied to the four lists no query parameter reaches and to none of the
+// three that a request drives straight through (/api/ops, /api/mood and the
+// chat history endpoint all pass ?limit= down untouched).
+//
+// Seeding past the ceiling is what makes the second half of this test able to
+// fail at all. An earlier draft seeded a dozen rows and asserted "no more than
+// 500 came back", which is true whether or not the clamp exists — the assertion
+// could not distinguish the fix from the bug. Rows beyond the ceiling are the
+// only way to see it, so the suite pays for them.
+func listLimitsAgree(t *testing.T, h Harness) {
+	s := h.Store()
+	const over = domain.MoodListMax + 1
+	for i := 0; i < over; i++ {
+		if _, err := s.Moods().Create(bg(), &domain.MoodCheckin{
+			SessionID: "s1", Mood: "calm", Source: domain.MoodSourceUser,
+		}); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+	// Zero means "the usual page", and the usual page is the same everywhere.
+	got, err := s.Moods().List(bg(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != domain.MoodListDefault {
+		t.Errorf("default page = %d rows, want %d", len(got), domain.MoodListDefault)
+	}
+	// Over the ceiling is capped, not refused and not honoured: a backend that
+	// forgot the clamp hands back all `over` rows here.
+	got, err = s.Moods().List(bg(), "s1", domain.MoodListMax*1000)
+	if err != nil {
+		t.Fatalf("an over-large limit must be capped, not rejected: %v", err)
+	}
+	if len(got) != domain.MoodListMax {
+		t.Errorf("asked for %d of %d stored rows and got %d back, ceiling is %d",
+			domain.MoodListMax*1000, over, len(got), domain.MoodListMax)
+	}
+	// A limit inside the range is honoured verbatim — the clamp must not become
+	// a fixed page size.
+	if got, err = s.Moods().List(bg(), "s1", 2); err != nil || len(got) != 2 {
+		t.Errorf("limit=2 returned %d rows (err=%v)", len(got), err)
 	}
 }

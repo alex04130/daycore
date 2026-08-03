@@ -222,9 +222,7 @@ func (r jobRunRepo) Finish(ctx context.Context, id string, status domain.JobStat
 }
 
 func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.JobRun, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = domain.ListLimit(limit, domain.JobRunListDefault, domain.JobRunListMax)
 	cur, err := r.c("job_runs").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "started_at", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {

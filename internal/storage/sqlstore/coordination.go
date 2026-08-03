@@ -227,7 +227,7 @@ func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]do
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, job_name, run_key, status, instance, started_at, ended_at, attempts,
 			COALESCE(error_text, '')
-		 FROM job_runs WHERE session_id = ? ORDER BY started_at DESC`+limitClause(limit, 50, 500), sessionID)
+		 FROM job_runs WHERE session_id = ? ORDER BY started_at DESC`+limitClause(limit, domain.JobRunListDefault, domain.JobRunListMax), sessionID)
 	if err != nil {
 		return nil, err
 	}

@@ -47,7 +47,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、30 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、31 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -437,6 +437,10 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 其余已修的（每条都有回归测试）：
 
 - **`itoa` 的 8 字节缓冲从高位静默截断**：`itoa(100000000)` = `"00000000"` → `LIMIT 0` → **一行不返回**。既有 bug（import history 的 limit），批次 C 又复制到三个新调用点。换成 `limitClause(limit, def, max)`：`strconv.Itoa` + 上限（无上限的 LIMIT 是让服务端物化整张表的办法）。
+
+  ⚠️ **上限当时只补了一半**（2026-08-02 补齐）。`limitClause` 用在四个 List 上，而那四个**没有一个是 query 参数够得到的**；真正由 `?limit=` 直通的三个（`/api/ops`、`/api/mood`、chat 历史）只有默认值、没有天花板 —— 覆盖面正好是反的，任何登录用户都能让服务端物化整张表。同时 `ListImports` 的默认值 sqlstore 是 20、mongostore 是 50，**同一个调用在两种部署上返回不同长度的历史**。
+
+  现在这对数字定义在 `internal/domain/listlimit.go`（`ListLimit(limit, def, max)` + 每个 List 的 `XxxListDefault`/`XxxListMax`），两个 store 都读它，漂移在编译期就不可能。行为套件 `List/LimitDefaultAndCeilingAgree` 播超过天花板的行数再断言 —— 播不够的话「不超过 500」这个断言无论有没有天花板都成立，抓不到任何东西。
 - **`proposalCols` 只 COALESCE 了 JSON 列**：title/summary/reason/evidence/lock_reason 是 TEXT（本 schema 要求三方言一律可空），却直接扫进 `string` —— 一个 NULL 不止毁那张卡，**整个会话的 List 都炸**。
 - **`Update` 不调 `Validate`**：一次字段不全的 Update 就能把 `ttl_policy` 清空，而 `ttl_policy=""` 两个清扫分支都不匹配 → **永远 pending**，投递查询也永远返回不了它。两侧都补上。
 - **`marshalJSON` 失败写字面 `"null"`**：ops 里有 NaN 就够 —— 卡入库时声称有活要干、实际一件都没有，用户点接受什么也不会发生。新增 `marshalStrict`，proposals 的 rows/ops 走它，失败就拒绝写入。

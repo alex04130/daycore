@@ -85,9 +85,7 @@ func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLo
 }
 
 func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.OperationLog, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = domain.ListLimit(limit, domain.OpLogListDefault, domain.OpLogListMax)
 	rows, err := r.query(ctx,
 		`SELECT id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at
 		 FROM operation_logs WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`, sessionID, limit)

@@ -95,9 +95,7 @@ func (r chatRepo) DeleteThread(ctx context.Context, sessionID, id string) error 
 }
 
 func (r chatRepo) ListMessages(ctx context.Context, threadID, sessionID, before string, limit int) ([]domain.ChatMessage, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = domain.ListLimit(limit, domain.ChatListDefault, domain.ChatListMax)
 	var rows *sql.Rows
 	var err error
 	if before != "" {

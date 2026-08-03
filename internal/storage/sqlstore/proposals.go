@@ -106,7 +106,7 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 	}
 	rows, err := r.query(ctx,
 		`SELECT `+proposalCols+` FROM proposals WHERE `+strings.Join(where, " AND ")+
-			` ORDER BY created_at DESC`+limitClause(f.Limit, 100, 1000), args...)
+			` ORDER BY created_at DESC`+limitClause(f.Limit, domain.ProposalListDefault, domain.ProposalListMax), args...)
 	if err != nil {
 		return nil, err
 	}

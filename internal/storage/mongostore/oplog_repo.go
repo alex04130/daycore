@@ -96,9 +96,7 @@ func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLo
 }
 
 func (r opLogRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.OperationLog, error) {
-	if limit <= 0 {
-		limit = 50
-	}
+	limit = domain.ListLimit(limit, domain.OpLogListDefault, domain.OpLogListMax)
 	cur, err := r.c("operation_logs").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {

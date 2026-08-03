@@ -123,10 +123,7 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 			{"deliver_after": bson.M{"$lte": f.DeliverableAt}},
 		}
 	}
-	limit := f.Limit
-	if limit <= 0 {
-		limit = 100
-	}
+	limit := domain.ListLimit(f.Limit, domain.ProposalListDefault, domain.ProposalListMax)
 	cur, err := r.c("proposals").Find(ctx, filter,
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {

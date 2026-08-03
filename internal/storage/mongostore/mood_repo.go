@@ -27,9 +27,7 @@ type moodDoc struct {
 type moodRepo struct{ *Store }
 
 func (r moodRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.MoodCheckin, error) {
-	if limit <= 0 {
-		limit = 10
-	}
+	limit = domain.ListLimit(limit, domain.MoodListDefault, domain.MoodListMax)
 	cur, err := r.c("mood_checkins").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
 	if err != nil {
