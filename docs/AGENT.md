@@ -16,7 +16,7 @@
 ```go
 func (s *Server) runCompanionAgent(ctx, sink /*阶段2起为 agentSink 接口*/, r *http.Request, provider, sid, locale, tz string, messages []ai.Message) string
 ```
-- max `cfg.AgentMaxRounds`(6) 轮；11 工具（plan_add/plan_update/plan_remove/rule_upsert/rule_remove/memory_add/memory_remove/get_weather/web_search/list_upcoming/propose_decision）定义在 agent_tools.go `companionToolDefs`。
+- max `cfg.AgentMaxRounds`(6) 轮；15 工具（plan_add/plan_update/plan_remove/rule_upsert/rule_remove/memory_add/memory_remove/assignment_upsert/wish_add/mood_record/material_add/get_weather/web_search/list_upcoming/propose_decision）定义在 agent_tools.go `companionToolDefs`，后四个捕捉工具的实现在 tool_capture.go。每次流式调用（每轮）落一行 ai_call_logs（s.logAICall，endpoint=companion）；web_search 的结果片段经 untrustedWrap 包装后才进模型上下文（toolResult.ForModel），客户端拿到的仍是干净数据。
 - `r` 只用于限流 key（`s.limiter.Allow(s.clientIP(r))`）。
 - 返回累积 assistant 文本，供持久化。
 

@@ -378,7 +378,7 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 写侧现在**拒绝**未知 id（400 `unknown_mood`）：解析不出的值没有 valence，而没有 valence 的打卡不是弱信号，是没有信号。三条回归测试端到端锁住这个接缝 —— 单测两侧都会通过（仓库存了给它的东西，窗口正确地跳过了它读不懂的东西），错的只有中间那一道缝。
 
-⚠️ **不过现在没有心情打卡工具** —— `companionToolDefs` 的 11 个工具里没有它，所以生产代码里唯一写 `Source` 的地方就是 `POST /api/mood` 那条恒定 `user` 的路径。「agent 写 agent」是留好的位子，不是已经在跑的东西。
+**agent 代打卡已落地**（β0+）：`mood_record` 工具写 `Source=agent`，且当天已有用户手动打卡时不新建（EXPERIENCE_CORE §12.1 三边界）。撤销走 `mood_record` 的注册 revert（`MoodRepository.Delete`）。
 
 **设计上用得到的地方都要走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
 

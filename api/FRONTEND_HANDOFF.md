@@ -69,7 +69,7 @@
 
 ### G. 前后端分离 / 原生端：版本契约 + header 认证（2026-07-14 新增）
 
-**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, locales}`。
+**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, features, locales}`。`features` 是能力发现（`vision`/`transcribe`/`tts`/`imagegen` 各 bool，由模型目录实时派生）：false = 本部署没有这个能力，端据此开关 UI，不要硬编码假设。
 
 - `apiVersion` = API 契约大版本，只在破坏性变更时 +1，**独立于构建版本**。客户端硬编码自己期望的值，不等 → 硬阻断并提示升级（web 前端把它存 `state.apiMismatch`）。
 - `apiMinor` = 新增性变更（加端点/字段）+1；客户端可据此对可选功能降级。

@@ -294,23 +294,23 @@ AI 的一切"想做但还没做"收敛为一个 proposal 对象：
 
 ---
 
-## 十四、Agent 工具（15 个）
+## 十四、Agent 工具（15 个，2026-08-05 全部落地）
 
 | 工具 | 说明 | 副作用 |
 |------|------|--------|
 | plan_add / plan_update / plan_remove | 时间块三件套 | ✅ DayPlan |
 | rule_upsert / rule_remove | 重复规则 | ✅ Rules |
 | memory_add / memory_remove | 记忆事实 | ✅ Memory |
-| **assignment_upsert** ★新 | 建/改作业与课程元信息 | ✅ Assignment/Course |
-| **wish_add** ★新 | 投愿望池（含 EffortMin 估计） | ✅ Wish |
-| **mood_record** ★新 | 代打卡（source=agent） | ✅ MoodCheckin |
-| **material_add** ★新 | 归档资料 | ✅ Material |
+| **assignment_upsert** | 建/改作业与课程元信息 | ✅ Assignment/Course |
+| **wish_add** | 投愿望池（含 EffortMin 估计；写前精确查重） | ✅ Wish |
+| **mood_record** | 代打卡（source=agent；当天已有手动打卡则不新建） | ✅ MoodCheckin |
+| **material_add** | 归档资料（正文不受 50 字限） | ✅ Material |
 | get_weather / web_search / list_upcoming | 只读三件套 | ❌ |
 | propose_decision | 产出提案 | ❌（提案非执行） |
 
-所有写工具走 operation_log，无一例外。
+所有写工具走 operation_log，无一例外（四个捕捉工具各带注册 revert）。
 
-**Schema 增补**：MemoryFact.Type 枚举加 `preference`；MoodCheckin 加 `source(user/agent)`；proposal 资源建表（与待发池合一）；节律观察表。
+**Schema 增补**：MoodCheckin 的 `source(user/agent)` 已落；MemoryFact.Type 枚举加 `preference`、proposal 资源建表（与待发池合一）、节律观察表。
 
 ---
 
