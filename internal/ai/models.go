@@ -150,6 +150,62 @@ func (c *Catalog) Vision() (AIProvider, bool) {
 // HasVision reports whether any vision model is available.
 func (c *Catalog) HasVision() bool { return c.visionID != "" }
 
+// firstCap walks the catalog in order and returns the first provider the
+// assertion accepts. The four capability selectors below are the discovery
+// layer for the optional interfaces in generators.go: an endpoint that wants
+// to transcribe asks the catalog, not a hardcoded model id, so a deployment
+// gains the capability by adding a models.yaml row — the same zero-code deal
+// the chat models get.
+func (c *Catalog) firstCap(match func(AIProvider) bool) (AIProvider, bool) {
+	for _, id := range c.order {
+		if p := c.providers[id]; match(p) {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
+// Transcriber returns the first catalog provider that can turn audio into
+// text, or (nil,false) when no configured model implements it.
+func (c *Catalog) Transcriber() (Transcriber, bool) {
+	p, ok := c.firstCap(func(p AIProvider) bool { _, ok := AsTranscriber(p); return ok })
+	if !ok {
+		return nil, false
+	}
+	t, _ := AsTranscriber(p)
+	return t, true
+}
+
+// SpeechSynthesizer returns the first catalog provider that can speak text.
+func (c *Catalog) SpeechSynthesizer() (SpeechSynthesizer, bool) {
+	p, ok := c.firstCap(func(p AIProvider) bool { _, ok := AsSpeechSynthesizer(p); return ok })
+	if !ok {
+		return nil, false
+	}
+	s, _ := AsSpeechSynthesizer(p)
+	return s, true
+}
+
+// ImageGenerator returns the first catalog provider that can draw.
+func (c *Catalog) ImageGenerator() (ImageGenerator, bool) {
+	p, ok := c.firstCap(func(p AIProvider) bool { _, ok := AsImageGenerator(p); return ok })
+	if !ok {
+		return nil, false
+	}
+	g, _ := AsImageGenerator(p)
+	return g, true
+}
+
+// Embedder returns the first catalog provider that can vectorise text.
+func (c *Catalog) Embedder() (Embedder, bool) {
+	p, ok := c.firstCap(func(p AIProvider) bool { _, ok := AsEmbedder(p); return ok })
+	if !ok {
+		return nil, false
+	}
+	e, _ := AsEmbedder(p)
+	return e, true
+}
+
 // List returns a summary of every model in catalog order.
 func (c *Catalog) List() []ModelInfo {
 	out := make([]ModelInfo, 0, len(c.order))

@@ -49,12 +49,33 @@ func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 		"build":      version.Full(),
 		"channel":    version.Channel,
 		"minClient":  version.MinClient,
+		// features is the capability discovery layer: a client (web, app,
+		// edge, channel) asks what this deployment can do instead of
+		// hardcoding assumptions. Derived live from the model catalog, so a
+		// deployment that adds a transcribing model starts advertising
+		// transcribe with no code change and no restart of the answer.
+		"features": s.capabilityFeatures(),
 		"locales": map[string]any{
 			"available":        i18n.Available(),
 			"defaultPrimary":   s.defaultLocales.Primary,
 			"defaultSecondary": s.defaultLocales.Secondary,
 		},
 	})
+}
+
+// capabilityFeatures derives the /api/version features block from the model
+// catalog. All four are false when no catalog is wired (tests, pure-API
+// deployments) — clients must treat false as "not here", not "broken".
+func (s *Server) capabilityFeatures() map[string]bool {
+	f := map[string]bool{"vision": false, "transcribe": false, "tts": false, "imagegen": false}
+	if s.catalog == nil {
+		return f
+	}
+	f["vision"] = s.catalog.HasVision()
+	_, f["transcribe"] = s.catalog.Transcriber()
+	_, f["tts"] = s.catalog.SpeechSynthesizer()
+	_, f["imagegen"] = s.catalog.ImageGenerator()
+	return f
 }
 
 // GET /api/models — diagnostics: the configured model catalog + registered formats.

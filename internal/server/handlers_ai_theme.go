@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
@@ -78,10 +79,13 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
 		return
 	}
-	resp, err := s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages:    []ai.Message{{Role: ai.RoleSystem, Content: sys}, {Role: ai.RoleUser, Content: data.Description}},
 		Temperature: 0.6, MaxTokens: 2000, JSONMode: true,
 	})
+	s.logAICall(ctx, sid, epThemeGen, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai theme", "err", err)
 		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "主题生成出了点问题，请稍后再试"})

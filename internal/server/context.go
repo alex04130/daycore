@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
@@ -46,6 +47,7 @@ func (s *Server) compressHistory(ctx context.Context, msgs []ai.Message) (summar
 
 	sys := summariseSystemPrompt()
 	provider := s.catalog.DefaultChat()
+	start := time.Now()
 	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: sys},
@@ -54,6 +56,7 @@ func (s *Server) compressHistory(ctx context.Context, msgs []ai.Message) (summar
 		Temperature: 0.1,
 		MaxTokens:   1024,
 	})
+	s.logAICall(ctx, sessionIDFrom(ctx), epSummarise, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		return "", nil, fmt.Errorf("summarise: %w", err)
 	}

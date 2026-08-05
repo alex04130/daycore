@@ -63,6 +63,10 @@ type MoodRepository interface {
 	List(ctx context.Context, sessionID string, limit int) ([]MoodCheckin, error)
 	Create(ctx context.Context, m *MoodCheckin) (*MoodCheckin, error)
 	MarkExerciseCompleted(ctx context.Context, sessionID, id string) error
+	// Delete removes one check-in. It exists for undoing agent-recorded
+	// check-ins (revert of mood_record); user check-ins are never deleted
+	// through this path today.
+	Delete(ctx context.Context, sessionID, id string) error
 }
 
 type CompanionRepository interface {
@@ -204,4 +208,8 @@ type AssignmentRepository interface {
 	List(ctx context.Context, sessionID string, f AssignmentFilter) ([]Assignment, error)
 	UpsertByCanvasID(ctx context.Context, a *Assignment) (*Assignment, error)
 	SetStatus(ctx context.Context, sessionID, id, status string) error
+	// Delete removes one assignment. It exists for undo: reverting an
+	// agent-created assignment means the row goes away, not that it gets
+	// dismissed — dismissal is a user-visible workflow state, not an erasure.
+	Delete(ctx context.Context, sessionID, id string) error
 }

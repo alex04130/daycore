@@ -66,3 +66,14 @@ func (r moodRepo) MarkExerciseCompleted(ctx context.Context, sessionID, id strin
 	_, err := r.c("mood_checkins").UpdateOne(ctx, bson.M{"_id": id, "session_id": sessionID}, bson.M{"$set": bson.M{"exercise_completed": true}})
 	return err
 }
+
+func (r moodRepo) Delete(ctx context.Context, sessionID, id string) error {
+	res, err := r.c("mood_checkins").DeleteOne(ctx, bson.M{"_id": id, "session_id": sessionID})
+	if err != nil {
+		return err
+	}
+	if res.DeletedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

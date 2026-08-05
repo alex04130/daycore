@@ -60,6 +60,42 @@ type chatReq struct {
 	// different things, and conflating them is how a three-line fix gets sold as
 	// an incident.
 	CacheKey string `json:"prompt_cache_key,omitempty"`
+
+	// StreamOptions asks for the terminal usage chunk. Without it a streamed
+	// call is unaccountable — the AICallLog would have to record zero for the
+	// busiest call path in the product (the companion loop).
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+// wireUsage is the OpenAI usage block, shared by Chat responses and the
+// terminal stream chunk.
+type wireUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	PromptDetails    *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details"`
+	CompletionDetails *struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (u *wireUsage) toAI() ai.Usage {
+	if u == nil {
+		return ai.Usage{}
+	}
+	out := ai.Usage{PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens}
+	if u.PromptDetails != nil {
+		out.CachedTokens = u.PromptDetails.CachedTokens
+	}
+	if u.CompletionDetails != nil {
+		out.ReasoningTokens = u.CompletionDetails.ReasoningTokens
+	}
+	return out
 }
 
 type respFormat struct {
@@ -123,6 +159,9 @@ func (p *provider) buildReq(req ai.ChatRequest, stream bool) chatReq {
 		Stream:      stream,
 		Stop:        req.Stop,
 		CacheKey:    req.CacheKey,
+	}
+	if stream {
+		out.StreamOptions = &streamOptions{IncludeUsage: true}
 	}
 	for _, t := range req.Tools {
 		out.Tools = append(out.Tools, wireTool{Type: "function", Function: wireFn{
@@ -220,6 +259,7 @@ type chatResp struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage *wireUsage `json:"usage"`
 }
 
 func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
@@ -244,6 +284,7 @@ func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRespon
 	}
 	ch := cr.Choices[0]
 	out := &ai.ChatResponse{Content: ch.Message.Content, FinishReason: ch.FinishReason}
+	out.Usage = cr.Usage.toAI()
 	for _, tc := range ch.Message.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ai.ToolCall{ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments})
 	}
@@ -297,8 +338,23 @@ func (p *provider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan a
 					} `json:"delta"`
 					FinishReason string `json:"finish_reason"`
 				} `json:"choices"`
+				Usage *wireUsage `json:"usage"`
 			}
-			if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Choices) == 0 {
+			if json.Unmarshal([]byte(data), &chunk) != nil {
+				continue
+			}
+			// The terminal usage chunk (asked for via stream_options) arrives
+			// with an empty choices array, so it must be handled before the
+			// no-choices skip.
+			if chunk.Usage != nil {
+				u := chunk.Usage.toAI()
+				select {
+				case out <- ai.Chunk{Usage: &u}:
+				case <-ctx.Done():
+					return
+				}
+			}
+			if len(chunk.Choices) == 0 {
 				continue
 			}
 			ch := chunk.Choices[0]

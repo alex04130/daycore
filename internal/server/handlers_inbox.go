@@ -173,12 +173,15 @@ func (s *Server) classifyInbox(ctx context.Context, sid, locale, text string) (*
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages:    []ai.Message{{Role: ai.RoleUser, Content: prompt}},
 		JSONMode:    true,
 		Temperature: 0.2,
 		MaxTokens:   1024,
 	})
+	s.logAICall(ctx, sid, epInboxClassify, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		return nil, err
 	}

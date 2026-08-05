@@ -165,7 +165,9 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 		userMsg = eveningUserPrompt(locale)
 	}
 
-	resp, err := w.s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := w.s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: sysPrompt},
 			{Role: ai.RoleUser, Content: userMsg},
@@ -173,6 +175,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 		Temperature: 0.7,
 		MaxTokens:   1024,
 	})
+	w.s.logAICall(ctx, sid, epBrief, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker runBrief: agent call", "sid", sid, "kind", kind, "err", err)
 		return
@@ -300,7 +303,9 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	sysPrompt := buildReplanSystemPrompt(locale, today, now.Format("15:04"), tz)
 	userMsg := buildReplanUserPrompt(locale, string(overdueJSON))
 
-	resp, err := w.s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := w.s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: sysPrompt},
 			{Role: ai.RoleUser, Content: userMsg},
@@ -308,6 +313,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 		Temperature: 0.3,
 		MaxTokens:   800,
 	})
+	w.s.logAICall(ctx, sid, epReplan, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker checkRollingReplan: agent call", "sid", sid, "err", err)
 		return

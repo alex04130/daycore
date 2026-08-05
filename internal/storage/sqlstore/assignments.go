@@ -112,6 +112,18 @@ func (r assignmentRepo) SetStatus(ctx context.Context, sessionID, id, status str
 	return nil
 }
 
+func (r assignmentRepo) Delete(ctx context.Context, sessionID, id string) error {
+	res, err := r.exec(ctx,
+		`DELETE FROM assignments WHERE session_id = ? AND id = ?`, sessionID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func scanAssignment(scan func(dest ...any) error) (*domain.Assignment, error) {
 	var (
 		a         domain.Assignment

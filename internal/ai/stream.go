@@ -14,6 +14,7 @@ type StreamAccumulator struct {
 	content      strings.Builder
 	calls        map[int]*ToolCall
 	finishReason string
+	usage        *Usage
 }
 
 // Add folds one chunk into the accumulator. Err/Done chunks are ignored — the
@@ -40,12 +41,18 @@ func (a *StreamAccumulator) Add(c Chunk) {
 	if c.FinishReason != "" {
 		a.finishReason = c.FinishReason
 	}
+	if c.Usage != nil {
+		a.usage = c.Usage
+	}
 }
 
 // Response assembles the accumulated stream. Tool calls come out in Index
 // order; a call whose fragments never carried an ID gets a synthesized one.
 func (a *StreamAccumulator) Response() *ChatResponse {
 	resp := &ChatResponse{Content: a.content.String(), FinishReason: a.finishReason}
+	if a.usage != nil {
+		resp.Usage = *a.usage
+	}
 	idxs := make([]int, 0, len(a.calls))
 	for i := range a.calls {
 		idxs = append(idxs, i)
@@ -70,14 +77,14 @@ func StreamViaChat(ctx context.Context, p AIProvider, req ChatRequest) (<-chan C
 	if err != nil {
 		return nil, err
 	}
-	out := make(chan Chunk, len(resp.ToolCalls)+3)
+	out := make(chan Chunk, len(resp.ToolCalls)+4)
 	if resp.Content != "" {
 		out <- Chunk{ContentDelta: resp.Content}
 	}
 	for i, tc := range resp.ToolCalls {
 		out <- Chunk{ToolCallDelta: &ToolCallDelta{Index: i, ID: tc.ID, Name: tc.Name, ArgsDelta: tc.Arguments}}
 	}
-	out <- Chunk{FinishReason: normalizeFinish(resp.FinishReason, len(resp.ToolCalls) > 0)}
+	out <- Chunk{FinishReason: normalizeFinish(resp.FinishReason, len(resp.ToolCalls) > 0), Usage: &resp.Usage}
 	out <- Chunk{Done: true}
 	close(out)
 	return out, nil

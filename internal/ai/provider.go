@@ -124,9 +124,9 @@ type ChatResponse struct {
 	Parts        []ContentPart
 	FinishReason string
 	// Usage is what the call cost. Every provider returns it and all three
-	// formats currently discard it, which is why token spend, latency per model
-	// and the AICallLog table are all unanswerable today. Zero means the format
-	// did not report it, not that the call was free.
+	// formats parse it into here (streaming callers see it on the final Chunk
+	// instead). Zero means the format did not report it, not that the call was
+	// free.
 	Usage Usage
 }
 
@@ -149,8 +149,13 @@ type Chunk struct {
 	ReasoningDelta string
 	ToolCallDelta  *ToolCallDelta
 	FinishReason   string // "stop" | "tool_calls" | "length"; non-empty only on the last data frame
-	Err            error
-	Done           bool
+	// Usage arrives at most once, on a terminal frame (openai sends it after
+	// the last content chunk when asked, anthropic splits it across
+	// message_start/message_delta, ollama puts it on the done line). Nil on
+	// every other frame; nil at the end means the provider did not report it.
+	Usage *Usage
+	Err   error
+	Done  bool
 }
 
 // ToolCallDelta is one streamed fragment of a tool call. The first fragment for

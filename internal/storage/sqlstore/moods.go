@@ -69,3 +69,14 @@ func (r moodRepo) MarkExerciseCompleted(ctx context.Context, sessionID, id strin
 	_, err := r.exec(ctx, `UPDATE mood_checkins SET exercise_completed = 1 WHERE id = ? AND session_id = ?`, id, sessionID)
 	return err
 }
+
+func (r moodRepo) Delete(ctx context.Context, sessionID, id string) error {
+	res, err := r.exec(ctx, `DELETE FROM mood_checkins WHERE session_id = ? AND id = ?`, sessionID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

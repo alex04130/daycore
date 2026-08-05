@@ -190,6 +190,13 @@ type msgResp struct {
 	Error      *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+		// cache_read_input_tokens is the prompt portion served from Anthropic's
+		// cache — the only direct evidence prompt caching is working.
+		CacheRead int `json:"cache_read_input_tokens"`
+	} `json:"usage"`
 }
 
 func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
@@ -210,6 +217,13 @@ func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRespon
 		return nil, fmt.Errorf("anthropic: %s", mr.Error.Message)
 	}
 	out := &ai.ChatResponse{FinishReason: mr.StopReason}
+	if mr.Usage != nil {
+		out.Usage = ai.Usage{
+			PromptTokens:     mr.Usage.InputTokens,
+			CompletionTokens: mr.Usage.OutputTokens,
+			CachedTokens:     mr.Usage.CacheRead,
+		}
+	}
 	var sb strings.Builder
 	for _, b := range mr.Content {
 		switch b.Type {
@@ -240,6 +254,7 @@ func (p *provider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan a
 		defer resp.Body.Close()
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		var inUsage ai.Usage // message_start carries the prompt half
 		for sc.Scan() {
 			line := strings.TrimSpace(sc.Text())
 			if !strings.HasPrefix(line, "data:") {
@@ -252,15 +267,39 @@ func (p *provider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan a
 					Type string `json:"type"`
 					Text string `json:"text"`
 				} `json:"delta"`
+				Message struct {
+					Usage struct {
+						InputTokens int `json:"input_tokens"`
+						CacheRead   int `json:"cache_read_input_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+				Usage struct {
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
 			}
 			if json.Unmarshal([]byte(data), &ev) != nil {
 				continue
 			}
 			switch ev.Type {
+			case "message_start":
+				inUsage.PromptTokens = ev.Message.Usage.InputTokens
+				inUsage.CachedTokens = ev.Message.Usage.CacheRead
 			case "content_block_delta":
 				if ev.Delta.Text != "" {
 					select {
 					case out <- ai.Chunk{ContentDelta: ev.Delta.Text}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case "message_delta":
+				// message_delta carries the completion half of the accounting;
+				// pair it with the prompt half from message_start.
+				if ev.Usage.OutputTokens > 0 {
+					inUsage.CompletionTokens = ev.Usage.OutputTokens
+					u := inUsage
+					select {
+					case out <- ai.Chunk{Usage: &u}:
 					case <-ctx.Done():
 						return
 					}

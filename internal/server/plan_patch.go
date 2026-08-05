@@ -63,6 +63,25 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action pl
 		beforeJSON, _ = json.Marshal(affected)
 		matched = len(affected)
 	}
+
+	// keep_manual is a server-side promise, not a client convention: any edit a
+	// user or the agent makes to an auto block turns it manual, so the next
+	// regeneration keeps it. Until this lived here, the flip existed only as a
+	// field the web frontend happened to send — the agent's own edits to auto
+	// blocks were silently overwritten by the next auto-plan, which is the
+	// product's flagship flow breaking its own word. ActorSystem (revert,
+	// regeneration) never flips.
+	if action.Action == "update" && (actor == domain.ActorUser || actor == domain.ActorAgent) {
+		for _, b := range blocks {
+			if !matchesAll(b, action.Match) {
+				continue
+			}
+			if o, _ := b["origin"].(string); o == domain.OriginAuto {
+				b["origin"] = domain.OriginManual
+			}
+		}
+	}
+
 	blocks = applyPlanAction(blocks, action)
 
 	out, _ := json.Marshal(blocks)

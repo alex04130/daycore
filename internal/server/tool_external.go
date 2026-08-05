@@ -49,7 +49,13 @@ func (s *Server) toolWebSearch(ctx context.Context, sid, rawArgs string) toolRes
 	s.logOp(ctx, &domain.OperationLog{
 		SessionID: sid, Actor: domain.ActorAgent, Action: "tool_web_search", Summary: args.Query,
 	})
-	return toolResult{OK: true, Data: map[string]any{"results": results}, Summary: args.Query}
+	// Snippets are the first third-party text that reaches the model, so they
+	// cross the untrusted gate: the client sees the clean results while the
+	// model gets the same bytes wrapped as data-not-instructions.
+	return toolResult{
+		OK: true, Data: map[string]any{"results": results}, Summary: args.Query,
+		ForModel: untrustedWrap("联网搜索", marshalCompact(map[string]any{"results": results})),
+	}
 }
 
 func (s *Server) toolListUpcoming(ctx context.Context, sid, rawArgs string) toolResult {
