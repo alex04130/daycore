@@ -46,7 +46,7 @@
 - ✅ **`proposals` 保留策略**（2026-08-03）—— `Prune(before)` 只删终态，pending 任何年龄都放过。
 - ✅ **`Proposal.OwnerInstance` 可查**（2026-08-03）。
 - ✅ **`RapportState.FoldVersion` 定语义**（2026-08-03）—— `rapport.FoldVersion` + `Resume`（版本不符则分数与游标一起丢）+ 金样本按版本索引、两个方向都能红。**接线仍在 ζ**：`Rapport()` 至今零生产调用方，本批只定形状。
-- lock / phase / proposal 的契约形状写进 spec（实现后补）。
+- ✅ **lock / phase / proposal 的契约形状写进 spec**（2026-08-03）—— 新增 [`docs/specs/plan-semantics.md`](specs/plan-semantics.md)：前端必须自己算一遍的三样。锁与石化已有机器可读夹具（`api/lock-rules.json` / `api/testdata/petrify-vectors.json`），**提案还没有** —— `api/testdata/proposal-vectors.json` 是 η 冻结前的欠账。
 
 ### γ 计划语义 lane（最底层的写路径闸门）
 
