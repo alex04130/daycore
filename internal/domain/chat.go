@@ -34,4 +34,26 @@ type ChatMessage struct {
 	ToolEvents string    `json:"toolEvents,omitempty"` // JSON array of SSE v2 frames (tool/decision cards) for replay
 	Status     string    `json:"status,omitempty"`     // ""≡done | pending | done | error
 	CreatedAt  time.Time `json:"createdAt"`
+
+	// Attachments is populated on read by hydrating from AttachmentRepository —
+	// it is not a column. The rows live in their own table because the file bus
+	// needs to answer "who owns this ref" without scanning message bodies, and
+	// because deleting bytes and deleting messages are separate operations.
+	//
+	// Writers set it to the IDs they want bound (see AttachmentsFor); the store
+	// binds them and reads them back whole.
+	Attachments []Attachment `json:"attachments,omitempty"`
+}
+
+// AttachmentIDs returns the ids of a message's attachments, which is what a
+// client sends when composing and what Bind consumes.
+func (m ChatMessage) AttachmentIDs() []string {
+	if len(m.Attachments) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(m.Attachments))
+	for _, a := range m.Attachments {
+		out = append(out, a.ID)
+	}
+	return out
 }

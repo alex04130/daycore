@@ -194,6 +194,9 @@ func run(logger *slog.Logger) error {
 	// Background cleanup for stale temp-context entries + expired binding tokens.
 	srv.StartTempContextCleanup(0)
 	srv.StartChannelBindingCleanup(0)
+	// Uploads nobody sent. Without this every abandoned upload is permanent:
+	// its row keeps the blob referenced, so no other sweep can reclaim it.
+	srv.StartAttachmentCleanup(0)
 
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()

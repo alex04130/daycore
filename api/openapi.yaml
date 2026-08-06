@@ -35,6 +35,7 @@ tags:
   - { name: rules }
   - { name: ai }
   - { name: chat }
+  - { name: files }
   - { name: materials }
   - { name: wishes }
   - { name: inbox }
@@ -247,7 +248,7 @@ paths:
         error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
         FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
         history; client roles are whitelisted to user/assistant.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
       responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
   /api/ai/companion/async:
     post:
@@ -262,7 +263,7 @@ paths:
         appear in the placeholder's toolEvents while still pending — answer it
         via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
         threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message, threadId], properties: { message: { type: string }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
       responses:
         '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -375,6 +376,75 @@ paths:
   /api/companion-history:
     get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
     post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
+
+  # ─── files ────────────────────────────────────────────────────────────────
+  /api/files:
+    post:
+      operationId: uploadFile
+      tags: [files]
+      summary: Upload bytes and get an attachment id back.
+      description: >-
+        The body is the file's RAW BYTES with its type in Content-Type — not
+        multipart and not base64 JSON. From a browser that is
+        `fetch(url, {method:'POST', headers:{'Content-Type': file.type}, body: file})`.
+        The response never contains a storage ref: the id is the only handle, and
+        the server resolves it to bytes only for the session that uploaded them.
+        An upload is unbound until it rides along with a chat message
+        (POST /api/ai/companion with attachmentIds); unbound uploads are reclaimed
+        after 24 hours. 503 when the deployment has no BLOB_STORE configured,
+        which is a supported configuration rather than a fault.
+      parameters:
+        - { name: filename, in: query, schema: { type: string }, description: "Original name, shown to the user and echoed in Content-Disposition. Sanitised server-side." }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201': { description: Stored., content: { application/json: { schema: { $ref: '#/components/schemas/Attachment' } } } }
+        '400': { description: No Content-Type, or zero bytes. }
+        '413': { description: Over MAX_UPLOAD_BYTES. }
+        '503': { description: This deployment has no file bus. }
+    get:
+      operationId: listPendingFiles
+      tags: [files]
+      summary: Uploads not yet sent — what a composer restores after a reload.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { files: { type: array, items: { $ref: '#/components/schemas/Attachment' } } } } } } }
+  /api/files/{id}:
+    get:
+      operationId: downloadFile
+      tags: [files]
+      summary: The bytes.
+      description: >-
+        Always proxied, never a redirect to a signed URL — a client that had to
+        handle both shapes would only ever be tested against one. Served with
+        nosniff and a sandbox CSP because these are user-supplied bytes on the
+        app's own origin. ETag is the content SHA-256, so If-None-Match is exact.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: download, in: query, schema: { type: string, enum: ["1"] }, description: "Force Content-Disposition: attachment." }
+      responses:
+        '200': { description: OK, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '304': { description: Matched If-None-Match. }
+        '404': { description: No such attachment in this session. }
+        '410': { description: The row outlived its bytes. }
+        '503': { description: This deployment has no file bus. }
+    delete:
+      operationId: deleteFile
+      tags: [files]
+      summary: Drop an upload that was never sent.
+      description: >-
+        Only unbound uploads. Once an attachment belongs to a message the way to
+        remove it is to remove the message — otherwise a message would render a
+        file that is no longer there.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Deleted, row and bytes. }
+        '404': { description: No such attachment in this session. }
+        '409': { description: It belongs to a message now. }
 
   # ─── materials ────────────────────────────────────────────────────────────
   /api/materials:
@@ -774,10 +844,11 @@ paths:
         defaultPrimary/defaultSecondary are what a brand-new user starts with;
         a signed-in user's own pair comes from GET /api/session/preferences.
 
-        features is capability discovery: what this deployment's model catalog
-        can do (vision / transcribe / tts / imagegen), derived live. False means
+        features is capability discovery: what this deployment can do
+        (vision / transcribe / tts / imagegen from the model catalog, files from
+        whether a BLOB_STORE is configured), derived live. False means
         "not available here" — clients gate UI on it rather than assuming.
-      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean }, files: { type: boolean, description: "POST /api/files works. False when no BLOB_STORE is configured — do not show an attach control." } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
 
 components:
   securitySchemes:
@@ -1083,6 +1154,25 @@ components:
         content: { type: string }
         toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
         status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: "Files sent with this message. Hydrated on read from their own table — not a column." }
+        createdAt: { type: string, format: date-time }
+    Attachment:
+      type: object
+      description: >-
+        A file on the bus, addressed by id. The storage ref is deliberately
+        absent from this schema and from every response: it is a bearer handle
+        minted by a store that has no notion of who is asking, so the server
+        resolves id → ref itself after checking the session.
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        threadId: { type: string, description: "Set once bound to a message." }
+        messageId: { type: string, description: "Empty while the upload has not been sent." }
+        kind: { type: string, enum: [image, audio, video, document, file], description: "What to render. A closed set so a client never has to know that image/avif is an image." }
+        mime: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string, description: "Of the stored bytes; also the ETag on download." }
+        filename: { type: string }
         createdAt: { type: string, format: date-time }
     CustomTheme:
       type: object

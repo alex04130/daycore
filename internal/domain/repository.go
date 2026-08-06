@@ -40,6 +40,11 @@ type Store interface {
 	Rhythm() RhythmRepository
 	Locales() LocaleRepository
 
+	// Attachments is the ownership half of the file bus: internal/blob maps refs
+	// to bytes and knows nothing about sessions, so these rows are what makes a
+	// ref safe to resolve. See attachment.go.
+	Attachments() AttachmentRepository
+
 	Migrate(ctx context.Context) error
 	Ping(ctx context.Context) error
 	Close() error

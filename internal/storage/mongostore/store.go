@@ -109,6 +109,9 @@ func (s *Store) Rapport() domain.RapportRepository    { return rapportRepo{s} }
 func (s *Store) Rhythm() domain.RhythmRepository      { return rhythmRepo{s} }
 func (s *Store) Locales() domain.LocaleRepository     { return localeRepo{s} }
 
+// ε — the ownership half of the file bus.
+func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRepo{s} }
+
 func (s *Store) Ping(ctx context.Context) error { return s.client.Ping(ctx, nil) }
 func (s *Store) Close() error                   { return s.client.Disconnect(context.Background()) }
 
@@ -157,6 +160,12 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"rhythm_days", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "day", Value: -1}}}},
 		{"locale_overrides", mongo.IndexModel{Keys: bson.D{{Key: "message_key", Value: 1}, {Key: "locale", Value: 1}}, Options: uniq}},
 		{"locale_overrides", mongo.IndexModel{Keys: bson.D{{Key: "locale", Value: 1}}}},
+
+		// ε. Mirrors the three SQL indexes: hydrate a page of messages, delete a
+		// thread's bytes, sweep uploads nobody sent.
+		{"attachments", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "message_id", Value: 1}, {Key: "created_at", Value: 1}}}},
+		{"attachments", mongo.IndexModel{Keys: bson.D{{Key: "session_id", Value: 1}, {Key: "thread_id", Value: 1}}}},
+		{"attachments", mongo.IndexModel{Keys: bson.D{{Key: "message_id", Value: 1}, {Key: "created_at", Value: 1}}}},
 	}
 	for _, sp := range specs {
 		if _, err := s.c(sp.coll).Indexes().CreateOne(ctx, sp.model); err != nil {

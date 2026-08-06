@@ -6,7 +6,7 @@
 
 | 文件 | 实体 | 备注 |
 |---|---|---|
-| chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, 阶段2 加 Status} | |
+| chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, Status, **Attachments**} | `Attachments` **不是列**，读时从 `attachments` 表批量水合 |
 | companion.go | Message, Role 常量(user/assistant/system/tool), CompanionMemory | |
 | courses.go | Course, Assignment{Source: canvas/manual; Status: pending/planned/done/dismissed} | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文 |
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
@@ -23,6 +23,7 @@
 | phase.go | Phase（future/now/recon/stone） | 读时石化，无表 |
 | lock.go | LockLevel 常量 + 派生规则 | 配 `api/lock-rules.json` 契约夹具 |
 | mood_kind.go | 心情注册表（12 种 + valence） | 存 id 不存标签 —— 多语言扩展的前提 |
+| attachment.go | Attachment + AttachmentRepository | 文件总线的**所有权那一半**，见下「附件与文件总线」 |
 | tempcontext.go / channel.go / feedback.go / errors.go | TempContext / ChannelBinding / FeedbackLog / 哨兵错误 | |
 
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
@@ -47,7 +48,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、36 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 33 张表 DDL 全部合法（三方言表名集合完全一致）、42 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -200,6 +201,31 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 - `NeedsProtector` 只是纯谓词，**不管要不要真发** —— 推送预算、注意力阶梯、这一 run 是不是已经发过，三样都归调用方。这样阈值可以脱离调度器测。
 
 **工作日/周末是否分开学**：设计里明写的口子，暂不做。
+
+## 附件与文件总线（`attachments` 表，ε 批次，2026-08-06）
+
+`internal/blob` 是文件总线，它**故意不管鉴权**：ref → 字节，不知道会话是谁。这个分工只有在别的地方记得「谁放的」时才安全 —— `attachments` 就是那个地方。
+
+在此之前**文件总线零生产调用方**：驱动写完了、行为套件 11 例过了、`Server.blobs` 也接上了，但没有任何一处往里放过一个字节。这是本仓第四次出现「写完、测过、没人调用」，前三次是 `Movable/Frozen/PhaseIn/PetrifyLine`、`DeriveLock/RederiveLock`、`AICallLog`。
+
+**`Ref` 永不出服务端**（`json:"-"`）。客户端只拿到 `id`，服务端查了会话再解析成 ref。一个出现在响应里的 ref 就是一张不记名的字节提货单，而签发它的 store 根本不知道谁在问。有一条服务层测试专门守这条（响应、待发列表、水合过的消息三种形状全查）。
+
+| 列 | 为什么是列 |
+|---|---|
+| `session_id` | 每个方法都按会话收口 —— id 是客户端唯一会送的东西，信它就等于任何登录用户猜一个 UUID 就能读别人的上传 |
+| `message_id` | 水合一页消息按它查（`IN (...)`）；空串 = 还没发出去 |
+| `thread_id` | 删会话要按它一句话删干净 |
+| `ref` / `mime` / `size` / `sha256` / `filename` / `kind` | `sha256` 同时是下载的 ETag |
+
+**绑定是排他的**：一个附件只能属于一条消息，重复绑同一条消息是幂等的（客户端重发），绑到第二条消息报 `ErrAttachmentBound`。允许一对多的话，「删消息就删字节」会变成歧义，而歧义的兑现形式要么是漏字节要么是消息里一张裂图。
+
+**删行的方法一律把删掉的行返回给调用方**（`Delete`/`DeleteByThread`/`PruneUnbound`）—— 只有调用方手里有 `blob.Store`。一个只删行就说 ok 的 repository 会一次一个上传地漏磁盘，且数据库里再没有任何东西能找到它们。
+
+**没发出去的上传 24 小时后回收**（`AttachmentUnboundTTL`，`StartAttachmentCleanup` 每小时一跑）。不做的话每个被放弃的上传都是永久的：它的行让那个 blob 保持被引用，于是没有任何别的清扫能碰它。
+
+行为套件加了 6 例（往返与会话隔离 / 绑定排他与幂等 / 水合有序且不跨会话 / 删除返回行且放过已发送 / 删会话带走字节 / 清扫只回收没发出去的）。四个后端跑同一份。
+
+⚠️ **`Material.StorageRef` 仍然没有生产方**。ROADMAP「待拍板」第 1 条（签名 ref vs `blobs` 表）的**落地那一半就是这张表**：持久化的东西写行。瞬态签名 ref 那一半仍未做 —— 下载一律由 `GET /api/files/{id}` 代理，`blob.SignedURL` 至今零调用方。
 
 ## 心情注册表（`domain/mood_kind.go`）
 

@@ -122,6 +122,7 @@ func (s *Server) handleChatClearMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	id := r.PathValue("id")
+	s.dropThreadAttachments(r.Context(), sid, id)
 	if err := s.store.Chats().DeleteThreadMessages(r.Context(), sid, id); err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.chatClearMessages.internal")
 		return
@@ -136,6 +137,9 @@ func (s *Server) handleChatDeleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	id := r.PathValue("id")
+	// Before the messages go: after that there is nothing left that knows which
+	// blobs this conversation owned, and the file bus cannot be asked.
+	s.dropThreadAttachments(r.Context(), sid, id)
 	if err := s.store.Chats().DeleteThread(r.Context(), sid, id); err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.chatDeleteThread.internal")
 		return
@@ -159,7 +163,9 @@ func (s *Server) handleChatGetMessage(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.chatGetMessage.internal")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, msg)
+	one := []domain.ChatMessage{*msg}
+	s.hydrateAttachments(r.Context(), sid, one)
+	s.writeJSON(w, http.StatusOK, one[0])
 }
 
 // GET /api/chat/threads/{id}/messages — list messages for a thread.
@@ -186,5 +192,6 @@ func (s *Server) handleChatListMessages(w http.ResponseWriter, r *http.Request) 
 	if msgs == nil {
 		msgs = []domain.ChatMessage{}
 	}
+	s.hydrateAttachments(r.Context(), sid, msgs)
 	s.writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
 }

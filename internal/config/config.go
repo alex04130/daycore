@@ -76,7 +76,13 @@ type Config struct {
 	RateLimitPerMin     int   // per-IP requests/min on AI endpoints (0 = disabled)
 	AuthRateLimitPerMin int   // per-IP requests/min on auth endpoints (0 = disabled)
 	MaxImageBytes       int64 // max decoded image upload size for plan-image
-	AgentMaxRounds      int   // companion agent tool rounds per message
+	// MaxUploadBytes caps POST /api/files. Separate from MaxImageBytes because
+	// they answer different questions: that one bounds what fits in a model
+	// request, this one bounds what fits on the disk. A PDF the model reads a
+	// page of at a time is legitimately larger than an image inlined into a
+	// prompt, and one number for both would have to be the smaller of the two.
+	MaxUploadBytes int64
+	AgentMaxRounds int // companion agent tool rounds per message
 
 	// Autonomous planning
 	AutoPlanMaxDays         int // largest date range one auto-plan call may cover
@@ -157,6 +163,7 @@ func Load() (*Config, error) {
 		AuthRateLimitPerMin:     getInt("AUTH_RATE_LIMIT_PER_MIN", 10),
 		AgentMaxRounds:          getInt("AGENT_MAX_ROUNDS", 6),
 		MaxImageBytes:           int64(getInt("MAX_IMAGE_BYTES", 8*1024*1024)),
+		MaxUploadBytes:          int64(getInt("MAX_UPLOAD_BYTES", 32*1024*1024)),
 		AutoPlanMaxDays:         getInt("AUTO_PLAN_MAX_DAYS", 7),
 		AssignmentLookaheadDays: getInt("ASSIGNMENT_LOOKAHEAD_DAYS", 14),
 		AdminToken:              getEnv("ADMIN_TOKEN", ""),

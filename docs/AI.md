@@ -82,6 +82,16 @@ obj, ok := extractJSONObject(resp)   // handlers_ai_helpers.go：取首 { 到末
 ```
 现有样例：handlers_ai_mood.go（单 user 消息，temp 0.7）、handlers_ai_plan.go（system+user，JSONMode）、handlers_autoplan.go（8192 tokens）。
 
+## 附件进模型（`internal/server/attachments.go`，ε 批次）
+
+`POST /api/ai/companion` 与 `/async` 收 `attachmentIds`（来自 `POST /api/files`），解析成 `ai.ContentPart` 挂到**最后一条 user 消息**上。
+
+- **只用内联 base64**（`CarriageInline`）—— 三个格式都接受的唯一载运形式。签名 URL 需要一套文件总线还没有的签名机制，`CarriageFileID` 要先把字节传给厂商；两条都是后加的，现在猜错的代价是「模型静默无视用户的文件」。
+- **模型读不了的附件不静默丢弃**，而是变成一条文本 part 把文件名念出来（`prompt.attachments.unreadable`，双 locale）。丢掉的话会得到最坏的一种回答：对一份没人读过的文档给出自信的答复。判据是 `Capabilities.Accepts(modality)` + `CarriagesFor(provider, modality).Has(inline)`。
+- **挂载点从后往前找 role=user**，不是取最后一条：滑窗压缩器会在 user 之后补一条摘要，把图挂上去就等于当成 system 消息发出去了。
+- 内联上限走 `MAX_IMAGE_BYTES` 而不是 `MAX_UPLOAD_BYTES` —— 一份 30 MiB 的 PDF 是个正常上传、是个糟糕的提示词。
+- ⚠️ **通道入站附件（OneBot 图片/语音）还没接** —— 那条路径现在仍然只有文字。
+
 ## Vision 管线（vision.go）
 
 - `Orchestrator.PlanFromImage(ctx, chat, systemPrompt, imageB64, mime) (string, error)`——**与提示词无关**，任意 system prompt + 图皆可复用。

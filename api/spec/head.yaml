@@ -29,6 +29,7 @@ tags:
   - { name: rules }
   - { name: ai }
   - { name: chat }
+  - { name: files }
   - { name: materials }
   - { name: wishes }
   - { name: inbox }

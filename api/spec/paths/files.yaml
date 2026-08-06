@@ -1,0 +1,67 @@
+/api/files:
+  post:
+    operationId: uploadFile
+    tags: [files]
+    summary: Upload bytes and get an attachment id back.
+    description: >-
+      The body is the file's RAW BYTES with its type in Content-Type — not
+      multipart and not base64 JSON. From a browser that is
+      `fetch(url, {method:'POST', headers:{'Content-Type': file.type}, body: file})`.
+      The response never contains a storage ref: the id is the only handle, and
+      the server resolves it to bytes only for the session that uploaded them.
+      An upload is unbound until it rides along with a chat message
+      (POST /api/ai/companion with attachmentIds); unbound uploads are reclaimed
+      after 24 hours. 503 when the deployment has no BLOB_STORE configured,
+      which is a supported configuration rather than a fault.
+    parameters:
+      - { name: filename, in: query, schema: { type: string }, description: "Original name, shown to the user and echoed in Content-Disposition. Sanitised server-side." }
+    requestBody:
+      required: true
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    responses:
+      '201': { description: Stored., content: { application/json: { schema: { $ref: '#/components/schemas/Attachment' } } } }
+      '400': { description: No Content-Type, or zero bytes. }
+      '413': { description: Over MAX_UPLOAD_BYTES. }
+      '503': { description: This deployment has no file bus. }
+  get:
+    operationId: listPendingFiles
+    tags: [files]
+    summary: Uploads not yet sent — what a composer restores after a reload.
+    parameters:
+      - { name: limit, in: query, schema: { type: integer } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { files: { type: array, items: { $ref: '#/components/schemas/Attachment' } } } } } } }
+/api/files/{id}:
+  get:
+    operationId: downloadFile
+    tags: [files]
+    summary: The bytes.
+    description: >-
+      Always proxied, never a redirect to a signed URL — a client that had to
+      handle both shapes would only ever be tested against one. Served with
+      nosniff and a sandbox CSP because these are user-supplied bytes on the
+      app's own origin. ETag is the content SHA-256, so If-None-Match is exact.
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+      - { name: download, in: query, schema: { type: string, enum: ["1"] }, description: "Force Content-Disposition: attachment." }
+    responses:
+      '200': { description: OK, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+      '304': { description: Matched If-None-Match. }
+      '404': { description: No such attachment in this session. }
+      '410': { description: The row outlived its bytes. }
+      '503': { description: This deployment has no file bus. }
+  delete:
+    operationId: deleteFile
+    tags: [files]
+    summary: Drop an upload that was never sent.
+    description: >-
+      Only unbound uploads. Once an attachment belongs to a message the way to
+      remove it is to remove the message — otherwise a message would render a
+      file that is no longer there.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses:
+      '200': { description: Deleted, row and bytes. }
+      '404': { description: No such attachment in this session. }
+      '409': { description: It belongs to a message now. }

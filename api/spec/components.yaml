@@ -302,6 +302,25 @@ components:
         content: { type: string }
         toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
         status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: "Files sent with this message. Hydrated on read from their own table — not a column." }
+        createdAt: { type: string, format: date-time }
+    Attachment:
+      type: object
+      description: >-
+        A file on the bus, addressed by id. The storage ref is deliberately
+        absent from this schema and from every response: it is a bearer handle
+        minted by a store that has no notion of who is asking, so the server
+        resolves id → ref itself after checking the session.
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        threadId: { type: string, description: "Set once bound to a message." }
+        messageId: { type: string, description: "Empty while the upload has not been sent." }
+        kind: { type: string, enum: [image, audio, video, document, file], description: "What to render. A closed set so a client never has to know that image/avif is an image." }
+        mime: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string, description: "Of the stored bytes; also the ETag on download." }
+        filename: { type: string }
         createdAt: { type: string, format: date-time }
     CustomTheme:
       type: object

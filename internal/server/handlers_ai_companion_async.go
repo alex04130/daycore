@@ -99,12 +99,14 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var body struct {
-		Message       string `json:"message"`
-		Timezone      string `json:"timezone"`
-		AssistantName string `json:"assistantName"`
-		ThreadID      string `json:"threadId"`
+		Message       string   `json:"message"`
+		Timezone      string   `json:"timezone"`
+		AssistantName string   `json:"assistantName"`
+		ThreadID      string   `json:"threadId"`
+		AttachmentIDs []string `json:"attachmentIds"`
 	}
-	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
+	if err := s.readJSON(r, &body); err != nil ||
+		(strings.TrimSpace(body.Message) == "" && len(body.AttachmentIDs) == 0) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanionAsync.bad_request")
 		return
 	}
@@ -135,6 +137,11 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 
 	// Pre-generate both IDs: mongostore's AppendMessages does not write
 	// generated IDs back to the caller's slice.
+	atts, aerr := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
+	if aerr != nil {
+		s.writeAttachmentErr(w, r, "aICompanionAsync", aerr)
+		return
+	}
 	userMsgID := uuid.NewString()
 	placeholderID := uuid.NewString()
 	err := s.store.Chats().AppendMessages(r.Context(), []domain.ChatMessage{
@@ -144,6 +151,9 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanionAsync.internal")
 		return
+	}
+	if err := s.bindAttachments(r.Context(), sid, body.ThreadID, userMsgID, idsOf(atts)); err != nil {
+		s.log.Warn("could not attach uploads to the message", "session", sid, "err", err)
 	}
 
 	locale := s.requestLocale(r)
@@ -181,6 +191,7 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 			finalize(asyncErrorText(locale), "", domain.MsgStatusError)
 			return
 		}
+		attachPartsToLastUser(messages, s.attachmentParts(ctx, s.catalog.DefaultChat(), locale, atts))
 		sink := &recordingSink{}
 		sink.onCard = func(eventsJSON string) {
 			// Status stays pending; the client sees the card in toolEvents and

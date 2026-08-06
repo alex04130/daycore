@@ -8,7 +8,9 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
+
 	"daycore/internal/i18n"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -34,21 +36,30 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Message             string `json:"message"`
-		Timezone            string `json:"timezone"`
-		AssistantName       string `json:"assistantName"`
-		ThreadID            string `json:"threadId"`
+		Message             string   `json:"message"`
+		Timezone            string   `json:"timezone"`
+		AssistantName       string   `json:"assistantName"`
+		ThreadID            string   `json:"threadId"`
+		AttachmentIDs       []string `json:"attachmentIds"`
 		ConversationHistory []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"conversationHistory"`
 	}
-	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
+	// A message may be empty when it carries files: "上传即 intent" — dropping a
+	// photo in with no words is a complete thing to say.
+	if err := s.readJSON(r, &body); err != nil ||
+		(strings.TrimSpace(body.Message) == "" && len(body.AttachmentIDs) == 0) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanion.bad_request")
 		return
 	}
 
 	sid := sessionIDFrom(r.Context())
+	atts, err := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
+	if err != nil {
+		s.writeAttachmentErr(w, r, "aICompanion", err)
+		return
+	}
 	s.decisions.cancelForSession(sid) // a new message supersedes any pending card
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
@@ -90,6 +101,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, ai.Message{Role: ai.RoleUser, Content: body.Message})
 		messages = s.maybeCompress(ctx, sid, "", locale, body.Timezone, name, messages)
 	}
+	attachPartsToLastUser(messages, s.attachmentParts(ctx, s.catalog.DefaultChat(), locale, atts))
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -107,10 +119,23 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	// threadId can't write into another session's thread. Best-effort: the SSE
 	// stream already completed.
 	if body.ThreadID != "" && strings.TrimSpace(answer) != "" {
-		_ = s.store.Chats().AppendMessages(context.WithoutCancel(ctx), []domain.ChatMessage{
-			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleUser, Content: body.Message},
+		persistCtx := context.WithoutCancel(ctx)
+		// The id is generated here, not read back from the append: mongostore's
+		// AppendMessages does not write generated ids into the caller's slice,
+		// so binding to turn[0].ID would attach nothing on exactly one of the
+		// four backends — and only when a user sent a file.
+		userMsgID := uuid.NewString()
+		err := s.store.Chats().AppendMessages(persistCtx, []domain.ChatMessage{
+			{ID: userMsgID, ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleUser, Content: body.Message},
 			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleAssistant, Content: answer},
 		})
+		if err == nil {
+			// A bind that fails leaves the uploads unbound and reclaimable —
+			// see bindAttachments.
+			if err := s.bindAttachments(persistCtx, sid, body.ThreadID, userMsgID, idsOf(atts)); err != nil {
+				s.log.Warn("could not attach uploads to the message", "session", sid, "err", err)
+			}
+		}
 	}
 }
 

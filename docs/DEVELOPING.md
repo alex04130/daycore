@@ -24,7 +24,7 @@ internal/
   search/                   web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS + 子串兜底）
   weather/                  WeatherProvider registry + 四个 provider 子包（自注册）
   storage/{sqlstore,mongostore}/  SQLite+PG+MySQL（Dialect 抽象）/ MongoDB
-  storage/storagetest/      行为一致性套件（36 例，四个后端跑同一份）
+  storage/storagetest/      行为一致性套件（42 例，四个后端跑同一份）
   server/                   路由（分散注册，见 routes.go）+ 中间件 + handlers + agent loop + cron Worker
 api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
 web/frontend/               React 前端（Vite；npm run dev / build）

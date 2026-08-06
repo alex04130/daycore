@@ -26,7 +26,8 @@
       defaultPrimary/defaultSecondary are what a brand-new user starts with;
       a signed-in user's own pair comes from GET /api/session/preferences.
 
-      features is capability discovery: what this deployment's model catalog
-      can do (vision / transcribe / tts / imagegen), derived live. False means
+      features is capability discovery: what this deployment can do
+      (vision / transcribe / tts / imagegen from the model catalog, files from
+      whether a BLOB_STORE is configured), derived live. False means
       "not available here" — clients gate UI on it rather than assuming.
-    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
+    responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean }, files: { type: boolean, description: "POST /api/files works. False when no BLOB_STORE is configured — do not show an attach control." } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }

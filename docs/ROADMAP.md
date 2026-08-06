@@ -74,7 +74,7 @@
 | L2 人格、早报、重排三段提示词 | 模板体系（`persona` / `brief` / `replan`） | 读者是模型；要能在控制台改、要受双 locale 校验 |
 | 星期名、planner 开场白 | 消息目录 | 是数据，第三门语言不该要求发版 |
 | **279 处 `writeErr` 的中文字面量** | 消息目录（234 + 7 带参 key） | 用户可见，此前**完全不可翻译** |
-| L1 硬边界重申 | **有意留在 Go 里** | 模板与目录两层都可运行时覆盖，而它是 L2 人格注入的最后一道防线 —— 能被运行时删掉的边界不是边界 |
+| L1 硬边界重申 | ~~有意留在 Go 里~~ → **`prompts/boundaries.json`**（2026-08-06 修正） | 当时的理由只对了一半：不可改写是对的，但代价里有两条白付的 —— 不可翻译、加减一条规则要发版。改成只有**磁盘 + 内嵌**两层、**没有 DB 层也没有端点**：控制台改不到，运维改文件重启生效。见 [AI.md](AI.md) |
 
 **闸门**：`TestNoHardcodedUserFacingText` 让新的硬编码文案当场变红并报出文件行号与原文。这才是 δ 真正的产出 —— 迁移一次只修今天，闸门修的是以后。
 
@@ -82,14 +82,21 @@
 
 四端 i18n 形态写进 [`specs/frontend-manifest.md`](specs/frontend-manifest.md)：四条要求 + 「现役 `i18n.js` 是不要抄的那一份」。
 
-### ε 端点齐活
+### ε 端点齐活 —— 附件与文件总线 ✅（2026-08-06）
 
-五块 REST 面一次做完，让契约能在 η 一次冻结。此时 `ProposalFilter` 已经对了、409 信封已统一、i18n 机制已对。
+> 「五块 REST 面」这个说法是按**旧的块清单**写的（含已取消的胆量、以及 ROADMAP 自己把接线排到 ζ 的 rapport/rhythm）。按今天的实际缺口重新定义：**ε = 把文件总线接通**。提案 REST 面已随 γ 做掉（`4ee274d`），rapport/rhythm 的读面仍按原计划留在 ζ。
 
-⚠️ 两件必须挤进本批或之前的事：
+- ✅ **`ChatMessage` 挂附件引用**（本批的硬性前置）—— `attachments` 表：domain → repository → 三方言 DDL → mongostore → **行为套件 6 例**，四个后端真机各 42/42。
+- ✅ **文件总线第一次有生产调用方**。此前 `internal/blob` 是写完、跑过 11 例行为套件、接进 `Server` 却零调用方的一层 —— **本仓第四次出现「写完、测过、没人调用」**（前三次：`Movable/Frozen/PhaseIn/PetrifyLine`、`DeriveLock/RederiveLock`、`AICallLog`）。
+- ✅ **REST 面**：`POST /api/files`（请求体即原始字节，不是 multipart 也不是 base64 JSON）、`GET /api/files`（待发送列表）、`GET /api/files/{id}`（一律代理，不给签名 URL）、`DELETE /api/files/{id}`。
+- ✅ **`Ref` 永不出服务端**。`blob.Store` 故意不管鉴权，所有权全在 `attachments` 行上；客户端只拿 id。一条服务层测试查三种响应形状。
+- ✅ **附件进模型**：`attachmentIds` → 内联 `ContentPart` 挂到最后一条 user 消息（从后往前找，不能挂到压缩器补的摘要上）。**模型读不了的不静默丢**，把文件名念给它听。
+- ✅ **孤儿清扫**：没发出去的上传 24h 回收，行与字节一起删 —— 不做的话每个被放弃的上传都是永久的（它的行让那个 blob 保持被引用）。
+- ✅ 契约：`files` tag 分片 + `Attachment` schema + `ChatMessage.attachments` + `features.files` 能力位，`APIMinor` 5→6。
 
-- **`ChatMessage` 挂附件引用**（domain → repository → 三方言 DDL → mongostore → 行为套件）——模态地基剩下的那一件。消息表持续增长，按曲线判据它在 ε 前落。
-- **提案 REST 面**是五块里最重的一块，且现状比想象更空：`proposals` 表与 repo 有行为测试守着，但 server **零读零写**（`propose_decision` 走内存决策卡，不落表），API_SURFACE 零条 proposal 路由——它是全仓第二张死表。契约形状先行是对的，但形状之后必须紧跟闭环，见 ζ 后新增批。
+**顺手修掉的一处四后端分歧**：sync companion 原本打算从 `AppendMessages` 回读消息 id 来绑附件 —— 而 **mongostore 的 `AppendMessages` 不把生成的 id 写回调用方的切片**，那样只会在四个后端里的一个上、且只在用户发了文件时静默绑不上。改成调用方预生成 id（async 路径早就是这么做的，注释里写着原因）。
+
+⚠️ **本批没做、明确留着的**：通道入站附件（OneBot 图片/语音）仍然只有文字；`Material.StorageRef` 依然零生产方；签名 ref 那一半（「待拍板」第 1 条的另一半）仍未做 —— `blob.SignedURL` 至今零调用方。
 
 ### ζ worker / 多实例
 
@@ -183,7 +190,7 @@ F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** �
 
 ## 待拍板
 
-1. **文件总线的 ref 鉴权形状**：签名 ref（自证所有权、零 DDL、无法按 owner 枚举或配额）vs `blobs` 表（能 GC 能配额、四后端各加一遍）。倾向混合：瞬态用签名 ref，落地为 `Material.StorageRef` 时才写行。**这个决定会定死 `StorageRef` 的语义。**
+1. **文件总线的 ref 鉴权形状** —— **落地那一半已在 ε 按原倾向做掉**：持久化的东西写行（`attachments` 表，能 GC 能按 owner 枚举）。**剩下的是瞬态那一半**：签名 ref 至今零调用方，下载一律由 `GET /api/files/{id}` 代理。真正要拍的收窄成两条 —— ① 对象存储后端要不要直接给前端签名 URL（省一次代理，但客户端要处理两种形状）；② `Material.StorageRef` 是复用 `attachments` 行、还是自己存 ref。②仍会定死 `StorageRef` 的语义。
 2. **外部 MCP 的批准粒度**：方向已定（逐服务器批准 + 逐工具改提示词/开关，做成提示词导入功能，落在 `prompt_overrides` 范式上）——**剩下的不是拍板是排期**：前置是 θ 新增的工具注册表化，本条目随它一并落地，不再算「待拍板」。
 3. **框架图渲染器**：通用渲染器（mermaid/graphviz 类，但纯 Go 无 cgo 的方案质量存疑）vs 为 Daycore 真正需要的几种图**专门写**（日/周时间线、依赖箭头链）。后者输出质量更高且是纯 Go，但不通用。
 

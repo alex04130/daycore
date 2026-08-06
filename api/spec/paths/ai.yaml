@@ -9,7 +9,7 @@
       error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
       FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
       history; client roles are whitelisted to user/assistant.
-    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+    requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
     responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
 /api/ai/companion/async:
   post:
@@ -24,7 +24,7 @@
       appear in the placeholder's toolEvents while still pending — answer it
       via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
       threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
-    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message, threadId], properties: { message: { type: string }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string } } } } } }
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
     responses:
       '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
       '400': { $ref: '#/components/responses/Error' }
