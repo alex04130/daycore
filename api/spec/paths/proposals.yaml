@@ -1,0 +1,46 @@
+/api/proposals:
+  get:
+    operationId: listProposals
+    tags: [proposals]
+    summary: What is waiting on the user — the card stack.
+    description: >-
+      Defaults to the stack: pending, already delivered, and not yet lapsed.
+      That conjunction is the point — deliveredAt is a permanent stamp, so
+      asking about it alone would return every card this session was ever shown.
+      Pass all=1 for the console view of everything.
+    parameters:
+      - { name: all, in: query, schema: { type: string, enum: ["1"] }, description: Everything this session ever had, newest first. }
+      - { name: level, in: query, schema: { type: string, enum: [L1, L2, L3] } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { proposals: { type: array, items: { $ref: '#/components/schemas/Proposal' } } } } } } }
+/api/proposals/{id}/respond:
+  post:
+    operationId: respondProposal
+    tags: [proposals]
+    summary: Answer a card nobody is blocked on.
+    description: >-
+      Distinct from POST /api/decisions/{id}/respond, which unblocks an agent
+      turn waiting right now. Both write the same row. An empty or "reject"
+      choice rejects; anything else accepts and marks that row.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { content: { application/json: { schema: { type: object, properties: { choice: { type: string }, text: { type: string } } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+      '404': { description: No such card. }
+      '409': { description: Already answered, or expired. }
+/api/plan/conflict:
+  post:
+    operationId: markPlanConflict
+    tags: [proposals]
+    summary: "\u6807\u8bb0\u51b2\u7a81 \u2014 the third way out of a lock refusal."
+    description: >-
+      For when neither taking leave nor unlocking is right: the class really is
+      immovable AND something else really does need that time. Creates a
+      decision card rather than resolving it, because the system does not know
+      which of the two matters more. Refuses with 422 if nothing actually
+      overlaps — a card claiming a conflict that is not there teaches the user
+      to distrust the cards.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, blockId], properties: { date: { type: string }, blockId: { type: string } } } } } }
+    responses:
+      '200': { description: The card that was created., content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+      '422': { description: Nothing else wants that time. }

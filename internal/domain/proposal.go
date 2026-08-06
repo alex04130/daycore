@@ -140,6 +140,13 @@ const (
 	OriginDaemon    ProposalOrigin = "daemon"    // self-initiated
 	OriginUpload    ProposalOrigin = "upload"    // batch/cross-domain/low-confidence import
 	OriginProtector ProposalOrigin = "protector" // the 20h care nudge
+	// OriginUser is a proposal the user asked for: marking a conflict on a
+	// block they cannot move themselves. The other four say which part of the
+	// system generated it; this one says the system generated it because
+	// somebody asked. It matters for the ledger — a card the user summoned
+	// should not count against the agent's rapport the way an unsolicited one
+	// does.
+	OriginUser ProposalOrigin = "user"
 )
 
 // ── TTL defaults ────────────────────────────────────────────────────────────

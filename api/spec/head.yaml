@@ -25,6 +25,7 @@ servers:
 tags:
   - { name: session }
   - { name: plan }
+  - { name: proposals }
   - { name: rules }
   - { name: ai }
   - { name: chat }
