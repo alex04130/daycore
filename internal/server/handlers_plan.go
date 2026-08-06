@@ -183,6 +183,11 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _, _, err := s.applyPlanPatch(r.Context(), sid, body.Date, body.Action, domain.ActorUser)
 	if err != nil {
+		var blocked *planBlocked
+		if errors.As(err, &blocked) {
+			s.writePlanBlocked(w, s.requestLocale(r), blocked)
+			return
+		}
 		s.writeErr(w, http.StatusInternalServerError, "internal", "日程更新失败")
 		return
 	}

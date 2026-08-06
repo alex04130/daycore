@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"time"
 
 	"daycore/internal/domain"
 	"daycore/internal/schedule"
@@ -18,6 +19,11 @@ type planAction struct {
 	Match   map[string]any `json:"match"`
 	Changes map[string]any `json:"changes"`
 	Block   map[string]any `json:"block"`
+	// Confirm is the way through a soft lock: the user was told this one was
+	// agreed with someone else and said go ahead anyway. It does nothing for a
+	// hard lock or a petrified block — those have no way through, and letting a
+	// flag open them would make the gate advisory.
+	Confirm bool `json:"confirm"`
 }
 
 // applyPlanPatch materializes the date's rule occurrences into the stored
@@ -62,6 +68,12 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action pl
 		}
 		beforeJSON, _ = json.Marshal(affected)
 		matched = len(affected)
+	}
+
+	// The gate, before any mutation and before the keep_manual flip: a refused
+	// write must leave the plan exactly as it found it, including origin.
+	if err := s.guardPlanWrite(blocks, date, action, actor, time.Now(), s.planLocation()); err != nil {
+		return nil, "", 0, err
 	}
 
 	// keep_manual is a server-side promise, not a client convention: any edit a

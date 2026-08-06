@@ -120,7 +120,11 @@ paths:
       tags: [plan]
       summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
+        '409':
+          description: The plan gate refused — the block is locked or has petrified.
+          content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
   /api/plan/range:
     get:
       operationId: getPlanRange
@@ -778,6 +782,33 @@ components:
         action: { type: string, enum: [add, update, remove] }
         match: { type: object, additionalProperties: true, description: "e.g. {id}" }
         changes: { type: object, additionalProperties: true }
+        confirm:
+          type: boolean
+          description: >-
+            The way through a soft lock: the user was told this one was agreed
+            with someone else and said go ahead. Does nothing for a hard lock or
+            a petrified block — those have no way through, and a flag that
+            opened them would make the gate advisory. See docs/specs/plan-semantics.md.
+    PlanBlocked:
+      type: object
+      description: >-
+        409 body when the plan gate refuses a write. 409 rather than 403 because
+        nothing about the caller is wrong — the request conflicts with the state
+        of the block it names, and that state can change.
+      required: [error, code, message, blockId, confirmable]
+      properties:
+        error: { type: string, enum: [blocked] }
+        code:
+          type: string
+          enum: [locked, petrified]
+          description: Which rule refused. `petrified` means the day has turned; `locked` means the slot is not the user's to move.
+        message: { type: string, description: Localized, ready to show. }
+        blockId: { type: string }
+        confirmable:
+          type: boolean
+          description: Re-sending with `action.confirm` would succeed. True only for soft locks.
+        lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
+        lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
     Session:
       type: object
