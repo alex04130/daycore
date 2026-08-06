@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -18,6 +19,7 @@ func init() {
 		mux.HandleFunc("POST /api/plan", s.handlePlanUpsert)
 		mux.HandleFunc("PATCH /api/plan", s.handlePlanPatch)
 		mux.HandleFunc("GET /api/plan/range", s.handlePlanRange)
+		mux.HandleFunc("POST /api/plan/lock", s.handlePlanLock)
 	})
 }
 
@@ -264,4 +266,102 @@ func (s *Server) handlePlanRange(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })
 	s.writeJSON(w, http.StatusOK, out)
+}
+
+// ── manual lock ─────────────────────────────────────────────────────────────
+
+const (
+	keyPlanLockBadLevel = "plan.lock.badLevel"
+	keyPlanLockNoBlock  = "plan.lock.noBlock"
+)
+
+func init() {
+	i18n.Register(keyPlanLockBadLevel, i18n.Text{
+		"zh-CN": "level 必须是 none / soft / hard 之一",
+		"en-US": "level must be one of none / soft / hard",
+	})
+	i18n.Register(keyPlanLockNoBlock, i18n.Text{
+		"zh-CN": "这一天没有这个块",
+		"en-US": "no such block on that day",
+	})
+}
+
+// maxLockReasonLen keeps a hand-written reason to a line the card can show.
+const maxLockReasonLen = 200
+
+// POST /api/plan/lock — pin a block's time, or let it go.
+//
+// This is the way out of a hard lock that the 409 envelope points at. Without
+// it a refusal is a dead end: the gate says "the timetable decides this" and
+// the user has no way to say "not this week, it doesn't".
+//
+// It deliberately goes through applyPlanPatch rather than writing the block
+// itself. Everything a plan write owes — the ledger entry, a registered
+// inverse, the gate — already lives on that path, and a second writer would
+// owe them again and eventually forget one. The same reasoning the proposal
+// design gives for accepting a card through the ordinary tool path.
+//
+// Setting a lock by hand marks it lockSource=user, which is what stops
+// derivation from putting it back on the next write. That field exists for
+// exactly this: without it, unlocking a class would last until the next read.
+func (s *Server) handlePlanLock(w http.ResponseWriter, r *http.Request) {
+	sid, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Date    string `json:"date"`
+		BlockID string `json:"blockId"`
+		Level   string `json:"level"`
+		Reason  string `json:"reason"`
+	}
+	locale := s.requestLocale(r)
+	if err := s.readJSON(r, &body); err != nil || body.Date == "" || body.BlockID == "" {
+		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date 或 blockId")
+		return
+	}
+	level := domain.LockLevel(body.Level)
+	switch level {
+	case domain.LockNone, domain.LockSoft, domain.LockHard:
+	default:
+		// LockUnset is not offered. "Put it back to whatever the rules infer"
+		// is a different operation from "I have decided", and nothing in the
+		// product asks for it yet — offering it here would be inventing a
+		// third state for the client to reason about.
+		s.writeErr(w, http.StatusBadRequest, "bad_level", i18n.T(keyPlanLockBadLevel, locale))
+		return
+	}
+	reason := clampRunes(strings.TrimSpace(body.Reason), maxLockReasonLen)
+	if level == domain.LockNone {
+		// An unlocked block has nothing to explain, and keeping the old reason
+		// would leave "set by your class timetable" attached to something the
+		// timetable no longer governs.
+		reason = ""
+	}
+
+	updated, _, matched, err := s.applyPlanPatch(r.Context(), sid, body.Date, locale, planAction{
+		Action: "update",
+		Match:  map[string]any{"id": body.BlockID},
+		Changes: map[string]any{
+			"lock_level":  string(level),
+			"lock_reason": reason,
+			"lock_source": domain.LockSourceUser,
+		},
+	}, domain.ActorUser)
+	if err != nil {
+		var blocked *planBlocked
+		if errors.As(err, &blocked) {
+			s.writePlanBlocked(w, locale, blocked)
+			return
+		}
+		s.writeErr(w, http.StatusInternalServerError, "internal", "锁定状态更新失败")
+		return
+	}
+	if matched == 0 {
+		s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyPlanLockNoBlock, locale))
+		return
+	}
+	updated.Blocks = schedule.Visible(updated.Blocks)
+	localizeLockReasons(updated.Blocks, locale)
+	s.writeJSON(w, http.StatusOK, updated)
 }

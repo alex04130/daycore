@@ -314,3 +314,89 @@ func TestDerivedLockReasonFollowsTheReader(t *testing.T) {
 		t.Errorf("a user's own words were translated: %q", blocks[1].LockReason)
 	}
 }
+
+// POST /api/plan/lock is the way out the 409 envelope points at. Without it a
+// hard-lock refusal is a dead end.
+func TestPlanLockEndpoint(t *testing.T) {
+	s, sid := newAgentTestServer(t)
+	s.cookies = auth.NewCookieSigner("plan-lock-test-secret")
+	ctx := context.Background()
+	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+
+	post := func(t *testing.T, payload string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/plan/lock", strings.NewReader(payload))
+		req.Header.Set("X-Session-Token", s.cookies.Sign(sid))
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		return rec
+	}
+
+	seedBlock(t, s, sid, date, domain.TimeBlock{
+		ID: "c1", Title: "高等数学（课）", Type: domain.BlockAppointment,
+		Time: hhmm("09:00"), DurationMin: mins(60),
+		LockLevel: domain.LockHard, LockSource: domain.LockSourceDerived,
+		LockReason: "课程时间由课表决定",
+	})
+
+	// The refusal that motivates all of this.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "update", Match: map[string]any{"id": "c1"},
+		Changes: map[string]any{"time": "15:00"},
+	}, domain.ActorUser); err == nil {
+		t.Fatal("a hard-locked class should refuse a retime")
+	}
+
+	if rec := post(t, `{"date":"`+date+`","blockId":"c1","level":"none"}`); rec.Code != http.StatusOK {
+		t.Fatalf("unlock: status %d, body %s", rec.Code, rec.Body.String())
+	}
+	p, err := s.store.DayPlans().Get(ctx, sid, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := p.Blocks[0]
+	if got.LockLevel != domain.LockNone {
+		t.Errorf("lockLevel = %q, want none", got.LockLevel)
+	}
+	if got.LockSource != domain.LockSourceUser {
+		t.Errorf("lockSource = %q, want user — derivation will put the lock back otherwise", got.LockSource)
+	}
+	if got.LockReason != "" {
+		t.Errorf("stale reason survived the unlock: %q", got.LockReason)
+	}
+
+	// The point of the whole exercise: it moves now.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "update", Match: map[string]any{"id": "c1"},
+		Changes: map[string]any{"time": "15:00"},
+	}, domain.ActorUser); err != nil {
+		t.Fatalf("after unlocking, the retime should go through: %v", err)
+	}
+
+	// And a later write must not re-derive over the decision.
+	p, _ = s.store.DayPlans().Get(ctx, sid, date)
+	if p.Blocks[0].LockLevel != domain.LockNone {
+		t.Errorf("derivation re-locked a hand-unlocked class: %q", p.Blocks[0].LockLevel)
+	}
+
+	// Locking something by hand works in the other direction, with the user's
+	// own words kept verbatim.
+	seedBlock(t, s, sid, date, domain.TimeBlock{
+		ID: "t1", Title: "写作业", Type: domain.BlockTask, Time: hhmm("14:00"), DurationMin: mins(60),
+	})
+	if rec := post(t, `{"date":"`+date+`","blockId":"t1","level":"hard","reason":"答应了室友"}`); rec.Code != http.StatusOK {
+		t.Fatalf("lock: status %d, body %s", rec.Code, rec.Body.String())
+	}
+	p, _ = s.store.DayPlans().Get(ctx, sid, date)
+	if p.Blocks[0].LockLevel != domain.LockHard || p.Blocks[0].LockReason != "答应了室友" {
+		t.Errorf("hand lock: level=%q reason=%q", p.Blocks[0].LockLevel, p.Blocks[0].LockReason)
+	}
+
+	// Validation, both shapes.
+	if rec := post(t, `{"date":"`+date+`","blockId":"t1","level":"maybe"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("an unknown level should be 400, got %d", rec.Code)
+	}
+	if rec := post(t, `{"date":"`+date+`","blockId":"nope","level":"none"}`); rec.Code != http.StatusNotFound {
+		t.Errorf("an unknown block should be 404, got %d", rec.Code)
+	}
+}

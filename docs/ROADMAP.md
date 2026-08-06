@@ -58,9 +58,9 @@
 
 本批余项：
 
-- **`POST /api/plan/lock`**（手动上锁/解锁）—— 这是「解锁后再挪」那条岔路。请假已经能走 `remove`；「标记冲突」还没有落点。信封里的 `confirmable` 只对软锁为 true，因为只有软锁的出路真的存在。
-- **「重新安排」**（`RescheduledFrom` / `RescheduleCount` 两个字段已在 domain，零写入方）。
-- **跨天块 spill-in**。
+- ✅ **`POST /api/plan/lock`**（2026-08-03）—— 「解锁后再挪」那条岔路。走 `applyPlanPatch` 而非自己写块，账本、撤销、闸门全部复用；置 `lockSource=user` 使派生不再覆盖。三条岔路现在有两条（请假一直能走 `remove`），**「标记冲突」仍无落点**。
+- **「重新安排」**（`RescheduledFrom` / `RescheduleCount` 两个字段已在 domain，**零写入方** —— 与本批开头那批函数是同一个形状，第四次）。
+- **跨天块 spill-in**（EXPERIENCE_CORE 共识 25：跨天块两天都计入，数据一条、两天渲染两天算数）。
 - ⚠️ **每会话时区**：石化线现在画在部署默认时区（`planLocation()`），用户真实时区不同就整体偏移。与 ζ 的同一项是同一个修法。
 
 ### δ 提示词与 i18n 收口（**从原批次 5 提前到端点之前**）

@@ -80,9 +80,12 @@ func (s *Server) normalizePlanBlocks(blocks []domain.TimeBlock, planDate, fallba
 // them would be putting words in their mouth.
 func localizeLockReasons(blocks []domain.TimeBlock, locale string) {
 	for i := range blocks {
-		if blocks[i].LockSource != domain.LockSourceDerived {
-			continue
+		// A derived reason is a rendering of the level, so it follows the reader.
+		// So does an EMPTY one on any source: a user who pinned a block without
+		// typing an explanation still wants the card to say something, and the
+		// only honest something is the default for that level.
+		if blocks[i].LockSource == domain.LockSourceDerived || blocks[i].LockReason == "" {
+			blocks[i].LockReason = domain.DefaultLockReason(blocks[i].LockLevel, locale)
 		}
-		blocks[i].LockReason = domain.DefaultLockReason(blocks[i].LockLevel, locale)
 	}
 }
