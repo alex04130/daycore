@@ -75,6 +75,34 @@ func TestPlanGate(t *testing.T) {
 			action: planAction{Action: "update", Match: map[string]any{"id": "b"}, Changes: map[string]any{"time": "15:00"}},
 		},
 		{
+			// 锁守的是**时间**，不是存在。默认理由文案自己写着「课程时间由课表
+			// 决定」—— 请假是「这次我不去」，不是「我要改课表」。而请假走的正是
+			// remove（规则展开的块转成墓碑，规则本身还在），所以锁门必须放行它，
+			// 否则硬锁就成了一条没有出口的死路。
+			name: "硬锁的课可以请假（remove 转墓碑）", date: today, actor: domain.ActorUser,
+			block:  domain.TimeBlock{ID: "b", Title: "高数（课）", Time: hhmm("09:00"), DurationMin: mins(60), LockLevel: domain.LockHard, RuleID: "r1"},
+			action: planAction{Action: "remove", Match: map[string]any{"id": "b"}},
+		},
+		{
+			// 同理，改标题不是改时间。
+			name: "硬锁的课可以改标题", date: today, actor: domain.ActorUser,
+			block:  domain.TimeBlock{ID: "b", Title: "高数（课）", Time: hhmm("09:00"), DurationMin: mins(60), LockLevel: domain.LockHard},
+			action: planAction{Action: "update", Match: map[string]any{"id": "b"}, Changes: map[string]any{"title": "高等数学"}},
+		},
+		{
+			name: "硬锁的课可以打勾", date: today, actor: domain.ActorUser,
+			block:  domain.TimeBlock{ID: "b", Title: "高数（课）", Time: hhmm("09:00"), DurationMin: mins(60), LockLevel: domain.LockHard},
+			action: planAction{Action: "update", Match: map[string]any{"id": "b"}, Changes: map[string]any{"completed": true}},
+		},
+		{
+			// 但时长是时间的一部分。
+			name: "硬锁的课改不了时长", date: today, actor: domain.ActorUser,
+			block:   domain.TimeBlock{ID: "b", Title: "高数（课）", Time: hhmm("09:00"), DurationMin: mins(60), LockLevel: domain.LockHard},
+			action:  planAction{Action: "update", Match: map[string]any{"id": "b"}, Changes: map[string]any{"duration_min": 30}},
+			wantErr: "locked",
+		},
+		{
+			// 石化的 remove 仍然拦：已经发生的事没法「不发生」。
 			name: "用户改不了三天前的块", date: longAgo, actor: domain.ActorUser,
 			block:   domain.TimeBlock{ID: "b", Title: "原标题", Time: hhmm("09:00"), DurationMin: mins(60)},
 			action:  planAction{Action: "update", Match: map[string]any{"id": "b"}, Changes: map[string]any{"title": "改过了"}},
@@ -140,7 +168,7 @@ func TestPlanGate(t *testing.T) {
 			// the cases that happened to want a refusal.
 			date := c.date
 			seedBlock(t, s, sid, date, c.block)
-			_, _, _, err := s.applyPlanPatch(ctx, sid, date, c.action, c.actor)
+			_, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", c.action, c.actor)
 
 			var blocked *planBlocked
 			switch {
@@ -210,5 +238,79 @@ func TestPlanGateHTTPEnvelope(t *testing.T) {
 	}
 	if msg, _ := got["message"].(string); msg == "" {
 		t.Error("no message — the client has nothing to show the user")
+	}
+}
+
+// The gate guards lockLevel, and until this batch nothing ever set one:
+// domain.DeriveLock had no production caller, so every block in the database
+// carried an empty level and a class imported from a timetable was as movable
+// as a note to self. Derivation now runs on the one path every write already
+// takes (normalizePlanBlocks).
+func TestLockIsDerivedOnWrite(t *testing.T) {
+	s, sid := newAgentTestServer(t)
+	ctx := context.Background()
+	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+
+	// An appointment whose title reads as a class: hard by the shared rules.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "add",
+		Block: map[string]any{
+			"id": "c1", "title": "高等数学（课）", "type": "appointment",
+			"time": "09:00", "duration_min": 60,
+		},
+	}, domain.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.store.DayPlans().Get(ctx, sid, date)
+	if err != nil || len(p.Blocks) != 1 {
+		t.Fatalf("plan: %v blocks=%d", err, len(p.Blocks))
+	}
+	got := p.Blocks[0]
+	if got.LockLevel != domain.LockHard {
+		t.Errorf("lockLevel = %q, want hard — derivation did not run on the write path", got.LockLevel)
+	}
+	if got.LockSource != domain.LockSourceDerived {
+		t.Errorf("lockSource = %q, want derived", got.LockSource)
+	}
+
+	// And the gate now has something to act on: retiming it is refused.
+	_, _, _, err = s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "update", Match: map[string]any{"id": "c1"},
+		Changes: map[string]any{"time": "15:00"},
+	}, domain.ActorUser)
+	var blocked *planBlocked
+	if !errors.As(err, &blocked) || blocked.Code != "locked" {
+		t.Fatalf("retiming a derived-hard class: got %v, want a locked refusal", err)
+	}
+
+	// A plain task is not a class and must stay free.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "add",
+		Block:  map[string]any{"id": "t1", "title": "写作业", "type": "task", "time": "14:00", "duration_min": 60},
+	}, domain.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
+		Action: "update", Match: map[string]any{"id": "t1"},
+		Changes: map[string]any{"time": "16:00"},
+	}, domain.ActorUser); err != nil {
+		t.Errorf("a task should be freely movable: %v", err)
+	}
+}
+
+// A derived reason is a rendering of a level, so it follows the reader's
+// language. A user-written one is somebody's own words and must not be
+// translated on their behalf.
+func TestDerivedLockReasonFollowsTheReader(t *testing.T) {
+	blocks := []domain.TimeBlock{
+		{ID: "a", LockLevel: domain.LockHard, LockSource: domain.LockSourceDerived, LockReason: "课程时间由课表决定"},
+		{ID: "b", LockLevel: domain.LockHard, LockSource: domain.LockSourceUser, LockReason: "别动，答应了室友"},
+	}
+	localizeLockReasons(blocks, "en-US")
+	if blocks[0].LockReason != domain.DefaultLockReason(domain.LockHard, "en-US") {
+		t.Errorf("derived reason stayed %q — a language switch would show the wrong one", blocks[0].LockReason)
+	}
+	if blocks[1].LockReason != "别动，答应了室友" {
+		t.Errorf("a user's own words were translated: %q", blocks[1].LockReason)
 	}
 }

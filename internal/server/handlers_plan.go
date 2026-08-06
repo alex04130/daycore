@@ -59,6 +59,7 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	locale := s.requestLocale(r)
 	occurrences := s.ruleOccurrences(ctx, sid, date, date)
 
 	plan, err := s.store.DayPlans().Get(ctx, sid, date)
@@ -70,7 +71,8 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 		// No stored plan, but rules produce blocks: synthesize a non-persisted
 		// plan so standing commitments are always visible.
 		sortBlocks(occurrences)
-		s.normalizePlanBlocks(occurrences, date, "")
+		s.normalizePlanBlocks(occurrences, date, "", locale)
+		localizeLockReasons(occurrences, locale)
 		s.writeJSON(w, http.StatusOK, &domain.DayPlan{
 			SessionID: sid, Date: date, Blocks: occurrences, SourceType: "rules",
 		})
@@ -82,7 +84,8 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 	}
 	plan.Blocks = schedule.Visible(schedule.Merge(plan.Blocks, occurrences))
 	sortBlocks(plan.Blocks)
-	s.normalizePlanBlocks(plan.Blocks, date, "") // backfill UTC anchors for legacy/rule blocks
+	s.normalizePlanBlocks(plan.Blocks, date, "", locale) // backfill UTC anchors + locks for legacy/rule blocks
+	localizeLockReasons(plan.Blocks, locale)
 	s.writeJSON(w, http.StatusOK, plan)
 }
 
@@ -108,7 +111,7 @@ func (s *Server) handlePlanUpsert(w http.ResponseWriter, r *http.Request) {
 	isNew := errors.Is(getErr, domain.ErrNotFound)
 
 	// Anchor fixed/local blocks to a UTC instant before persisting.
-	s.normalizePlanBlocks(body.Blocks, body.Date, "")
+	s.normalizePlanBlocks(body.Blocks, body.Date, "", s.requestLocale(r))
 
 	plan, err := s.store.DayPlans().Upsert(ctx, &domain.DayPlan{
 		SessionID: sid, Date: body.Date, Blocks: body.Blocks, Note: body.Note, SourceType: body.SourceType,
@@ -181,7 +184,7 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusBadRequest, "unknown_action", i18n.T(keyPlanUnknownAction, s.requestLocale(r)))
 		return
 	}
-	updated, _, _, err := s.applyPlanPatch(r.Context(), sid, body.Date, body.Action, domain.ActorUser)
+	updated, _, _, err := s.applyPlanPatch(r.Context(), sid, body.Date, s.requestLocale(r), body.Action, domain.ActorUser)
 	if err != nil {
 		var blocked *planBlocked
 		if errors.As(err, &blocked) {
@@ -192,6 +195,7 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated.Blocks = schedule.Visible(updated.Blocks)
+	localizeLockReasons(updated.Blocks, s.requestLocale(r))
 	s.writeJSON(w, http.StatusOK, updated)
 }
 
@@ -238,6 +242,7 @@ func (s *Server) handlePlanRange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	locale := s.requestLocale(r)
 	occByDate := map[string][]domain.TimeBlock{}
 	for _, b := range s.ruleOccurrences(ctx, sid, from, to) {
 		occByDate[b.Date] = append(occByDate[b.Date], b)
@@ -246,13 +251,15 @@ func (s *Server) handlePlanRange(w http.ResponseWriter, r *http.Request) {
 	for _, p := range plans {
 		p.Blocks = schedule.Visible(schedule.Merge(p.Blocks, occByDate[p.Date]))
 		sortBlocks(p.Blocks)
-		s.normalizePlanBlocks(p.Blocks, p.Date, "")
+		s.normalizePlanBlocks(p.Blocks, p.Date, "", locale)
+		localizeLockReasons(p.Blocks, locale)
 		delete(occByDate, p.Date)
 		out = append(out, p)
 	}
 	for date, blocks := range occByDate {
 		sortBlocks(blocks)
-		s.normalizePlanBlocks(blocks, date, "")
+		s.normalizePlanBlocks(blocks, date, "", locale)
+		localizeLockReasons(blocks, locale)
 		out = append(out, domain.DayPlan{SessionID: sid, Date: date, Blocks: blocks, SourceType: "rules"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Date < out[j].Date })

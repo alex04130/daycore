@@ -186,7 +186,7 @@ func (s *Server) handleOpRevert(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revertPlanAdd(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
-	if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, planAction{Action: "remove", Match: map[string]any{"id": orig.TargetID}}, domain.ActorSystem); err != nil {
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "remove", Match: map[string]any{"id": orig.TargetID}}, domain.ActorSystem); err != nil {
 		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
 		return
 	}
@@ -203,7 +203,7 @@ func (s *Server) revertPlanUpdate(ctx context.Context, w http.ResponseWriter, si
 				ch[k] = v
 			}
 		}
-		if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, planAction{Action: "update", Match: map[string]any{"id": id}, Changes: ch}, domain.ActorSystem); err != nil {
+		if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "update", Match: map[string]any{"id": id}, Changes: ch}, domain.ActorSystem); err != nil {
 			s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
 			return
 		}
@@ -216,12 +216,12 @@ func (s *Server) revertPlanRemove(ctx context.Context, w http.ResponseWriter, si
 	for _, b := range blocks {
 		if rid, _ := b["rule_id"].(string); rid != "" {
 			// Un-tombstone a rule occurrence.
-			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, planAction{Action: "update", Match: map[string]any{"id": b["id"]}, Changes: map[string]any{"hidden": false}}, domain.ActorSystem); err != nil {
+			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "update", Match: map[string]any{"id": b["id"]}, Changes: map[string]any{"hidden": false}}, domain.ActorSystem); err != nil {
 				s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
 				return
 			}
 		} else {
-			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, planAction{Action: "add", Block: b}, domain.ActorSystem); err != nil {
+			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "add", Block: b}, domain.ActorSystem); err != nil {
 				s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
 				return
 			}

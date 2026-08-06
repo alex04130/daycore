@@ -52,12 +52,14 @@
 
 **闸门本体已落地**（2026-08-03）：`internal/server/plan_guard.go`，锁与石化共用一个 guard、一个 409 信封，**放在 `applyPlanPatch` 里而不是 handler 里** —— agent 工具直接调 `applyPlanPatch`，门开在 handler 只挡住了前门。
 
-⚠️ 落地前的实测：`domain.Movable` / `TimeBlock.Frozen` / `PhaseIn` / `PetrifyLine` **四个全是零生产调用方**，所以用户能把硬锁的课从 09:00 拖到 15:00，也能改写和删除三天前的块，全程无错。
+⚠️ 落地前的实测：`domain.Movable` / `TimeBlock.Frozen` / `PhaseIn` / `PetrifyLine` **四个全是零生产调用方**，所以用户能把硬锁的课从 09:00 拖到 15:00，也能改写和删除三天前的块，全程无错。**`DeriveLock` / `RederiveLock` 同样零调用方** —— 每个块的 `lockLevel` 都是空的，所以门就算装上也守着一个永远为空的字段。派生已一并接进 `normalizePlanBlocks`（写路径唯一收敛点），derived 理由在出站时按读者语言重新解析。
+
+**锁守的是时间，不是存在**：`remove` 放行（请假走的正是它，规则展开的块转墓碑），改标题、打勾放行，只有时间字段被拦。这条是写测试时发现的 —— 第一版把 remove 也拦了，等于把硬锁变成没有出口的死路。
 
 本批余项：
 
-- **三条岔路的后端动作**（请假 / 标记冲突 / 解锁后再挪）—— 今天硬锁的拒绝对用户是一条死路。信封里的 `confirmable` 只对软锁为 true，因为只有软锁的出路真的存在。
-- **`POST /api/plan/lock`**（手动上锁/解锁）与「重新安排」。
+- **`POST /api/plan/lock`**（手动上锁/解锁）—— 这是「解锁后再挪」那条岔路。请假已经能走 `remove`；「标记冲突」还没有落点。信封里的 `confirmable` 只对软锁为 true，因为只有软锁的出路真的存在。
+- **「重新安排」**（`RescheduledFrom` / `RescheduleCount` 两个字段已在 domain，零写入方）。
 - **跨天块 spill-in**。
 - ⚠️ **每会话时区**：石化线现在画在部署默认时区（`planLocation()`），用户真实时区不同就整体偏移。与 ζ 的同一项是同一个修法。
 

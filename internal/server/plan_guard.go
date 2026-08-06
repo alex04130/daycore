@@ -97,6 +97,35 @@ func (s *Server) writePlanBlocked(w http.ResponseWriter, locale string, e *planB
 	s.writeJSON(w, http.StatusConflict, body)
 }
 
+// timeFields are the keys a lock actually guards.
+//
+// A lock is about WHEN, not about WHETHER or WHAT. Both default reasons say so
+// in as many words — "课程时间由课表决定", "Time you agreed with someone else".
+// Reading the lock as "this row is read-only" closes the only door the user
+// has: taking leave from a class goes through remove (a rule occurrence
+// becomes a tombstone and the rule survives), so a lock that blocked remove
+// would turn a hard lock into a dead end with no exit at all — the opposite of
+// what a lock is for.
+//
+// Measured while writing this: the first version of the gate did exactly that.
+// It also stopped the user renaming "高数（课）" to "高等数学" and ticking the
+// class off as done, neither of which moves anything.
+var timeFields = map[string]bool{
+	"time": true, "date": true, "duration_min": true,
+	"utc_time": true, "time_mode": true, "timezone": true,
+	"offset_min": true, "offset_ref": true,
+}
+
+// retimes reports whether an update would move the block in time.
+func retimes(changes map[string]any) bool {
+	for k := range changes {
+		if timeFields[k] {
+			return true
+		}
+	}
+	return false
+}
+
 // petrifyEdit classifies what an update does to a block that has already
 // frozen.
 //
@@ -162,7 +191,9 @@ func (s *Server) guardPlanWrite(blocks []map[string]any, planDate string, action
 				}
 			}
 		}
-		if !b.Movable(actor, action.Confirm) {
+		// Only a retime asks the lock's question. A remove is "this is not
+		// happening" and a title edit is not a scheduling act at all.
+		if action.Action == "update" && retimes(action.Changes) && !b.Movable(actor, action.Confirm) {
 			return &planBlocked{
 				Code: "locked", BlockID: b.ID,
 				LockLevel: b.LockLevel, LockReason: b.LockReason,

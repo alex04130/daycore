@@ -11,7 +11,7 @@ import (
 	"daycore/internal/domain"
 )
 
-func (s *Server) toolPlanAdd(ctx context.Context, sid, tz, rawArgs string) toolResult {
+func (s *Server) toolPlanAdd(ctx context.Context, sid, locale, tz, rawArgs string) toolResult {
 	var args struct {
 		Date        string `json:"date"`
 		Title       string `json:"title"`
@@ -41,7 +41,7 @@ func (s *Server) toolPlanAdd(ctx context.Context, sid, tz, rawArgs string) toolR
 	if args.DurationMin > 0 {
 		block["duration_min"] = args.DurationMin
 	}
-	updated, opID, _, err := s.applyPlanPatch(ctx, sid, args.Date, planAction{Action: "add", Block: block}, domain.ActorAgent)
+	updated, opID, _, err := s.applyPlanPatch(ctx, sid, args.Date, locale, planAction{Action: "add", Block: block}, domain.ActorAgent)
 	if err != nil {
 		return toolFail("plan_add failed: %v", err)
 	}
@@ -69,7 +69,7 @@ func (s *Server) toolPlanPatch(ctx context.Context, sid, locale, rawArgs, kind s
 	if kind == "update" && len(args.Changes) == 0 {
 		return toolFail("changes must not be empty")
 	}
-	updated, opID, matched, err := s.applyPlanPatch(ctx, sid, args.Date, planAction{Action: kind, Match: args.Match, Changes: args.Changes}, domain.ActorAgent)
+	updated, opID, matched, err := s.applyPlanPatch(ctx, sid, args.Date, locale, planAction{Action: kind, Match: args.Match, Changes: args.Changes}, domain.ActorAgent)
 	if err != nil {
 		// A refusal is information the model can act on — it should tell the
 		// user why and offer something else, not report a failure. Wrapping it

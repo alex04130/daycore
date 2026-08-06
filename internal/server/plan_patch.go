@@ -31,7 +31,7 @@ type planAction struct {
 // It is shared by the HTTP PATCH handler and the companion agent tools.
 // matched counts blocks hit by update/remove so tool callers can surface
 // no-op matches instead of silently succeeding.
-func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action planAction, actor string) (updated *domain.DayPlan, opID string, matched int, err error) {
+func (s *Server) applyPlanPatch(ctx context.Context, sid, date, locale string, action planAction, actor string) (updated *domain.DayPlan, opID string, matched int, err error) {
 	plan, err := s.store.DayPlans().Get(ctx, sid, date)
 	if errors.Is(err, domain.ErrNotFound) {
 		plan = &domain.DayPlan{SessionID: sid, Date: date, SourceType: "rules"}
@@ -102,7 +102,7 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action pl
 
 	plan.Blocks = newBlocks
 	// Anchor fixed/local blocks to a UTC instant before persisting.
-	s.normalizePlanBlocks(plan.Blocks, date, "")
+	s.normalizePlanBlocks(plan.Blocks, date, "", locale)
 	updated, err = s.store.DayPlans().Upsert(ctx, plan)
 	if err != nil {
 		return nil, "", matched, err
