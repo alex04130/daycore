@@ -106,6 +106,7 @@ var cases = []suiteCase{
 	{"OpLog/ScanIsOldestFirstFromACursor", opLogScan},
 	{"Upsert/EmptyCanvasIDIsRefused", upsertEmptyKey},
 	{"List/LimitDefaultAndCeilingAgree", listLimitsAgree},
+	{"Delete/ScopedToSessionAndReportsAbsence", deleteScopeAndAbsence},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1198,5 +1199,76 @@ func listLimitsAgree(t *testing.T, h Harness) {
 	// a fixed page size.
 	if got, err = s.Moods().List(bg(), "s1", 2); err != nil || len(got) != 2 {
 		t.Errorf("limit=2 returned %d rows (err=%v)", len(got), err)
+	}
+}
+
+// Delete on moods and assignments is what makes the four capture tools
+// undoable: reverting an agent-recorded check-in or an agent-created deadline
+// means the row goes away, not that it acquires a "dismissed" state a user
+// would then see.
+//
+// Three properties, and every one of them is somewhere the two stores could
+// have drifted without anything noticing:
+//
+//   - Session scope. Both take (sessionID, id) and both must put the session in
+//     the predicate. A delete that keys on id alone works identically in every
+//     test that uses one session, and lets one user erase another's row in
+//     production.
+//   - ErrNotFound for a row that is not there, rather than nil. The revert path
+//     ignores this error today, but "gone" and "never existed" are different
+//     answers and the next caller may care.
+//   - Idempotence in the sense that a second delete does not resurrect, corrupt
+//     or panic — it just reports the same absence.
+func deleteScopeAndAbsence(t *testing.T, h Harness) {
+	s := h.Store()
+	mine, err := s.Moods().Create(bg(), &domain.MoodCheckin{
+		SessionID: "s1", Mood: "calm", Source: domain.MoodSourceAgent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another session's row with the same shape — the one a mis-scoped delete
+	// would take out.
+	theirs, err := s.Moods().Create(bg(), &domain.MoodCheckin{
+		SessionID: "s2", Mood: "calm", Source: domain.MoodSourceAgent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Moods().Delete(bg(), "s2", mine.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("deleting another session's id: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Moods().List(bg(), "s1", 10); len(rows) != 1 {
+		t.Errorf("a cross-session delete removed the row anyway: %d left", len(rows))
+	}
+	if err := s.Moods().Delete(bg(), "s1", mine.ID); err != nil {
+		t.Fatalf("deleting own row: %v", err)
+	}
+	if err := s.Moods().Delete(bg(), "s1", mine.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second delete: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Moods().List(bg(), "s2", 10); len(rows) != 1 || rows[0].ID != theirs.ID {
+		t.Errorf("the other session lost its row")
+	}
+
+	// Same three properties for assignments, whose delete backs
+	// revertAssignmentUpsert's create branch.
+	a, err := s.Assignments().UpsertByCanvasID(bg(), &domain.Assignment{
+		SessionID: "s1", CanvasID: "manual:x", Title: "读第三章", Source: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Assignments().Delete(bg(), "s2", a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("cross-session assignment delete: got %v, want ErrNotFound", err)
+	}
+	if err := s.Assignments().Delete(bg(), "s1", a.ID); err != nil {
+		t.Fatalf("deleting own assignment: %v", err)
+	}
+	if err := s.Assignments().Delete(bg(), "s1", a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second assignment delete: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Assignments().List(bg(), "s1", domain.AssignmentFilter{}); len(rows) != 0 {
+		t.Errorf("%d assignment(s) survived the delete", len(rows))
 	}
 }

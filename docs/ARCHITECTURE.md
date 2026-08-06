@@ -48,9 +48,9 @@
 
 ### 行为一致性套件（`internal/storage/storagetest`，已落地）
 
-一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。31 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
+一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。32 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
 
-lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回别人的行 / 空 holder 被拒 / 场次占有互斥 / 完成的场次不再被占 / 失败重试到上限 / 崩溃接管有界且回报真实 attempts / **接管轮换占有令牌使僵尸的 `Finish` 落空** / `Prune` 保留 running / nil 切片回来是空切片而非 nil / 指向零值时间的指针算「不存在」 / **`ProposalOp.Args` 的数字在每个后端都回来是 `float64`** / `Validate` 在 `Create` 与 `Update` 两侧都生效 / `rev` CAS 拒绝陈旧写 / TTL 不对称 / **同毫秒并列时 Supersede 恰好留一张** / 已投递的卡不被退休 / keeper 缺失是非事件 / 可投递集合排除过期与压后 / 序列化失败拒绝写入 / rapport 游标往返 / **学习作业不擦掉活的清醒标记** / `Touch` 只向前 / 分钟 0 是有意义的值 / 并发首写不丢信号 / 语言包往返与整语言卸载 / `RevertedBy` 精确且不跨会话 / `Scan` 最旧优先且游标续读无重无漏 / **空 canvas id 的 upsert 被拒而不是覆盖上一条无键行** / **每个 List 的默认页大小与天花板四后端一致**。
+lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回别人的行 / 空 holder 被拒 / 场次占有互斥 / 完成的场次不再被占 / 失败重试到上限 / 崩溃接管有界且回报真实 attempts / **接管轮换占有令牌使僵尸的 `Finish` 落空** / `Prune` 保留 running / nil 切片回来是空切片而非 nil / 指向零值时间的指针算「不存在」 / **`ProposalOp.Args` 的数字在每个后端都回来是 `float64`** / `Validate` 在 `Create` 与 `Update` 两侧都生效 / `rev` CAS 拒绝陈旧写 / TTL 不对称 / **同毫秒并列时 Supersede 恰好留一张** / 已投递的卡不被退休 / keeper 缺失是非事件 / 可投递集合排除过期与压后 / 序列化失败拒绝写入 / rapport 游标往返 / **学习作业不擦掉活的清醒标记** / `Touch` 只向前 / 分钟 0 是有意义的值 / 并发首写不丢信号 / 语言包往返与整语言卸载 / `RevertedBy` 精确且不跨会话 / `Scan` 最旧优先且游标续读无重无漏 / **空 canvas id 的 upsert 被拒而不是覆盖上一条无键行** / **每个 List 的默认页大小与天花板四后端一致** / **`Delete` 限定在本会话内、删不存在的行报 `ErrNotFound`**。
 
 **加后端的验收标准就是这套套件通过**，包括计划中的 HTTP 转换层。这也是让第五个后端负担得起的唯一办法：两两分歧数随后端数平方增长，共享套件把它压平。
 
@@ -58,10 +58,10 @@ lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回
 
 | 后端 | 行为套件 | 建表 | 原生全文索引 |
 |---|---|---|---|
-| SQLite | 31/31 | ✅ | ✅ FTS5 external-content + 三触发器 |
-| PostgreSQL 16.14 | **31/31** | ✅ 32 张表 | ✅ tsvector 生成列 + GIN |
-| MySQL 8 | **31/31** | ✅ 32 张表 | ✅ FULLTEXT ngram |
-| MongoDB 8 | 31/31 | ✅ | ✅ text index |
+| SQLite | 32/32 | ✅ | ✅ FTS5 external-content + 三触发器 |
+| PostgreSQL 16.14 | **32/32** | ✅ 32 张表 | ✅ tsvector 生成列 + GIN |
+| MySQL 8 | **32/32** | ✅ 32 张表 | ✅ FULLTEXT ngram |
+| MongoDB 8 | 32/32 | ✅ | ✅ text index |
 
 **pg 与 MySQL 是第一次真机执行**（此前只有 `dialect_parity_test.go` 的静态比对，而静态比对只能看出三份 DDL 互相不一致、看不出其中任何一份是否合法 —— 这个洞放跑过三次真事故）。原生索引那一列也是第一次验：不只断言 `condApplied` 为真，还真发一次查询，因为索引建起来不等于查询语法对，而查询语法错只在有人搜索时才报。
 
@@ -108,7 +108,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 路由注册模式
 
-**分散注册**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){ … })`，`Handler()` 遍历注册表。注册表在 `internal/server/routes.go`。当前 **100 条路由 / 21 个组**，`server.go` 只剩静态 `/` 那一条（它有条件，只在 `STATIC_DIR` 存在时挂）。
+**分散注册**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){ … })`，`Handler()` 遍历注册表。注册表在 `internal/server/routes.go`。当前 **101 条路由 / 22 个组**，`server.go` 只剩静态 `/` 那一条（它有条件，只在 `STATIC_DIR` 存在时挂）。
 
 原先是 `Handler()` 里 100 行集中注册，让 `server.go` 成了全仓最抢手的文件（12 个工作项都要改同一份清单）。**顺序无关紧要** —— Go 1.22 的 ServeMux 按 pattern 具体度而非注册顺序裁决，所以打散不会改变谁胜出，`/` 兜底也永远输给任何真路由。
 

@@ -173,5 +173,5 @@ Lease 选主排在 ζ，而 α 之后排程改成了**首次请求时懒排**（
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
 - 早晚简报的天气地点**写死北京**（`worker.go:401` 自己写着 "future: session setting"）。
-- 一致性套件 31 例，覆盖 27 个 repository 里的 9 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List）——面在扩，但过半 repo 仍无行为用例。
+- 一致性套件 32 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
 - 前端 `i18n.js` 是硬编码双语字典。

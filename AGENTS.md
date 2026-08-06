@@ -66,7 +66,7 @@ go build ./... && go vet ./... && go test ./...
 - **存储注册模式**：`internal/storage/registry.go` 的 `storage.Register(dbType, opener)`，sqlstore/mongostore 在 `init()` 自注册，main.go blank import。`domain.Store` 是组合接口（约 179 个方法），**业务代码只 import `domain`，绝不直接引用具体 store** —— 漏一个 accessor 是编译错误，这正是两个 store 同步的强制手段。
 - **版本三层，不要混**（唯一真源 `internal/version/version.go`，同步 `web/frontend/package.json`）：
   1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`2.<minor>.<patch>-beta`；`GET /api/healthz`、设置页显示）。
-  2. **API 契约版本** `APIVersion=1` / `APIMinor=1`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
+  2. **API 契约版本** `APIVersion=1` / `APIMinor=2`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
   3. 各前端自己的版本号（在各自子仓库，与本仓解耦）。
 - **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。11 个 key。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。
 - **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，15 个工具定义在 `agent_tools.go` 的 `companionToolDefs`（11 个原有 + 4 个捕捉工具 assignment_upsert/wish_add/mood_record/material_add，β0+ 补齐，实现集中在 `tool_capture.go`）。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。每次模型调用（流式按轮）落一行 `ai_call_logs`（`s.logAICall`，best-effort）；第三方文本进提示词必须过 `untrustedWrap`（web_search 已接）。
@@ -81,7 +81,7 @@ go build ./... && go vet ./... && go test ./...
 | `internal/server/` | 路由、中间件、全部 handler、agent loop、cron Worker（一个文件一组 handler） |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PG/MySQL，`Dialect` 抽象），每实体一文件；三份 DDL 由 `dialect_parity_test.go` 静态比对 |
 | `internal/storage/mongostore/` | MongoDB，每实体一 repo 文件；`bson_test.go`（免真机）+ `conformance_test.go`（真机行为套件） |
-| `internal/storage/storagetest/` | **行为一致性套件**（31 例）：所有后端跑同一份，加后端的验收标准 |
+| `internal/storage/storagetest/` | **行为一致性套件**（32 例）：所有后端跑同一份，加后端的验收标准 |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
 | `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说 |
@@ -108,7 +108,7 @@ go build ./... && go vet ./... && go test ./...
 
 ## 测试策略
 
-- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：31 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
+- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：32 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
 - **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
 - **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
 - **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。

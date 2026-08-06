@@ -35,7 +35,7 @@
 | `done` | `{"type":"done"}` | 流结束（终止帧） |
 | 心跳 | `: ping\n\n` | 忽略 |
 
-**Agent 不再用 XML 标签**：所有计划/规则/记忆变更由后端 agent 通过 11 个工具（get_weather/web_search/list_upcoming/plan_add/plan_update/plan_remove/rule_upsert/rule_remove/memory_add/memory_remove/propose_decision，max 6 轮）执行，前端只需渲染 `tool_start`/`tool_result` 动作卡，**不再解析 `<plan_update>` 等标签、不再自己发 PATCH**。撤销用 `tool_result.opId` → `POST /api/ops/{id}/revert`。
+**Agent 不再用 XML 标签**：所有计划/规则/记忆变更由后端 agent 通过 15 个工具（get_weather/web_search/list_upcoming/plan_add/plan_update/plan_remove/rule_upsert/rule_remove/memory_add/memory_remove/propose_decision + **β0+ 补的四个捕捉工具** assignment_upsert/wish_add/mood_record/material_add，max 6 轮）执行，前端只需渲染 `tool_start`/`tool_result` 动作卡，**不再解析 `<plan_update>` 等标签、不再自己发 PATCH**。撤销用 `tool_result.opId` → `POST /api/ops/{id}/revert`。
 
 **决策卡时序**：`decision_card` 发出后 agent 阻塞 ≤45s（期间 `: ping` 保活）→ 前端弹卡 → 用户选 → `POST /api/decisions/{id}/respond` → 后端解阻塞、流继续 → `done`。不选也可（超时/新消息取消）。一 session 同时仅一张待响应卡。
 
@@ -89,7 +89,7 @@
 - 主副相同会被拒（`400 unsupported_locale`）—— 在自己和自己之间切换的按钮什么都不做。
 - 写 `language` 时值必须在用户自己那两种里，否则 `400`；但**读永远不失败** —— 落在配对外的存量值会被静默钳到主语言，换配对不会让谁的设置页打不开。改配对时后端顺手把 `language` 拉回配对内。
 
-> ⚠️ `locales` 是**新增性变更**，按规则该让 `apiMinor` +1，但**这一次没有升** —— 落地计划要求把散在各批次里的 APIMinor 提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。SPEC-FREEZE 时连同其余新增字段一起升。
+> ⚠️ 历史说明：`locales` 落地当时**没有单独升 `apiMinor`**，理由是把散在各批次的提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。后来 `contract-lock.json` + `CheckVersion`（「自上次冻结以来至少动过一次」）接管了这条纪律，`APIMinor` 现在是 **2**（β0+ 加 `features` 时升的）。冻结点仍在 η。
 
 **双轨认证（cookie 全保留，header 新增；分离部署/原生端主推 header）**：
 
