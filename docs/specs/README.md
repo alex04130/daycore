@@ -10,6 +10,7 @@
 | [storage-protocol.md](storage-protocol.md) | 第五种存储怎么接：8 个操作、**基础集 + 具名可选扩展集**（RISC-V 那个形状）、**条件写为什么不能省**、没有条件写时的锁配方 | 定案，未实现（批次 F8b） |
 | [provider-protocol.md](provider-protocol.md) | 天气 / 搜索 / 消息通道怎么接 | 定案，未实现（批次 F2） |
 | [frontend-manifest.md](frontend-manifest.md) | 前端怎么握手、主题 token 空间怎么归自己 | 定案，未实现（批次 F7） |
+| [plan-semantics.md](plan-semantics.md) | **前端必须自己算一遍的三样**：锁三档与 409 岔路、石化线与相位（含「日始不一定是午夜」）、提案的阶梯与 TTL 不对称 | 锁与石化已实现且有夹具；提案形状已定、夹具待补（η 前） |
 
 ## 三份协议为什么共用一个 transport.md
 
