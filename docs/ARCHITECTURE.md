@@ -98,6 +98,69 @@ CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，并有�
 
 **主题变量是侧表更合适的那一类**：F7 的补算要问「哪些主题缺 token X」，侧表是一个 `WHERE`，blob 是全表扫加逐个解析；「给所有主题加一个 token」也变成每主题一次 INSERT 而不是整体重写。
 
+## 文件总线的 HTTP 面：取舍与边界（ε，2026-08-06）
+
+存储侧在 [DATA.md「附件与文件总线」](DATA.md)。这里是端点这一层为什么长这样。
+
+### 上传体是原始字节，不是 multipart，也不是 base64 JSON
+
+| 方案 | 为什么不 |
+|---|---|
+| **base64 进 JSON** | 每个字节涨三分之一，两端都要把整份文件拿在内存里。文件总线的存在理由第一句就是「装不进 JSON 体的字节」，用 JSON 送它是自相矛盾 |
+| **multipart/form-data** | 单文件场景下什么都没买到：这边多一个解析器，四个前端各多一段 FormData 代码 |
+| **原始字节 + `Content-Type`**（选中） | `fetch(url, {method:'POST', headers:{'Content-Type': file.type}, body: file})` 就说完了；`blob.Store.Put` 本来就收 `io.Reader`，可以直接流进去不落内存 |
+
+**文件名走 query 而不是 header**：非 ASCII 文件名放 header 需要客户端做 RFC 5987 编码，放 query 只需要 `encodeURIComponent`。
+
+### 下载一律代理，永远不给签名 URL
+
+`blob.Store` 有可选的 `URLSigner`（S3 这类能签，本机目录不能）。**端点仍然只代理**：让客户端处理两种形状，实际结果是它只会被测到作者部署的那一种，另一种在别人的部署上第一天就坏。签名是以后的优化，`GET /api/files/{id}` 是契约。
+
+### 三个必须存在的响应头
+
+| 头 | 少了它会怎样 |
+|---|---|
+| `X-Content-Type-Options: nosniff` | 浏览器嗅探内容类型，一个上传的 `.html` 变成同源页面 |
+| `Content-Security-Policy: default-src 'none'; sandbox` | 上传的 `.svg` 打开就是**同源脚本**，能读走本站 cookie |
+| `Content-Disposition`（经 `domain.SafeFilename` + `mime.FormatMediaType`） | 客户端送的文件名是唯一能从请求走进**响应头**的自由文本 —— CRLF 就是响应头注入 |
+
+`ETag` 用内容 SHA-256，所以 `If-None-Match` 是精确的，可以配 `immutable` 长缓存。
+
+### 状态码分工（客户端据此决定要不要重试）
+
+| 码 | 含义 |
+|---|---|
+| `400` | 没有 `Content-Type`，或**零字节** —— 零字节永远是客户端 bug（空 File、读了一半），不是谁想留的文件。这时已落盘的字节会被删掉，不留一条解析成空洞的行 |
+| `404` | 这个会话没有这个附件（含「是别人的」） |
+| `409` | 它已经跟着消息发出去了 —— 删消息才能删它 |
+| `410` | 行还在、字节没了（清扫做了一半、或者目录被还原时漏了文件）。与 404 分开是因为**客户端该不该继续问**不一样 |
+| `413` | 超过 `MAX_UPLOAD_BYTES` |
+| `503` | 这个部署没有 `BLOB_STORE`。**是受支持的配置，不是故障** |
+
+### 两个上限是两个问题，不要合并
+
+- `MAX_UPLOAD_BYTES`（默认 32 MiB）—— **放得下吗**。
+- `MAX_IMAGE_BYTES`（默认 8 MiB）—— **塞得进一次模型请求吗**。
+
+一份 30 MiB 的 PDF 是个正常上传、是个糟糕的提示词。合并成一个数，就只能取两者里小的那个，于是「能存但当前模型读不了」这个完全正常的状态变成了「传不上去」。超过内联上限的附件走「模型读不了」那条路：把文件名念给模型听。
+
+### `features.files`
+
+`GET /api/version` 的 `features` 里多一位，由**有没有配 `BLOB_STORE`** 决定（其余四位由模型目录派生）。前端据此决定画不画回形针 —— 否则用户点了得到 503，读起来像 bug。
+
+## 四个后端的已知行为差异（调用方必须绕开的）
+
+行为一致性套件把绝大多数差异变成了「不许不一样」。下面这些是**留在调用方这一侧**的，套件管不到，每一条都真的咬过人：
+
+| 差异 | 后果 | 绕法 |
+|---|---|---|
+| **`ChatRepository.AppendMessages` 不把生成的 id 写回调用方切片**（mongostore 侧） | 依赖回读 id 的代码只在四个后端里的一个上失败，而且只在特定路径（ε：只在用户发了附件时绑不上） | 调用方**预生成 id**（`uuid.NewString()` 后放进 `ChatMessage.ID`）。async companion 早就这么做，注释里写着原因 |
+| **空字符串 vs 字段缺失**（BSON `omitempty`） | `{"field": ""}` 在 Mongo 上匹配不到省略了该字段的文档，同一个谓词在 SQL 上匹配所有默认行 —— 清扫/筛选静默变成空操作 | 参与查询的字段**不加 `omitempty`**，显式存 `""`。见 `mongostore/attachment_repo.go` 的 doc |
+| **JSON 数字回来的 Go 类型**（BSON int32 vs encoding/json float64） | `args["minutes"].(float64)` 在一个后端上断言失败 | proposals 的 rows/ops 两边都过 `encoding/json`，代价是两边同样有精度上限（>2^53 的整数不能进工具参数） |
+| **nil 切片 vs 空切片** | 一边回 `nil` 一边回 `[]`，JSON 序列化出 `null` 与 `[]` 两种 | 套件已断言统一（`RoundTrip` 类用例），新 repository 照做 |
+
+**加一条差异时**：先问它能不能变成套件里的一条用例（那样它就消失了）；只有在 `domain.Store` 接口表达不了的时候，才记到这张表上。
+
 ## 中间件链（server.go 底部，全局单链，无分组）
 
 ```
