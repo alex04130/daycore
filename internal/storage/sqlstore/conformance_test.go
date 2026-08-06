@@ -30,6 +30,15 @@ func (h sqlHarness) BackdateJobRuns(t *testing.T, sessionID string, d time.Durat
 	}
 }
 
+func (h sqlHarness) BackdateProposals(t *testing.T, sessionID string, at time.Time) {
+	t.Helper()
+	if _, err := h.s.exec(context.Background(),
+		`UPDATE proposals SET updated_at = ? WHERE session_id = ?`,
+		toMillis(at), sessionID); err != nil {
+		t.Fatalf("backdate proposals: %v", err)
+	}
+}
+
 func (h sqlHarness) ForceProposalCreatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	if _, err := h.s.exec(context.Background(),

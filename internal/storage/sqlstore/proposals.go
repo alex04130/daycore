@@ -78,7 +78,11 @@ func (r proposalRepo) Get(ctx context.Context, sessionID, id string) (*domain.Pr
 	return scanProposal(row.Scan)
 }
 
-func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]domain.Proposal, error) {
+// proposalWhere builds the predicate once so List and Count cannot drift into
+// answering different questions — a count that disagrees with the page it is
+// supposed to describe is worse than no count.
+func proposalWhere(f domain.ProposalFilter) ([]string, []any) {
+	// session_id is unconditional: a filter never spans users.
 	where := []string{"session_id = ?"}
 	args := []any{f.SessionID}
 	if f.State != "" {
@@ -89,12 +93,40 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 		where = append(where, "kind = ?")
 		args = append(args, string(f.Kind))
 	}
+	if f.Level != "" {
+		where = append(where, "level = ?")
+		args = append(args, string(f.Level))
+	}
 	if f.Date != "" {
 		where = append(where, "date = ?")
 		args = append(args, f.Date)
 	}
-	if f.Undelivered {
+	if f.OwnerInstance != "" {
+		where = append(where, "owner_instance = ?")
+		args = append(args, f.OwnerInstance)
+	}
+	switch f.Delivered {
+	case domain.PresenceUnset:
 		where = append(where, "delivered_at IS NULL")
+	case domain.PresenceSet:
+		where = append(where, "delivered_at IS NOT NULL")
+	}
+	switch f.Pushed {
+	case domain.PresenceUnset:
+		where = append(where, "pushed_at IS NULL")
+	case domain.PresenceSet:
+		where = append(where, "pushed_at IS NOT NULL")
+	}
+	// The window implies the stamp exists, but say so anyway: a NULL compares
+	// false against both bounds on SQL and would silently drop out, which is the
+	// right answer here but only by accident.
+	if !f.PushedSince.IsZero() {
+		where = append(where, "pushed_at IS NOT NULL", "pushed_at >= ?")
+		args = append(args, toMillis(f.PushedSince))
+	}
+	if !f.PushedBefore.IsZero() {
+		where = append(where, "pushed_at IS NOT NULL", "pushed_at < ?")
+		args = append(args, toMillis(f.PushedBefore))
 	}
 	if !f.DeliverableAt.IsZero() {
 		// Both halves of Deliverable that a query can express. Doing this in Go
@@ -104,6 +136,11 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 		where = append(where, "expires_at > ?", "(deliver_after IS NULL OR deliver_after <= ?)")
 		args = append(args, ms, ms)
 	}
+	return where, args
+}
+
+func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]domain.Proposal, error) {
+	where, args := proposalWhere(f)
 	rows, err := r.query(ctx,
 		`SELECT `+proposalCols+` FROM proposals WHERE `+strings.Join(where, " AND ")+
 			` ORDER BY created_at DESC`+limitClause(f.Limit, domain.ProposalListDefault, domain.ProposalListMax), args...)
@@ -121,6 +158,31 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 		out = append(out, *p)
 	}
 	return out, rows.Err()
+}
+
+// Count deliberately ignores f.Limit — it answers "how many match", and a
+// budget that stops counting at the page size is not a budget.
+func (r proposalRepo) Count(ctx context.Context, f domain.ProposalFilter) (int, error) {
+	where, args := proposalWhere(f)
+	var n int
+	err := r.queryRow(ctx,
+		`SELECT COUNT(*) FROM proposals WHERE `+strings.Join(where, " AND "), args...).Scan(&n)
+	return n, err
+}
+
+// Prune drops settled proposals older than before. Pending rows are spared at
+// any age: one that is past its TTL is Expire's job, and deleting it here would
+// erase a card the user was still owed instead of tidying up after an answered
+// one.
+func (r proposalRepo) Prune(ctx context.Context, before time.Time) (int, error) {
+	res, err := r.exec(ctx,
+		`DELETE FROM proposals WHERE state <> ? AND updated_at < ?`,
+		string(domain.ProposalPending), toMillis(before))
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // Update is a compare-and-set on rev. Two clients accepting different rows of

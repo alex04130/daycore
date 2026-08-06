@@ -47,7 +47,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、32 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、36 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
 
 | 检查 | 挡住什么 |
 |---|---|

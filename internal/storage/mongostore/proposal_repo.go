@@ -102,27 +102,60 @@ func (r proposalRepo) Get(ctx context.Context, sessionID, id string) (*domain.Pr
 	return &p, nil
 }
 
-func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]domain.Proposal, error) {
-	filter := bson.M{"session_id": f.SessionID}
+// proposalFilterDoc builds the predicate once so List and Count cannot drift.
+//
+// The $and wrapper is not decoration: bson.M is a map, so two predicates on the
+// same field (pushed_at present AND inside a window) would have the second
+// assignment silently erase the first. Collecting clauses and joining them is
+// the only shape that survives adding a dimension later.
+func proposalFilterDoc(f domain.ProposalFilter) bson.M {
+	and := []bson.M{{"session_id": f.SessionID}}
 	if f.State != "" {
-		filter["state"] = string(f.State)
+		and = append(and, bson.M{"state": string(f.State)})
 	}
 	if f.Kind != "" {
-		filter["kind"] = string(f.Kind)
+		and = append(and, bson.M{"kind": string(f.Kind)})
+	}
+	if f.Level != "" {
+		and = append(and, bson.M{"level": string(f.Level)})
 	}
 	if f.Date != "" {
-		filter["date"] = f.Date
+		and = append(and, bson.M{"date": f.Date})
 	}
-	if f.Undelivered {
-		filter["delivered_at"] = bson.M{"$exists": false}
+	if f.OwnerInstance != "" {
+		and = append(and, bson.M{"owner_instance": f.OwnerInstance})
+	}
+	switch f.Delivered {
+	case domain.PresenceUnset:
+		and = append(and, bson.M{"delivered_at": bson.M{"$exists": false}})
+	case domain.PresenceSet:
+		and = append(and, bson.M{"delivered_at": bson.M{"$exists": true}})
+	}
+	switch f.Pushed {
+	case domain.PresenceUnset:
+		and = append(and, bson.M{"pushed_at": bson.M{"$exists": false}})
+	case domain.PresenceSet:
+		and = append(and, bson.M{"pushed_at": bson.M{"$exists": true}})
+	}
+	if !f.PushedSince.IsZero() {
+		and = append(and, bson.M{"pushed_at": bson.M{"$exists": true, "$gte": f.PushedSince}})
+	}
+	if !f.PushedBefore.IsZero() {
+		and = append(and, bson.M{"pushed_at": bson.M{"$exists": true, "$lt": f.PushedBefore}})
 	}
 	if !f.DeliverableAt.IsZero() {
-		filter["expires_at"] = bson.M{"$gt": f.DeliverableAt}
-		filter["$or"] = []bson.M{
-			{"deliver_after": bson.M{"$exists": false}},
-			{"deliver_after": bson.M{"$lte": f.DeliverableAt}},
-		}
+		and = append(and,
+			bson.M{"expires_at": bson.M{"$gt": f.DeliverableAt}},
+			bson.M{"$or": []bson.M{
+				{"deliver_after": bson.M{"$exists": false}},
+				{"deliver_after": bson.M{"$lte": f.DeliverableAt}},
+			}})
 	}
+	return bson.M{"$and": and}
+}
+
+func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]domain.Proposal, error) {
+	filter := proposalFilterDoc(f)
 	limit := domain.ListLimit(f.Limit, domain.ProposalListDefault, domain.ProposalListMax)
 	cur, err := r.c("proposals").Find(ctx, filter,
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}).SetLimit(int64(limit)))
@@ -150,6 +183,28 @@ func (r proposalRepo) List(ctx context.Context, f domain.ProposalFilter) ([]doma
 // take effect on Mongo and be silently ignored on SQL. Those five are identity:
 // a card does not change which ladder rung it is on or who produced it, and if
 // that ever needs to change it is a new card.
+// Count deliberately ignores f.Limit — it answers "how many match", and a
+// budget that stops counting at the page size is not a budget.
+func (r proposalRepo) Count(ctx context.Context, f domain.ProposalFilter) (int, error) {
+	n, err := r.c("proposals").CountDocuments(ctx, proposalFilterDoc(f))
+	return int(n), err
+}
+
+// Prune drops settled proposals older than before. Pending rows are spared at
+// any age: one that is past its TTL is Expire's job, and deleting it here would
+// erase a card the user was still owed instead of tidying up after an answered
+// one.
+func (r proposalRepo) Prune(ctx context.Context, before time.Time) (int, error) {
+	res, err := r.c("proposals").DeleteMany(ctx, bson.M{
+		"state":      bson.M{"$ne": string(domain.ProposalPending)},
+		"updated_at": bson.M{"$lt": before},
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(res.DeletedCount), nil
+}
+
 func (r proposalRepo) Update(ctx context.Context, p *domain.Proposal) error {
 	// Validate on the way out as well as in: without it a caller can blank
 	// ttl_policy, and a proposal whose policy is "" matches neither arm of the

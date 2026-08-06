@@ -42,10 +42,10 @@
 
 今天改形状代价≈0（零个前端）；批次 ι 之后改，代价是 4 个前端重写 + 4 个子仓 commit。
 
-- **`ProposalFilter` 补 `level` / `pushed_at` / 计数** —— 原计划写「用得到时再加」，那个顺序是错的：加一个查询维度，在 REST 面之前改的是一个 struct，在之后改的是端点 + 契约 + 四个前端。
-- **`RapportState.FoldVersion` 定语义** —— 不先定版本语义就无法作废旧的折叠结果，而那是缓存，缓存不能作废等于永久错。
-- **`proposals` 保留策略** —— 唯一一张没有 `Prune` 的新表。
-- **`Proposal.OwnerInstance` 可查** —— 崩溃清扫现在写不出来。
+- ✅ **`ProposalFilter` 补 `level` / 三态戳 / 计数**（2026-08-03）—— `Undelivered bool` 换成 `Delivered`/`Pushed` 两个 `Presence` 三态（两个 bool 有第四种无意义组合），加 `Level`、`PushedSince`/`PushedBefore` 绝对时刻窗口、`OwnerInstance`；`Count` 是方法不是 filter 字段，且**忽略 `Limit`**。
+- ✅ **`proposals` 保留策略**（2026-08-03）—— `Prune(before)` 只删终态，pending 任何年龄都放过。
+- ✅ **`Proposal.OwnerInstance` 可查**（2026-08-03）。
+- **`RapportState.FoldVersion` 定语义** —— 不先定版本语义就无法作废旧的折叠结果，而那是缓存，缓存不能作废等于永久错。⚠️ 接线前置已就位：账本游标的两半（`domain.AdvanceCursor` + `Folder` 幂等）已落，见 DATA.md。
 - lock / phase / proposal 的契约形状写进 spec（实现后补）。
 
 ### γ 计划语义 lane（最底层的写路径闸门）

@@ -292,29 +292,91 @@ func (p Proposal) ResolveExpiry() (ProposalState, ProposalResolution) {
 
 // ── storage ─────────────────────────────────────────────────────────────────
 
-// ProposalFilter selects proposals. A zero filter matches every proposal in the
-// session, which is the console's view; the outbox is this filter with State
-// pending and Undelivered set.
+// Presence is a three-way predicate over a nullable timestamp: don't care,
+// stamped, unstamped.
+//
+// Two of this filter's dimensions ask about one — delivered_at and pushed_at —
+// and the attention ladder's two budgets need all three answers between them.
+// The push budget counts stamps inside a window; the candidate scan wants the
+// stamp absent; the card stack wants it present. A bool says two of those,
+// which is exactly why `Undelivered bool` could never express the stack budget.
+// It is replaced here rather than joined by a second bool, because two bools
+// have a fourth combination that means nothing.
+type Presence string
+
+const (
+	PresenceAny   Presence = ""
+	PresenceSet   Presence = "set"
+	PresenceUnset Presence = "unset"
+)
+
+// ProposalFilter selects proposals. A zero filter matches every proposal in
+// THAT SESSION — SessionID is always part of the predicate, never optional —
+// which is the console's view of one user.
 type ProposalFilter struct {
 	SessionID string
 	State     ProposalState // "" matches any
 	Kind      ProposalKind  // "" matches any
+	Level     ProposalLevel // "" matches any
 	Date      string        // "" matches any; a day's L1 ghosts
-	// Undelivered restricts to proposals still in the pool — generated but
-	// never shown. Consensus 15: generation is unthrottled and delivery is the
-	// only gate, so this is the distinction the whole outbox rests on.
-	Undelivered bool
+	// Delivered asks whether the card has ever been shown. Unset is the pool —
+	// generated but never shown. Consensus 15: generation is unthrottled and
+	// delivery is the only gate, so this is the distinction the outbox rests on.
+	//
+	// ⚠️ delivered_at is a PERMANENT stamp; nothing clears it. So
+	// `Delivered: PresenceSet` counts every card this session was ever shown,
+	// including ones long since accepted, rejected or expired. It is NOT "how
+	// many cards are in the stack right now" — that is the conjunction with
+	// State pending and DeliverableAt. Using presence alone for the ≤3-card
+	// stack budget would let a user see three cards in their life and then
+	// never again.
+	Delivered Presence
+	// Pushed asks whether the proposal was ever pushed outside the app, which
+	// is what the ≤3/day budget counts. Same permanence warning as Delivered:
+	// pair it with the window below rather than asking about the stamp alone.
+	Pushed Presence
+	// PushedSince and PushedBefore bound pushed_at, half-open [since, before).
+	// Absolute instants, never a day key: the day a push belongs to depends on
+	// the user's timezone, and a stored day key freezes that answer at write
+	// time and cannot be recomputed when they travel. Callers get the pair from
+	// PushBudgetWindow.
+	PushedSince  time.Time
+	PushedBefore time.Time
 	// DeliverableAt, when set, additionally requires that the proposal has not
 	// lapsed and that its deliverAfter has arrived — the rest of what
 	// Proposal.Deliverable checks.
 	//
-	// Undelivered on its own is NOT the outbox: it returns cards that expired
-	// in the pool and cards held back for later, both of which the user must
-	// never see. Filtering those in Go after the fact would mean the LIMIT is
-	// applied before the filter, so a pool full of lapsed cards could return an
-	// empty page while deliverable ones waited behind it.
+	// `Delivered: PresenceUnset` on its own is NOT the outbox: it returns cards
+	// that expired in the pool and cards held back for later, both of which the
+	// user must never see. Filtering those in Go after the fact would mean the
+	// LIMIT is applied before the filter, so a pool full of lapsed cards could
+	// return an empty page while deliverable ones waited behind it.
 	DeliverableAt time.Time
+	// OwnerInstance restricts to proposals claimed by one instance, which is
+	// how a crash sweep finds what the dead process was holding. "" matches any.
+	OwnerInstance string
 	Limit         int
+}
+
+// PushBudgetWindow is the half-open span [start, end) that one day's push
+// budget is counted over, for the day containing now in loc.
+//
+// The day boundary is the user's local midnight — the same line EXPERIENCE_CORE
+// §5 gives "today/yesterday" and the same one ProposalExpiry caps ask-first
+// cards at. Deliberately NOT rhythm's 04:00 day cut: that one is a tunable in
+// rhythm.Config, and a budget whose size moves when a learning parameter is
+// retuned is not a budget.
+//
+// It goes through timeutil because local midnight does not always exist — see
+// timeutil.StartOfDay. Computing it here with time.Date would, in a zone that
+// shifts its clocks at 00:00, produce a window that does not contain now, and
+// every count taken during that hour would read zero: the budget would silently
+// stop existing on exactly the days it was hardest to reason about.
+func PushBudgetWindow(now time.Time, loc *time.Location) (start, end time.Time) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return timeutil.StartOfDay(now, loc), timeutil.StartOfNextDay(now, loc)
 }
 
 // ProposalRepository persists the one resource that ghosts, cards, decision
@@ -365,4 +427,27 @@ type ProposalRepository interface {
 	// the same failure from the other direction. Ties break on id, which is
 	// arbitrary but identical from either caller's side.
 	Supersede(ctx context.Context, sessionID, mergeKey, keepID string) (int, error)
+
+	// Count answers how many proposals match, which List cannot: List defaults
+	// to a page and caps at a ceiling (see ListLimit), so len(List(f)) silently
+	// saturates. Both attention budgets are counts, and a budget that stops
+	// counting past 100 is not a budget.
+	//
+	// ⚠️ Count is a read. Deciding "under budget, therefore push" and then
+	// stamping pushed_at is a read-modify-write with nothing holding it
+	// together — this package has no transactions. Two pushers can both read
+	// two and both push. The fix is not a lease: leases rest on clocks, and
+	// DATA.md is explicit that correctness may not (job_runs is the mutual
+	// exclusion mechanism, leases are throttling). Whatever ends up driving
+	// delivery has to claim the right to push through the same insert-or-fail
+	// primitive everything else uses.
+	Count(ctx context.Context, f ProposalFilter) (int, error)
+
+	// Prune deletes settled proposals older than before and reports how many
+	// went. Only terminal states are eligible: a pending row older than the
+	// cutoff is one Expire has not reached yet, and deleting it would drop a
+	// card the user was still owed rather than tidy up after one they answered.
+	// Same shape as JobRunRepository.Prune, and for the same reason — the table
+	// grows forever otherwise.
+	Prune(ctx context.Context, before time.Time) (int, error)
 }
