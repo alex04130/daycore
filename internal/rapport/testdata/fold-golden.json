@@ -1,0 +1,110 @@
+{
+  "$comment": "One fixed ledger, and the scores each fold version produces from it. TestFoldGolden looks up the entry whose version equals rapport.FoldVersion and compares. It fails in both directions on purpose: change a delta without bumping the version and the recorded scores stop matching; bump the version without recording an entry and there is nothing to check against. Neither failure can be silenced by editing the other side — adding an entry for a version that does not exist is inert, and editing an existing entry's scores is exactly the thing being guarded against, so do that only together with a version bump and say why in the commit.",
+  "ledger": [
+    {
+      "id": "01",
+      "action": "proposal_accept",
+      "domain": "schedule",
+      "actor": "user"
+    },
+    {
+      "id": "02",
+      "action": "proposal_accept",
+      "domain": "schedule",
+      "actor": "user"
+    },
+    {
+      "id": "03",
+      "action": "proposal_reject",
+      "domain": "care",
+      "actor": "user"
+    },
+    {
+      "id": "04",
+      "action": "plan_add",
+      "domain": "schedule",
+      "actor": "agent"
+    },
+    {
+      "id": "05",
+      "action": "revert",
+      "domain": "system",
+      "actor": "user",
+      "targetId": "04"
+    },
+    {
+      "id": "06",
+      "action": "proposal_accept",
+      "domain": "archive",
+      "actor": "user"
+    },
+    {
+      "id": "07",
+      "action": "rule_upsert",
+      "domain": "habit",
+      "actor": "user"
+    },
+    {
+      "id": "08",
+      "action": "revert",
+      "domain": "system",
+      "actor": "user",
+      "targetId": "07"
+    },
+    {
+      "id": "09",
+      "action": "proposal_accept",
+      "domain": "system",
+      "actor": "user"
+    },
+    {
+      "id": "10",
+      "action": "proposal_reject",
+      "domain": "habit",
+      "actor": "user"
+    },
+    {
+      "id": "11",
+      "action": "proposal_reject",
+      "domain": "habit",
+      "actor": "user"
+    }
+  ],
+  "ledgerNotes": [
+    "05 reverts an AGENT write — it must cost the schedule domain DeltaUndo.",
+    "08 reverts a USER write — undoing your own work says nothing about the agent, so nothing moves.",
+    "09 is scored against the system domain, which carries no score — it must move nothing.",
+    "03 and 10 are rejections: they lower the value but must NOT raise evidence.",
+    "11 pushes habit from 0.05 to 0.00 before clamping, so the recorded 0.05 is Floor doing its job rather than arithmetic landing there — remove the clamp and this entry changes."
+  ],
+  "versions": [
+    {
+      "version": 1,
+      "scores": {
+        "schedule": {
+          "value": 0.09,
+          "evidence": 2
+        },
+        "habit": {
+          "value": 0.05,
+          "evidence": 0
+        },
+        "archive": {
+          "value": 0.33,
+          "evidence": 1
+        },
+        "care": {
+          "value": 0.25,
+          "evidence": 0
+        }
+      },
+      "$derivation": [
+        "Cold: schedule 0.10, habit 0.10, archive 0.30, care 0.30. accept +0.03, reject -0.05, undo -0.07, Floor 0.05.",
+        "schedule 0.10 +0.03 +0.03 = 0.16, then 05 reverts agent-written 04 for -0.07 = 0.09; evidence 2 (only accepts count).",
+        "habit 0.10, 08 reverts a user write so nothing moves, 10 -0.05 = 0.05, 11 -0.05 = 0.00 clamped up to Floor 0.05.",
+        "archive 0.30 +0.03 = 0.33, evidence 1.",
+        "care 0.30 -0.05 = 0.25, evidence 0 — a rejection lowers the value without building experience."
+      ]
+    }
+  ]
+}
