@@ -153,7 +153,14 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	planSummary := w.loadPlanSummary(ctx, sid, today)
 
 	// Build the prompt and call the agent.
-	sysPrompt := buildBriefSystemPrompt(locale, name, today, now.Format("15:04"), tz, weatherSummary, planSummary)
+	sysPrompt, err := w.s.prompts.Render(ctx, ai.PromptBrief, locale, map[string]any{
+		"Name": name, "Date": today, "Clock": now.Format("15:04"), "TZ": tz,
+		"Weather": weatherSummary, "PlanJSON": planSummary,
+	})
+	if err != nil {
+		w.log.Error("worker: brief prompt", "err", err)
+		return
+	}
 	if kind == "morning" && prefs.GapSuggestions {
 		sysPrompt += gapSuggestionHint(locale)
 	}
@@ -300,7 +307,13 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 
 	// Call the agent to evaluate and suggest a replan.
 	overdueJSON, _ := json.Marshal(overdue)
-	sysPrompt := buildReplanSystemPrompt(locale, today, now.Format("15:04"), tz)
+	sysPrompt, err := w.s.prompts.Render(ctx, ai.PromptReplan, locale, map[string]any{
+		"Date": today, "Clock": now.Format("15:04"), "TZ": tz,
+	})
+	if err != nil {
+		w.log.Error("worker: replan prompt", "err", err)
+		return
+	}
 	userMsg := buildReplanUserPrompt(locale, string(overdueJSON))
 
 	provider := w.s.catalog.DefaultChat()
@@ -435,37 +448,6 @@ func (w *Worker) loadPlanSummary(ctx context.Context, sid, date string) string {
 
 // ─── Prompt builders ─────────────────────────────────────────────────────────
 
-// buildBriefSystemPrompt constructs a system prompt for the brief agent.
-func buildBriefSystemPrompt(locale, name, date, clock, tz, weather, planJSON string) string {
-	var b strings.Builder
-
-	if strings.HasPrefix(locale, "zh") {
-		b.WriteString(fmt.Sprintf("你是 %s，一个亲切的日程助手。现在是 %s %s（时区 %s）。\n", name, date, clock, tz))
-		if weather != "" {
-			b.WriteString(fmt.Sprintf("天气：%s\n", weather))
-		}
-		if planJSON != "" {
-			b.WriteString(fmt.Sprintf("今天的计划：%s\n", planJSON))
-		}
-		b.WriteString("你需要为用户生成一段简短的简报，然后直接发送即可，不需要追问用户任何问题。\n")
-		b.WriteString("语气：温暖友好但简洁，像朋友发消息。不要说\"作为 AI\"或\"我理解你的感受\"这类套话。\n")
-		b.WriteString("格式：纯文本，2-4 句话即可，不要太长。直接开始，不要用\"早上好\"之类的标题。\n")
-	} else {
-		b.WriteString(fmt.Sprintf("You are %s, a warm schedule assistant. The time is %s %s (timezone %s).\n", name, date, clock, tz))
-		if weather != "" {
-			b.WriteString(fmt.Sprintf("Weather: %s\n", weather))
-		}
-		if planJSON != "" {
-			b.WriteString(fmt.Sprintf("Today's plan: %s\n", planJSON))
-		}
-		b.WriteString("Generate a brief summary for the user. Be direct, no follow-up questions.\n")
-		b.WriteString("Tone: warm and friendly but concise, like texting a friend. Skip robotic filler.\n")
-		b.WriteString("Format: plain text, 2-4 sentences max. No greeting header like \"Good morning\".\n")
-	}
-
-	return b.String()
-}
-
 // gapSuggestionHint appends the GapSuggestions behavior to the morning brief so
 // the toggle actually does something (a full standalone gap-scan job is a later
 // optimization).
@@ -492,24 +474,6 @@ var (
 func gapSuggestionHint(locale string) string { return i18n.T(gapSuggestionText, locale) }
 func morningUserPrompt(locale string) string { return i18n.T(morningUserText, locale) }
 func eveningUserPrompt(locale string) string { return i18n.T(eveningUserText, locale) }
-
-// buildReplanSystemPrompt constructs a system prompt for the rolling replan agent.
-func buildReplanSystemPrompt(locale, date, clock, tz string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return fmt.Sprintf(
-			"你是 Daycore 日程助手。现在是 %s %s（时区 %s）。用户今天有几个时间块已经超时但没有标记完成。\n"+
-				"请分析这些超时块，提出一个简短的重排建议。比如：把某件事推迟到下午、删掉、或是放到明天。\n"+
-				"语气：像一个朋友在帮你理顺日程，而不是出报告。1-3 句就够了，不需要长篇大论。\n"+
-				"直接说你的建议，不要问用户问题，不要说\"你好\"之类的开场白。",
-			date, clock, tz)
-	}
-	return fmt.Sprintf(
-		"You are the Daycore scheduling assistant. The time is %s %s (timezone %s). The user has overdue time blocks that weren't marked completed.\n"+
-			"Analyze them and suggest a brief replan: reschedule, drop, or move to tomorrow.\n"+
-			"Tone: like a friend helping sort things out, not a report. 2-4 sentences max.\n"+
-			"Give your suggestion directly. No greetings, no questions back to the user.",
-		date, clock, tz)
-}
 
 func buildReplanUserPrompt(locale, overdueJSON string) string {
 	return i18n.Tf(replanUserText, locale, overdueJSON)

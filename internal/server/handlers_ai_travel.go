@@ -40,7 +40,7 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 		Notes       string `json:"notes"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Destination) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 destination")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aITravel.bad_request")
 		return
 	}
 	sid, ok := s.requireSession(w, r)
@@ -49,7 +49,7 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 	}
 	// The draft lands in the travel category, so it must be enabled.
 	if !s.enabledMaterialCategories(r.Context(), sid)["travel"] {
-		s.writeErr(w, http.StatusBadRequest, "bad_category", "出行类别未启用")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.aITravel.bad_category")
 		return
 	}
 
@@ -64,7 +64,7 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 		Date:        time.Now().Format("2006-01-02"),
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aITravel.internal")
 		return
 	}
 	provider := s.catalog.DefaultChat()
@@ -78,12 +78,12 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 	s.logAICall(ctx, sid, epTravel, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai travel", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "server_error", "行程生成出了点问题，请稍后再试")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aITravel.server_error")
 		return
 	}
 	obj, ok2 := extractJSONObject(resp.Content)
 	if !ok2 {
-		s.writeErr(w, http.StatusInternalServerError, "parse_error", "行程解析失败，请重试")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "parse_error", "err.aITravel.parse_error")
 		return
 	}
 

@@ -123,7 +123,7 @@ func (s *Server) handleProposalList(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.Proposals().List(r.Context(), f)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取提案失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.proposalList.internal")
 		return
 	}
 	if items == nil {
@@ -219,7 +219,7 @@ func (s *Server) handleProposalRespond(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.store.Proposals().Update(r.Context(), p); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "回应失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.proposalRespond.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -253,7 +253,7 @@ func (s *Server) handlePlanConflict(w http.ResponseWriter, r *http.Request) {
 		BlockID string `json:"blockId"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Date == "" || body.BlockID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date 或 blockId")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planConflict.bad_request")
 		return
 	}
 	ctx := r.Context()
@@ -308,7 +308,7 @@ func (s *Server) handlePlanConflict(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	p.DeliveredAt = &now
 	if err := s.store.Proposals().Create(ctx, p); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "创建提案失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planConflict.internal")
 		return
 	}
 	s.logOp(ctx, &domain.OperationLog{

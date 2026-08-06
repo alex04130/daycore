@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 
@@ -27,7 +26,7 @@ func (s *Server) handleOpList(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	logs, err := s.store.OpLogs().List(r.Context(), sid, limit)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取操作日志失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.opList.internal")
 		return
 	}
 	if logs == nil {
@@ -43,7 +42,7 @@ type revertDetail struct{ Before, After any }
 
 // revertHandler applies the inverse of one action.
 type revertHandler func(s *Server, ctx context.Context, w http.ResponseWriter,
-	sid string, orig *domain.OperationLog, detail revertDetail)
+	sid, locale string, orig *domain.OperationLog, detail revertDetail)
 
 // revertHandlers maps an action to its inverse.
 //
@@ -90,12 +89,12 @@ func init() {
 // The two one-liners that used to sit inline in the switch. They are named for
 // what they undo, not for what they do — revertRuleCreate_delete undoes a
 // rule_create, which means deleting the rule.
-func (s *Server) revertRuleCreate_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+func (s *Server) revertRuleCreate_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Rules().Delete(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertMemoryAdd_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+func (s *Server) revertMemoryAdd_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Memory().DeleteFact(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
@@ -104,7 +103,7 @@ func (s *Server) revertMemoryAdd_delete(ctx context.Context, w http.ResponseWrit
 // deleted outright (dismissal is a workflow state, not an erasure), an update
 // is restored from its before snapshot via the same canvas-id upsert that
 // wrote it.
-func (s *Server) revertAssignmentUpsert(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertAssignmentUpsert(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	if detail.Before == nil {
 		_ = s.store.Assignments().Delete(ctx, sid, orig.TargetID)
 		s.finishRevert(ctx, w, sid, orig)
@@ -114,27 +113,27 @@ func (s *Server) revertAssignmentUpsert(ctx context.Context, w http.ResponseWrit
 	b, _ := json.Marshal(detail.Before)
 	_ = json.Unmarshal(b, &before)
 	if before.CanvasID == "" {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.assignmentUpsert.internal")
 		return
 	}
 	if _, err := s.store.Assignments().UpsertByCanvasID(ctx, &before); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.assignmentUpsert.internal")
 		return
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertWishCreate_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+func (s *Server) revertWishCreate_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Wishes().Delete(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertMoodRecord_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+func (s *Server) revertMoodRecord_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Moods().Delete(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertMaterialCreate_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+func (s *Server) revertMaterialCreate_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Materials().Delete(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
@@ -150,11 +149,11 @@ func (s *Server) handleOpRevert(w http.ResponseWriter, r *http.Request) {
 
 	orig, err := s.store.OpLogs().Get(ctx, sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "op_not_found", "找不到这条操作记录")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "op_not_found", "err.opRevert.op_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取操作记录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.opRevert.internal")
 		return
 	}
 
@@ -163,10 +162,10 @@ func (s *Server) handleOpRevert(w http.ResponseWriter, r *http.Request) {
 	// could undo the same operation twice — and a compensation is not
 	// idempotent, so "add the block back" applied twice adds two blocks.
 	if _, err := s.store.OpLogs().RevertedBy(ctx, sid, id); err == nil {
-		s.writeErr(w, http.StatusConflict, "already_reverted", "这条操作已经被撤销过了")
+		s.writeErrL(w, s.requestLocale(r), http.StatusConflict, "already_reverted", "err.opRevert.already_reverted")
 		return
 	} else if !errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取操作记录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.opRevert.internal")
 		return
 	}
 
@@ -179,21 +178,21 @@ func (s *Server) handleOpRevert(w http.ResponseWriter, r *http.Request) {
 		// promise is kept or broken: an action with no registered inverse is one
 		// the ledger can show and not undo. Refusing loudly is the honest
 		// answer, and it is also the reminder to whoever added the action.
-		s.writeErr(w, http.StatusBadRequest, "irreversible", fmt.Sprintf("操作 %s 不可撤销", orig.Action))
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "irreversible", "err.fmt.irreversible", orig.Action)
 		return
 	}
-	h(s, ctx, w, sid, orig, detail)
+	h(s, ctx, w, sid, s.requestLocale(r), orig, detail)
 }
 
-func (s *Server) revertPlanAdd(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertPlanAdd(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "remove", Match: map[string]any{"id": orig.TargetID}}, domain.ActorSystem); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.planAdd.internal")
 		return
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertPlanUpdate(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertPlanUpdate(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	blocks, _ := toBlockMaps(detail.Before)
 	for _, b := range blocks {
 		id, _ := b["id"].(string)
@@ -204,25 +203,25 @@ func (s *Server) revertPlanUpdate(ctx context.Context, w http.ResponseWriter, si
 			}
 		}
 		if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "update", Match: map[string]any{"id": id}, Changes: ch}, domain.ActorSystem); err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+			s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.planUpdate.internal")
 			return
 		}
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertPlanRemove(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertPlanRemove(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	blocks, _ := toBlockMaps(detail.Before)
 	for _, b := range blocks {
 		if rid, _ := b["rule_id"].(string); rid != "" {
 			// Un-tombstone a rule occurrence.
 			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "update", Match: map[string]any{"id": b["id"]}, Changes: map[string]any{"hidden": false}}, domain.ActorSystem); err != nil {
-				s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+				s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.planRemove.internal")
 				return
 			}
 		} else {
 			if _, _, _, err := s.applyPlanPatch(ctx, sid, orig.Date, "", planAction{Action: "add", Block: b}, domain.ActorSystem); err != nil {
-				s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+				s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.planRemove.internal")
 				return
 			}
 		}
@@ -230,7 +229,7 @@ func (s *Server) revertPlanRemove(ctx context.Context, w http.ResponseWriter, si
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertPlanUpsert(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertPlanUpsert(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	blocks, _ := toBlockMaps(detail.Before)
 	if blocks == nil {
 		blocks = []map[string]any{}
@@ -242,16 +241,16 @@ func (s *Server) revertPlanUpsert(ctx context.Context, w http.ResponseWriter, si
 		SessionID: sid, Date: orig.Date, Blocks: tb, SourceType: "revert",
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.planUpsert.internal")
 		return
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertRuleUpdate(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertRuleUpdate(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	before, ok := detail.Before.(map[string]any)
 	if !ok || before == nil {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", "缺少恢复快照")
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.ruleUpdate.irreversible")
 		return
 	}
 	raw := map[string]json.RawMessage{}
@@ -261,17 +260,17 @@ func (s *Server) revertRuleUpdate(ctx context.Context, w http.ResponseWriter, si
 	}
 	upd, err := ruleUpdateFromRaw(raw)
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", fmt.Sprintf("规则恢复失败: %v", err))
+		s.writeErrf(w, locale, http.StatusBadRequest, "irreversible", "err.fmt.ruleRestore", err)
 		return
 	}
 	if _, err := s.store.Rules().Update(ctx, sid, orig.TargetID, upd); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.ruleUpdate.internal")
 		return
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertRuleCreate(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertRuleCreate(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	var raw map[string]any
 	b, _ := json.Marshal(detail.Before)
 	_ = json.Unmarshal(b, &raw)
@@ -280,7 +279,7 @@ func (s *Server) revertRuleCreate(ctx context.Context, w http.ResponseWriter, si
 		_ = json.Unmarshal(b, &raw)
 	}
 	if raw == nil {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", "缺少规则数据")
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.ruleCreate.irreversible")
 		return
 	}
 	raw["source"] = "chat"
@@ -289,17 +288,17 @@ func (s *Server) revertRuleCreate(ctx context.Context, w http.ResponseWriter, si
 	_ = json.Unmarshal(rb, &input)
 	rule, err := input.toRule(sid)
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", fmt.Sprintf("规则重建失败: %v", err))
+		s.writeErrf(w, locale, http.StatusBadRequest, "irreversible", "err.fmt.ruleRebuild", err)
 		return
 	}
 	if _, err := s.store.Rules().Create(ctx, rule); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.ruleCreate.internal")
 		return
 	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertRuleBatch(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertRuleBatch(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	items, _ := detail.After.([]any)
 	if items == nil {
 		items, _ = detail.Before.([]any)
@@ -314,7 +313,7 @@ func (s *Server) revertRuleBatch(ctx context.Context, w http.ResponseWriter, sid
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertMemoryAdd(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertMemoryAdd(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	var fact domain.MemoryFact
 	b, _ := json.Marshal(detail.Before)
 	_ = json.Unmarshal(b, &fact)
@@ -323,7 +322,7 @@ func (s *Server) revertMemoryAdd(ctx context.Context, w http.ResponseWriter, sid
 		_ = json.Unmarshal(b, &fact)
 	}
 	if fact.Fact == "" {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", "缺少记忆内容")
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.memoryAdd.irreversible")
 		return
 	}
 	_, _ = s.store.Memory().AddFact(ctx, &domain.MemoryFact{
@@ -332,10 +331,10 @@ func (s *Server) revertMemoryAdd(ctx context.Context, w http.ResponseWriter, sid
 	s.finishRevert(ctx, w, sid, orig)
 }
 
-func (s *Server) revertMemoryClear(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+func (s *Server) revertMemoryClear(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
 	items, _ := detail.Before.([]any)
 	if items == nil {
-		s.writeErr(w, http.StatusBadRequest, "irreversible", "缺少清空前快照")
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.memoryClear.irreversible")
 		return
 	}
 	for _, item := range items {

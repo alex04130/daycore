@@ -222,6 +222,11 @@ func Available() []string { return std.Available() }
 // Coverage reports how many of the catalog's keys a locale has text for. The
 // console shows it next to each installed language: "ja-JP — 812/900" is the
 // difference between a usable translation and one that will show raw keys.
+// Coverage reports how much of the process catalog exists in a locale. The
+// package-level form matches Register/T/Available — a caller that has to reach
+// for the std catalog by hand is a caller who will eventually build its own.
+func Coverage(locale string) (have, total int) { return std.Coverage(locale) }
+
 func (c *Catalog) Coverage(locale string) (have, total int) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()

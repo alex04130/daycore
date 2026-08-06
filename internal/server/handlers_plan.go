@@ -58,7 +58,7 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 	}
 	date := r.URL.Query().Get("date")
 	if date == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planGet.bad_request")
 		return
 	}
 	ctx := r.Context()
@@ -87,7 +87,7 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取日程失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planGet.internal")
 		return
 	}
 	plan.Blocks = schedule.Visible(schedule.Merge(plan.Blocks, occurrences))
@@ -112,7 +112,7 @@ func (s *Server) handlePlanUpsert(w http.ResponseWriter, r *http.Request) {
 		SourceType string             `json:"sourceType"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Date == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planUpsert.bad_request")
 		return
 	}
 	ctx := r.Context()
@@ -126,7 +126,7 @@ func (s *Server) handlePlanUpsert(w http.ResponseWriter, r *http.Request) {
 		SessionID: sid, Date: body.Date, Blocks: body.Blocks, Note: body.Note, SourceType: body.SourceType,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "日程保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planUpsert.internal2")
 		return
 	}
 	if isNew {
@@ -175,7 +175,7 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 		Action planAction `json:"action"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Date == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date 或 action")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planPatch.bad_request")
 		return
 	}
 	// The tool layer refuses an empty match; the HTTP layer did not, so a
@@ -200,7 +200,7 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 			s.writePlanBlocked(w, s.requestLocale(r), blocked)
 			return
 		}
-		s.writeErr(w, http.StatusInternalServerError, "internal", "日程更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planPatch.internal")
 		return
 	}
 	updated.Blocks = schedule.Visible(updated.Blocks)
@@ -241,13 +241,13 @@ func (s *Server) handlePlanRange(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to := q.Get("from"), q.Get("to")
 	if from == "" || to == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 from/to")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planRange.bad_request")
 		return
 	}
 	ctx := r.Context()
 	plans, err := s.store.DayPlans().Range(ctx, sid, from, to)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取日程失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planRange.internal")
 		return
 	}
 
@@ -324,7 +324,7 @@ func (s *Server) handlePlanLock(w http.ResponseWriter, r *http.Request) {
 	}
 	locale := s.requestLocale(r)
 	if err := s.readJSON(r, &body); err != nil || body.Date == "" || body.BlockID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date 或 blockId")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.planLock.bad_request")
 		return
 	}
 	level := domain.LockLevel(body.Level)
@@ -361,7 +361,7 @@ func (s *Server) handlePlanLock(w http.ResponseWriter, r *http.Request) {
 			s.writePlanBlocked(w, locale, blocked)
 			return
 		}
-		s.writeErr(w, http.StatusInternalServerError, "internal", "锁定状态更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.planLock.internal")
 		return
 	}
 	if matched == 0 {

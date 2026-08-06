@@ -32,7 +32,7 @@ func (s *Server) handleMoodList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.store.Moods().List(r.Context(), sid, limit)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心情记录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.moodList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, rows)
@@ -52,7 +52,7 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 		Note            string  `json:"note"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Mood == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 mood")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.moodCreate.bad_request")
 		return
 	}
 	// The stored value is a registry id, never a display string.
@@ -86,7 +86,7 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 		Source: domain.MoodSourceUser, Note: strings.TrimSpace(body.Note),
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "保存心情失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.moodCreate.internal")
 		return
 	}
 	_ = s.store.Sessions().IncrementInteraction(ctx, sid)
@@ -103,11 +103,11 @@ func (s *Server) handleMoodPatch(w http.ResponseWriter, r *http.Request) {
 		ID string `json:"id"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.ID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 id")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.moodPatch.bad_request")
 		return
 	}
 	if err := s.store.Moods().MarkExerciseCompleted(r.Context(), sid, body.ID); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.moodPatch.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

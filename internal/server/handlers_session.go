@@ -31,7 +31,7 @@ func (s *Server) handleSessionInit(w http.ResponseWriter, r *http.Request) {
 	if sid == "" {
 		newID, err := auth.NewSessionID()
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "无法创建会话")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionInit.internal")
 			return
 		}
 		sid = newID
@@ -39,7 +39,7 @@ func (s *Server) handleSessionInit(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.store.Sessions().GetOrCreate(r.Context(), sid)
 	if err != nil {
 		s.log.Error("session init", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "internal", "会话初始化失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionInit.internal2")
 		return
 	}
 	// First contact: adopt the browser's language so prompts and AI replies
@@ -73,13 +73,13 @@ func (s *Server) handleSessionTheme(w http.ResponseWriter, r *http.Request) {
 		Theme string `json:"theme"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Theme == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 theme")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.sessionTheme.bad_request")
 		return
 	}
 	ctx := r.Context()
 	_ = s.store.ThemeLog().Add(ctx, sid, body.Theme) // audit log is best-effort
 	if _, err := s.store.Sessions().Update(ctx, sid, domain.SessionUpdate{CurrentTheme: &body.Theme}); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "主题保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionTheme.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -98,7 +98,7 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		PersonaPrompt *string `json:"personaPrompt"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.sessionSettings.bad_request")
 		return
 	}
 	if body.Language != nil {
@@ -112,13 +112,13 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		// becoming something else.
 		lang := i18n.Normalize(*body.Language)
 		if !s.localePair(r.Context(), sid).Has(lang) {
-			s.writeErr(w, http.StatusBadRequest, "unsupported_locale", "不支持的语言")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_locale", "err.sessionSettings.unsupported_locale")
 			return
 		}
 		body.Language = &lang
 	}
 	if body.PersonaPrompt != nil && len([]rune(*body.PersonaPrompt)) > 2000 {
-		s.writeErr(w, http.StatusBadRequest, "too_long", "个性化提示词不能超过 2000 字")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "too_long", "err.sessionSettings.too_long")
 		return
 	}
 	sess, err := s.store.Sessions().Update(r.Context(), sid, domain.SessionUpdate{
@@ -128,7 +128,7 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		PersonaPrompt: body.PersonaPrompt,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "设置保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionSettings.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, sess)

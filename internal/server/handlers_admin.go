@@ -47,7 +47,7 @@ type adminPromptItem struct {
 // GET /api/admin/prompts — every prompt key × supported locale with its active content.
 func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptList.unauthorized")
 		return
 	}
 	ctx := r.Context()
@@ -68,22 +68,22 @@ func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
 // GET /api/admin/prompts/{key}?locale= — one prompt's active content + built-in default.
 func (s *Server) handleAdminPromptGet(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptGet.unauthorized")
 		return
 	}
 	locale := adminLocale(r)
 	if locale == "" {
-		s.writeErr(w, http.StatusBadRequest, "unsupported_locale", "不支持的 locale")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_locale", "err.adminPromptGet.unsupported_locale")
 		return
 	}
 	key := r.PathValue("key")
 	content, ok, err := s.prompts.Get(r.Context(), key, locale)
 	if errors.Is(err, domain.ErrNotFound) || !ok {
-		s.writeErr(w, http.StatusNotFound, "unknown_prompt", "没有这个提示词")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "unknown_prompt", "err.adminPromptGet.unknown_prompt")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取提示词失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.adminPromptGet.internal")
 		return
 	}
 	def, _ := s.prompts.Default(key, locale)
@@ -93,12 +93,12 @@ func (s *Server) handleAdminPromptGet(w http.ResponseWriter, r *http.Request) {
 // PUT /api/admin/prompts/{key}?locale= — override a prompt (validated as a template).
 func (s *Server) handleAdminPromptSet(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptSet.unauthorized")
 		return
 	}
 	locale := adminLocale(r)
 	if locale == "" {
-		s.writeErr(w, http.StatusBadRequest, "unsupported_locale", "不支持的 locale")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_locale", "err.adminPromptSet.unsupported_locale")
 		return
 	}
 	key := r.PathValue("key")
@@ -106,16 +106,16 @@ func (s *Server) handleAdminPromptSet(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Content == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 content")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.adminPromptSet.bad_request")
 		return
 	}
 	err := s.prompts.Set(r.Context(), key, locale, body.Content)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "unknown_prompt", "没有这个提示词")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "unknown_prompt", "err.adminPromptSet.unknown_prompt")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "invalid_template", "提示词模板无效："+err.Error())
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "invalid_template", "err.fmt.invalidTemplate", err.Error())
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

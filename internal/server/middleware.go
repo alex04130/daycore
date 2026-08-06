@@ -15,7 +15,7 @@ func (s *Server) recoverMW(next http.Handler) http.Handler {
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.log.Error("panic recovered", "err", rec, "path", r.URL.Path, "rid", requestIDFrom(r.Context()))
-				s.writeErr(w, http.StatusInternalServerError, "internal", "服务器内部错误")
+				s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.recoverMW.internal")
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -162,7 +162,7 @@ func (s *Server) rateLimit(w http.ResponseWriter, r *http.Request) bool {
 	if s.limiter.Allow(s.clientIP(r)) {
 		return true
 	}
-	s.writeErr(w, http.StatusTooManyRequests, "rate_limited", "请求太频繁，请稍后再试")
+	s.writeErrL(w, s.requestLocale(r), http.StatusTooManyRequests, "rate_limited", "err.rateLimit.rate_limited")
 	return false
 }
 
@@ -173,7 +173,7 @@ func (s *Server) authRateLimit(w http.ResponseWriter, r *http.Request) bool {
 	if s.authLimiter.Allow(s.clientIP(r)) {
 		return true
 	}
-	s.writeErr(w, http.StatusTooManyRequests, "rate_limited", "尝试太频繁，请稍后再试")
+	s.writeErrL(w, s.requestLocale(r), http.StatusTooManyRequests, "rate_limited", "err.authRateLimit.rate_limited")
 	return false
 }
 

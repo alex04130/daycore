@@ -48,7 +48,7 @@ func (s *Server) handleTempContextGet(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimSpace(r.URL.Query().Get("key"))
 	if key == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 key 参数")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.tempContextGet.bad_request")
 		return
 	}
 	tc, err := s.store.TempContexts().Get(r.Context(), sid, key)
@@ -58,7 +58,7 @@ func (s *Server) handleTempContextGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取临时上下文失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.tempContextGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"data": tc.Payload, "ttl": tc.TTL.UTC().Format(time.RFC3339)})
@@ -76,12 +76,12 @@ func (s *Server) handleTempContextPut(w http.ResponseWriter, r *http.Request) {
 		TTLSeconds int    `json:"ttlSeconds"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求体格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.tempContextPut.bad_request")
 		return
 	}
 	body.Key = strings.TrimSpace(body.Key)
 	if body.Key == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 key")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.tempContextPut.bad_request2")
 		return
 	}
 	if len(body.Payload) > maxPayloadLen {
@@ -104,7 +104,7 @@ func (s *Server) handleTempContextPut(w http.ResponseWriter, r *http.Request) {
 		TTL:       time.Now().Add(ttl),
 	}
 	if err := s.store.TempContexts().Set(r.Context(), tc); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "保存临时上下文失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.tempContextPut.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "ttl": tc.TTL.UTC().Format(time.RFC3339)})

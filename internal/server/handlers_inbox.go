@@ -53,7 +53,7 @@ func (s *Server) handleInboxProcess(w http.ResponseWriter, r *http.Request) {
 		TempID string `json:"temp_id"`
 	}
 	if err := s.readJSON(r, &req); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_body", "无法解析请求体")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_body", "err.inboxProcess.bad_body")
 		return
 	}
 	text := strings.TrimSpace(req.Text)
@@ -90,7 +90,7 @@ func (s *Server) handleInboxProcess(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if text == "" {
-		s.writeErr(w, http.StatusBadRequest, "empty_text", "缺少 text 或有效的 temp_id")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "empty_text", "err.inboxProcess.empty_text")
 		return
 	}
 
@@ -314,17 +314,17 @@ func (s *Server) handleInboxCommit(w http.ResponseWriter, r *http.Request) {
 		AlsoKeepNote bool `json:"alsoKeepNote"`
 	}
 	if err := s.readJSON(r, &req); err != nil || req.DraftID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 draftId")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.inboxCommit.bad_request")
 		return
 	}
 	tc, err := s.store.TempContexts().Get(r.Context(), sid, inboxDraftKey(req.DraftID))
 	if err != nil || tc == nil {
-		s.writeErr(w, http.StatusNotFound, "draft_not_found", "草稿不存在或已过期")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "draft_not_found", "err.inboxCommit.draft_not_found")
 		return
 	}
 	var draft inboxDraft
 	if err := json.Unmarshal([]byte(tc.Payload), &draft); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "草稿数据损坏")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.inboxCommit.internal")
 		return
 	}
 	cls := draft.Classification
@@ -339,7 +339,7 @@ func (s *Server) handleInboxCommit(w http.ResponseWriter, r *http.Request) {
 	}
 	enabled := s.enabledMaterialCategories(r.Context(), sid)
 	if _, known := domain.MaterialCategoryByID(cls.Category); !known || !enabled[cls.Category] {
-		s.writeErr(w, http.StatusBadRequest, "bad_category", "类别未启用或不存在: "+cls.Category)
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.fmt.categoryDisabled", cls.Category)
 		return
 	}
 
@@ -366,7 +366,7 @@ func (s *Server) handleInboxCommit(w http.ResponseWriter, r *http.Request) {
 			}
 			a, err := s.createManualAssignment(r.Context(), sid, title, "", dueAt)
 			if err != nil {
-				s.writeErr(w, http.StatusInternalServerError, "internal", "作业创建失败")
+				s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.inboxCommit.internal2")
 				return
 			}
 			assignment = a
@@ -400,7 +400,7 @@ func (s *Server) handleInboxCommit(w http.ResponseWriter, r *http.Request) {
 		Body: body, Source: "inbox", MimeType: "application/json",
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "素材创建失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.inboxCommit.internal3")
 		return
 	}
 	resp := map[string]any{"type": "material", "material": created}
@@ -423,20 +423,20 @@ func (s *Server) handleInboxUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20) // 8 MB cap
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_upload", "上传失败，请检查文件大小或格式")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_upload", "err.inboxUpload.bad_upload")
 		return
 	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "missing_file", "缺少 file 字段")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "missing_file", "err.inboxUpload.missing_file")
 		return
 	}
 	defer file.Close()
 
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "read_error", "读取文件失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "read_error", "err.inboxUpload.read_error")
 		return
 	}
 

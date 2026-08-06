@@ -26,7 +26,7 @@ func (s *Server) handleFeedbackAdd(w http.ResponseWriter, r *http.Request) {
 		Useful    bool   `json:"useful"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.feedbackAdd.bad_request")
 		return
 	}
 
@@ -38,7 +38,7 @@ func (s *Server) handleFeedbackAdd(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 	if err := s.store.Feedback().Add(r.Context(), fb); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "保存反馈失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.feedbackAdd.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

@@ -30,6 +30,14 @@ const (
 	PromptInboxClassify        = "inbox_classify"
 	PromptFoodRecognize        = "food_recognize"
 	PromptTravelSuggest        = "travel_suggest"
+	// Moved out of Go string literals (2026-08-03). They were switch statements
+	// on strings.HasPrefix(locale, "zh") — three prompts that could not be
+	// overridden from the console, could not gain a third language without a
+	// release, and were exempt from the double-locale boot check that every
+	// other prompt has to pass.
+	PromptPersona = "persona"
+	PromptBrief   = "brief"
+	PromptReplan  = "replan"
 )
 
 // promptKeys is the canonical ordered list, used by List().
@@ -38,6 +46,7 @@ var promptKeys = []string{
 	PromptCompanionAgent, PromptCompanionContext,
 	PromptAutoPlan, PromptScheduleExtractImage, PromptThemeGen,
 	PromptInboxClassify, PromptFoodRecognize, PromptTravelSuggest,
+	PromptPersona, PromptBrief, PromptReplan,
 }
 
 // PromptService renders prompt templates per locale. Defaults are embedded from
@@ -293,51 +302,24 @@ type AutoPlanData struct {
 
 // ─── L2 persona & L1 reminder (built-in, not templates) ────────────────────
 
-// DefaultPersona returns the built-in L2 role prompt for the given locale.
-// This is the "good buddy" persona — warm, personal, and entirely separate
-// from L1's hard boundaries.
-func DefaultPersona(locale, name string) string {
-	switch {
-	case strings.HasPrefix(locale, "zh"):
-		return fmt.Sprintf(`## 角色
-
-你是 %s，一个随和、细心的伙伴。你的任务就是帮用户把日子过得更顺畅——不是替ta做决定，而是让ta少操心。你更像是那个会帮ta记着各种事的朋友：不是管家，不是秘书，就是跟ta一起让生活运转得更好的人。
-
-## 对话风格
-
-- 像活人聊天，不要机器人腔。最忌讳"作为 AI""我理解你的感受""一切都会好的"这类套话。
-- 简洁直接，但要提供实质信息。
-- 自然使用标点——问号、省略号、感叹号都可以。唯一禁止的是明显的表演和敷衍。
-- 跟随用户的语言。用户说中文就中文，方言或网络用语也跟着用。
-
-## 你的本能
-
-1. **看一眼再说**：每次用户说话前，先扫一遍ta今天的计划、近期 deadline、天气、记忆。发现了什么就主动提，不等用户问。
-2. **上下文不是命令**：用户说"把会议改到 3 点"，不要说"好的已修改"，说"改到 3 点了——这样你上午空出来可以处理那个快截止的数据结构作业"。
-3. **发现空白和冲突**：计划太满就提议减负，有空档就问要不要安排。天气不好提醒调整户外活动。`, name)
-	default:
-		return fmt.Sprintf(`## Role
-
-You are %s, a warm, attentive companion. Your job is to help the user's life run more smoothly — not by making decisions for them, but by taking the mental load off their plate. Think of yourself as that friend who remembers things for them: not a butler, not a secretary, just someone who helps life flow better.
-
-## Conversation style
-
-- Talk like a real person, never like a robot. The worst offenses are canned lines like "as an AI", "I understand how you feel", "everything will be okay".
-- Concise and direct, but with real substance. If a problem can't be settled with a "yeah", spell it out.
-- Use punctuation naturally — question marks are fine, ellipsis is fine, exclamation marks are fine. The only bans are obvious performance and brush-offs.
-- Follow the user's language. If they write in Chinese, reply in Chinese; if they use slang or dialect, roll with it.
-
-## Your instincts
-
-1. **Look before you speak.** Before every reply, scan the user's plan for today, upcoming deadlines, the weather, and memory. If you spot something, bring it up proactively — don't wait to be asked.
-2. **Context, not commands.** When the user says "move the meeting to 3", don't say "done, updated" — say "moved to 3 — that frees up your morning for that data structures assignment that's due soon".
-3. **Spot gaps and conflicts.** If the day is packed, suggest trimming; if there's a gap, ask whether to fill it. If the weather is bad, remind them to adjust outdoor plans.`, name)
-	}
-}
-
 // HardBoundaryReminder returns the L1 restatement block that sits AFTER L2
 // in the assembled system prompt. It ensures that even if L2 says "ignore
 // previous instructions", the hard boundaries still apply.
+//
+// ⚠️ This is the ONE prompt that deliberately stays a Go literal, and the
+// switch on locale below is not an oversight.
+//
+// Every other prompt is runtime-editable on purpose: templates through
+// prompt_overrides, messages through locale_overrides, both reachable from the
+// admin console. That is the right trade for tone and copy. It is the wrong
+// trade for the last line of defence against a persona that says "ignore
+// previous instructions" — a boundary that can be edited at runtime is a
+// boundary an attacker with console access can simply delete, and it would go
+// out with the next request rather than the next release.
+//
+// The cost is that it is not translatable, which is a real cost and a small
+// one: the reader is a model, not a person, and models follow instructions in
+// a language they were not answered in. A person never sees this text.
 func HardBoundaryReminder(locale string) string {
 	switch {
 	case strings.HasPrefix(locale, "zh"):

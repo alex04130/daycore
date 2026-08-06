@@ -105,11 +105,11 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 		ThreadID      string `json:"threadId"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 message")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanionAsync.bad_request")
 		return
 	}
 	if body.ThreadID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "异步模式必须提供 threadId（结果写回该线程）")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanionAsync.bad_request2")
 		return
 	}
 	sid, ok := s.requireSession(w, r)
@@ -128,7 +128,7 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if !owned {
-		s.writeErr(w, http.StatusNotFound, "thread_not_found", "会话不存在")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "thread_not_found", "err.aICompanionAsync.thread_not_found")
 		return
 	}
 	s.decisions.cancelForSession(sid) // a new message supersedes any pending card
@@ -142,7 +142,7 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 		{ID: placeholderID, ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleAssistant, Status: domain.MsgStatusPending},
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "消息保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanionAsync.internal")
 		return
 	}
 

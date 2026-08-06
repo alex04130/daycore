@@ -10,6 +10,7 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 	"daycore/internal/schedule"
 )
 
@@ -20,8 +21,25 @@ func init() {
 }
 
 var (
-	weekdaysZH = []string{"星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"}
-	weekdaysEN = []string{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"}
+	// Weekday names go through the catalog rather than two parallel slices: a
+	// third language was otherwise a code change and a release, which is the
+	// one thing the message catalog exists to avoid.
+	weekdayKeys = [7]string{
+		i18n.Reg("weekday.sun", i18n.Text{"zh-CN": "星期日", "en-US": "Sunday"}),
+		i18n.Reg("weekday.mon", i18n.Text{"zh-CN": "星期一", "en-US": "Monday"}),
+		i18n.Reg("weekday.tue", i18n.Text{"zh-CN": "星期二", "en-US": "Tuesday"}),
+		i18n.Reg("weekday.wed", i18n.Text{"zh-CN": "星期三", "en-US": "Wednesday"}),
+		i18n.Reg("weekday.thu", i18n.Text{"zh-CN": "星期四", "en-US": "Thursday"}),
+		i18n.Reg("weekday.fri", i18n.Text{"zh-CN": "星期五", "en-US": "Friday"}),
+		i18n.Reg("weekday.sat", i18n.Text{"zh-CN": "星期六", "en-US": "Saturday"}),
+	}
+	// The one user-role line the planner turn opens with. Not a UI string and
+	// not a template either — it is one sentence, and worker.go's morning and
+	// evening openers are registered exactly this way.
+	autoPlanUserText = i18n.Reg("autoplan.userOpener", i18n.Text{
+		"zh-CN": "开始规划。",
+		"en-US": "Generate the plan.",
+	})
 )
 
 // POST /api/ai/auto-plan — the autonomous planner. Aggregates everything known
@@ -52,12 +70,12 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 		Mode         string `json:"mode"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIAutoPlan.bad_request")
 		return
 	}
 	mode := orDefault(body.Mode, "keep_manual")
 	if mode != "keep_manual" && mode != "replace_all" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "mode 必须是 keep_manual 或 replace_all")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIAutoPlan.bad_request2")
 		return
 	}
 
@@ -90,7 +108,7 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	fromT, err1 := time.Parse("2006-01-02", from)
 	toT, err2 := time.Parse("2006-01-02", to)
 	if err1 != nil || err2 != nil || toT.Before(fromT) {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "from/to 格式应为 YYYY-MM-DD 且 from <= to")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIAutoPlan.bad_request3")
 		return
 	}
 	days := int(toT.Sub(fromT).Hours()/24) + 1
@@ -185,14 +203,11 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 		Instructions: strings.TrimSpace(body.Instructions),
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIAutoPlan.internal")
 		return
 	}
 
-	userMsg := "开始规划。"
-	if locale == "en-US" {
-		userMsg = "Generate the plan."
-	}
+	userMsg := i18n.T(autoPlanUserText, locale)
 	planner := s.catalog.Planner()
 	start := time.Now()
 	resp, err := planner.Chat(ctx, ai.ChatRequest{
@@ -252,7 +267,7 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 			SessionID: sid, Date: date, Blocks: blocks, SourceType: "auto", Note: planNote,
 		})
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "日程保存失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIAutoPlan.internal2")
 			return
 		}
 		saved.Blocks = schedule.Visible(saved.Blocks)
@@ -334,8 +349,8 @@ func rangeDatesMarkdown(locale string, from, to time.Time) string {
 }
 
 func localeWeekday(locale string, dow int) string {
-	if locale == "en-US" {
-		return weekdaysEN[dow]
+	if dow < 0 || dow > 6 {
+		return ""
 	}
-	return weekdaysZH[dow]
+	return i18n.T(weekdayKeys[dow], locale)
 }

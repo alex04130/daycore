@@ -35,7 +35,7 @@ func (s *Server) handleWishList(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	wishes, err := s.store.Wishes().List(r.Context(), sid, status)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿列表失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"wishes": wishes})
@@ -49,7 +49,7 @@ func (s *Server) handleWishCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in wishInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.wishCreate.bad_request")
 		return
 	}
 	in.Title = strings.TrimSpace(in.Title)
@@ -70,7 +70,7 @@ func (s *Server) handleWishCreate(w http.ResponseWriter, r *http.Request) {
 		Status:    status,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿创建失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishCreate.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -89,11 +89,11 @@ func (s *Server) handleWishGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	wish, err := s.store.Wishes().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishGet.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, wish)
@@ -110,17 +110,17 @@ func (s *Server) handleWishUpdate(w http.ResponseWriter, r *http.Request) {
 	// Read the existing wish so we can merge the patch over it.
 	prev, err := s.store.Wishes().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishUpdate.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishUpdate.internal")
 		return
 	}
 
 	var in wishInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.wishUpdate.bad_request")
 		return
 	}
 
@@ -140,11 +140,11 @@ func (s *Server) handleWishUpdate(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.store.Wishes().Update(r.Context(), sid, id, prev)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishUpdate.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishUpdate.internal2")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -163,11 +163,11 @@ func (s *Server) handleWishDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	err := s.store.Wishes().Delete(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishDelete.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishDelete.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{

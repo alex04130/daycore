@@ -32,16 +32,16 @@ func (s *Server) importSession(w http.ResponseWriter, r *http.Request) (string, 
 	}
 	token := strings.TrimSpace(r.Header.Get("X-Import-Token"))
 	if token == "" {
-		s.writeErr(w, http.StatusUnauthorized, "no_session", "缺少会话或 X-Import-Token")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "no_session", "err.importSession.no_session")
 		return "", false
 	}
 	sess, err := s.store.Sessions().GetByImportToken(r.Context(), token)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusUnauthorized, "invalid_import_token", "导入令牌无效，请在 Daycore 设置里重新生成")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "invalid_import_token", "err.importSession.invalid_import_token")
 		return "", false
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "会话解析失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importSession.internal")
 		return "", false
 	}
 	return sess.ID, true
@@ -55,7 +55,7 @@ func (s *Server) handleImportTokenGet(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.store.Sessions().Get(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取会话失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importTokenGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{"token": sess.ImportToken})
@@ -69,12 +69,12 @@ func (s *Server) handleImportTokenRotate(w http.ResponseWriter, r *http.Request)
 	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "令牌生成失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importTokenRotate.internal")
 		return
 	}
 	token := "dcimp_" + hex.EncodeToString(buf)
 	if _, err := s.store.Sessions().Update(r.Context(), sid, domain.SessionUpdate{ImportToken: &token}); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "令牌保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importTokenRotate.internal2")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{"token": token})
@@ -96,7 +96,7 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "text/calendar") {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
 		if err != nil {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "读取 ICS 内容失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.importICS.bad_request")
 			return
 		}
 		icsText = string(raw)
@@ -109,7 +109,7 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 			Timezone string `json:"timezone"`
 		}
 		if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.ICSText) == "" {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 icsText")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.importICS.bad_request2")
 			return
 		}
 		icsText, preview, defaultTZ = body.ICSText, body.Preview, body.Timezone
@@ -117,7 +117,7 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 
 	events, warnings, err := ics.Parse(icsText)
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "invalid_ics", "无法解析 ICS 文件："+err.Error())
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "invalid_ics", "err.fmt.invalidICS", err.Error())
 		return
 	}
 	inputs := make([]ruleInput, 0, len(events))
@@ -144,7 +144,7 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 		}
 		c, err := s.store.Rules().Create(r.Context(), rule)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "规则保存失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importICS.internal")
 			return
 		}
 		created = append(created, *c)

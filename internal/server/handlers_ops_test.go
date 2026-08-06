@@ -54,5 +54,6 @@ func TestDuplicateRevertRegistrationPanics(t *testing.T) {
 			t.Error("registering the same action twice should panic")
 		}
 	}()
-	registerRevert("plan_add", func(*Server, context.Context, http.ResponseWriter, string, *domain.OperationLog, revertDetail) {})
+	registerRevert("plan_add", func(*Server, context.Context, http.ResponseWriter, string, string, *domain.OperationLog, revertDetail) {
+	})
 }

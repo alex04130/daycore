@@ -44,7 +44,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		} `json:"conversationHistory"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 message")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanion.bad_request")
 		return
 	}
 
@@ -63,13 +63,13 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		var err error
 		messages, err = s.buildCompanionMessages(ctx, sid, body.ThreadID, locale, body.Timezone, name, body.Message, nil)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanion.internal")
 			return
 		}
 	} else {
 		sys, err := s.companionSystemPrompt(ctx, sid, locale, body.Timezone, name)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanion.internal")
 			return
 		}
 		messages = []ai.Message{{Role: ai.RoleSystem, Content: sys}}
@@ -207,8 +207,8 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	l2 := ""
 	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.PersonaPrompt != "" {
 		l2 = "\n\n" + i18n.T(personaHeading, locale) + "\n" + sess.PersonaPrompt
-	} else {
-		l2 = "\n\n" + ai.DefaultPersona(locale, name)
+	} else if persona, err := s.prompts.Render(ctx, ai.PromptPersona, locale, map[string]any{"Name": name}); err == nil {
+		l2 = "\n\n" + persona
 	}
 
 	// L1_reminder: hard boundary restatement placed AFTER L2 so it can never

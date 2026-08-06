@@ -155,11 +155,11 @@ func (s *Server) handleDecisionRespond(w http.ResponseWriter, r *http.Request) {
 		Text   string `json:"text"`
 	}
 	if err := s.readJSON(r, &body); err != nil || (body.Choice == "" && strings.TrimSpace(body.Text) == "") {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 choice 或 text")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.decisionRespond.bad_request")
 		return
 	}
 	if !s.decisions.resolve(id, sid, decisionAnswer{Choice: body.Choice, Text: strings.TrimSpace(body.Text)}) {
-		s.writeErr(w, http.StatusNotFound, "decision_not_found", "这张卡片已经过期了")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "decision_not_found", "err.decisionRespond.decision_not_found")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

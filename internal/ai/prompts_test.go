@@ -67,21 +67,33 @@ func TestRenderCompanionAgentAndContext(t *testing.T) {
 	}
 }
 
+// The L2 persona moved out of a Go switch and into the template system, so it
+// gains what every other prompt already had: console overrides, a third
+// language without a release, and the double-locale boot check. The assertions
+// are unchanged — they are about the words, not about where they live.
 func TestDefaultPersona(t *testing.T) {
+	svc, err := NewPromptService(nil)
+	if err != nil {
+		t.Fatalf("NewPromptService: %v", err)
+	}
+	ctx := context.Background()
 	for _, tc := range []struct{ locale, name, want string }{
 		{"zh-CN", "小昼", "你是 小昼"},
 		{"zh", "Leo", "你是 Leo"},
 		{"en-US", "Leo", "You are Leo"},
 		{"en", "小昼", "You are 小昼"},
 	} {
-		out := DefaultPersona(tc.locale, tc.name)
+		out, err := svc.Render(ctx, PromptPersona, tc.locale, map[string]any{"Name": tc.name})
+		if err != nil {
+			t.Fatalf("Render(persona, %s): %v", tc.locale, err)
+		}
 		if !strings.Contains(out, tc.want) {
-			t.Errorf("DefaultPersona(%s, %s) missing %q\n--- out ---\n%s", tc.locale, tc.name, tc.want, out)
+			t.Errorf("persona(%s, %s) missing %q\n--- out ---\n%s", tc.locale, tc.name, tc.want, out)
 		}
 		// Default persona must NOT contain hard boundary language.
 		for _, bad := range []string{"绝对禁止", "Absolutely prohibited", "工具纪律", "Tool discipline"} {
 			if strings.Contains(out, bad) {
-				t.Errorf("DefaultPersona(%s, %s) must not contain L1 boundary %q", tc.locale, tc.name, bad)
+				t.Errorf("persona(%s, %s) must not contain L1 boundary %q", tc.locale, tc.name, bad)
 			}
 		}
 	}
