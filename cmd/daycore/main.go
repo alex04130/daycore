@@ -128,6 +128,29 @@ func run(logger *slog.Logger) error {
 		logger.Info("prompt templates overlaid from disk", "dir", cfg.PromptsDir, "files", n)
 	}
 
+	// L1 hard boundaries. Resolved here rather than lazily at the first chat so
+	// that a broken boundaries file stops the process instead of degrading one
+	// request, and so HardBoundaryReminder's panic path is unreachable once we
+	// are serving.
+	boundaries, err := ai.StdBoundaries()
+	if err != nil {
+		return fmt.Errorf("load hard boundaries: %w", err)
+	}
+	bload, err := boundaries.LoadDir(cfg.PromptsDir)
+	if err != nil {
+		return fmt.Errorf("load hard boundaries from %s: %w", cfg.PromptsDir, err)
+	}
+	if len(bload.Locales) > 0 {
+		logger.Info("hard boundaries overlaid from disk", "path", bload.Path, "locales", bload.Locales)
+	}
+	if bload.Stale() {
+		// Their copy wins — that is the point of the file. But a copy taken
+		// before a release that added a rule silently withholds that rule, and
+		// this line is the only place anyone would find out.
+		logger.Warn("hard boundaries file predates this build; diff it against the shipped defaults",
+			"path", bload.Path, "file_version", bload.Version, "shipped_version", bload.Embedded)
+	}
+
 	// File bus. Optional: a deployment without one simply has no feature that
 	// needs bytes, and refusing to boot over that would be worse than saying so.
 	blobStore, err := blob.Open(cfg.BlobStore, cfg.DataDir)

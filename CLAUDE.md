@@ -35,7 +35,7 @@
 - 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
 - **存储层改动的验收标准是 `internal/storage/storagetest` 的行为套件**（36 个用例，**四个后端跑同一份**）。它测的是四个后端必须一致的**行为**，`dialect_parity_test.go` 是三方言 DDL 的**静态**比对，两者互不替代。本机跑真机那几个：`make test-mongo`（Mongo）、`make test-sql`（PG + MySQL）。
 - **SQL 里存自由数据不必只会「一个大 JSON 整体重写」**：需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，SQLite/PG/MySQL 都支持，已实测），键集开放且要按键查就用侧表。**凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段必须是列** —— 塞进 blob 就退成读-改-写，那是正确性取舍不是性能取舍。
-- 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。
+- 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。**L1 硬边界是唯一例外**：`internal/ai/prompts/boundaries.json`，只有磁盘（`PROMPTS_DIR/boundaries.json`）+ 内嵌两层，**不要给它加 DB 覆盖或 admin 端点** —— 能从控制台改的边界等于能被删。
 - **Go 里的用户可见文案一律 `i18n.Register` 注册 key + `i18n.T`/`Tf` 取用**，不要写 `if HasPrefix(locale,"en")`，也**不要直接 `i18n.Pick`**（会绕开 DB/文件两层，让这条字符串变成不可翻译的）。语言包三层：DB → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US；**加一门语言是丢一个翻译文件，不是改代码也不是发版**。主副语言由用户自己在设置页选，配置只给默认值。详见 `docs/DATA.md`「多语言机制」。
 - 许可证：LGPL-3.0-or-later（`COPYING.LESSER` + `COPYING`）。引入新依赖前确认其协议兼容（Apache-2.0 / MIT / BSD / MPL-2.0 可以；GPL-only、SSPL、专有协议不行）。
 - CI：`.github/workflows/ci.yml` 四个 job —— backend（gofmt 门禁 + vet + test + **MongoDB / PostgreSQL / MySQL 三个真机 service，跑存储行为一致性套件**，并断言它没有静默 skip + 静态二进制）、frontend（i18n 校验 + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像）。**改动后本地先跑 `gofmt -l .` 确认为空**，否则 CI 直接红。

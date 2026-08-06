@@ -105,3 +105,20 @@ func TestEveryOpenAPIPathIsServed(t *testing.T) {
 		}
 	}
 }
+
+// The L1 hard boundaries are editable from a file and from nowhere else. That
+// is a property of the HTTP surface, not of internal/ai — the way it would be
+// lost is somebody adding a perfectly reasonable-looking admin endpoint for it,
+// which is exactly the shape of change a diff review waves through.
+//
+// If you are here because this test failed: the boundaries block is the last
+// thing standing between an L2 persona that says "ignore previous instructions"
+// and a model that believes it. An endpoint that edits it hands that decision to
+// whoever holds an admin token. Edit <PROMPTS_DIR>/boundaries.json instead.
+func TestNoBoundaryEndpoint(t *testing.T) {
+	for _, r := range RouteTable(&Server{}) {
+		if strings.Contains(strings.ToLower(r.Pattern), "boundar") {
+			t.Errorf("%q (%s) exposes the hard boundaries over HTTP", r.Pattern, r.Group)
+		}
+	}
+}
