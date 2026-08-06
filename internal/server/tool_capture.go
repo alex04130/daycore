@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/timeutil"
 )
 
 // The four capture tools: what the prompt has always promised the agent would
@@ -163,7 +164,10 @@ func (s *Server) toolMoodRecord(ctx context.Context, sid, tz, rawArgs string) to
 
 	loc := resolveLocation(tz)
 	now := time.Now().In(loc)
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	// timeutil, not time.Date: on a zone that shifts its clocks at midnight the
+	// naive form returns the PREVIOUS day's 23:00, and "already checked in
+	// today" would then swallow last night's check-in.
+	dayStart := timeutil.StartOfDay(now, loc)
 	if recent, err := s.store.Moods().List(ctx, sid, 50); err == nil {
 		for _, m := range recent {
 			// Rows predating the Source column read as user check-ins.

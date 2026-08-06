@@ -37,6 +37,16 @@ type petrifyVectors struct {
 			Is   string `json:"is"`
 			Why  string `json:"why"`
 		} `json:"startOfDay"`
+		MidnightGap struct {
+			Cases []struct {
+				TZ               string `json:"tz"`
+				Date             string `json:"date"`
+				Note             string `json:"note"`
+				StartOfDay       string `json:"startOfDay"`
+				NaiveWrongAnswer string `json:"naiveWrongAnswer"`
+				StartOfNextDay   string `json:"startOfNextDay"`
+			} `json:"cases"`
+		} `json:"midnightGap"`
 	} `json:"dst"`
 }
 
@@ -221,5 +231,61 @@ func TestFrozen(t *testing.T) {
 	fresh := TimeBlock{Date: "2026-07-26", Time: &thisMorning, DurationMin: &dur}
 	if fresh.Frozen("", now, loc, h) {
 		t.Error("this morning must stay editable — today never freezes while you live it")
+	}
+}
+
+// The midnightGap vectors carry their own tz per case, because the whole point
+// is zones the file's top-level tz (America/New_York) cannot express: ones that
+// shift their clocks AT 00:00, where the local day does not start at midnight.
+//
+// naiveWrongAnswer is in the fixture on purpose. Asserting only the right
+// answer lets a client pass by accident on a machine whose tzdata happens to
+// disagree; asserting that the naive computation gives the recorded WRONG
+// answer proves the case is still live and the fixture still means something.
+func TestMidnightGapVectors(t *testing.T) {
+	v := loadPetrifyVectors(t)
+	if len(v.DST.MidnightGap.Cases) == 0 {
+		t.Fatal("midnightGap section is missing — the fixture lost its only coverage of zones that shift at midnight")
+	}
+	for _, c := range v.DST.MidnightGap.Cases {
+		loc, err := time.LoadLocation(c.TZ)
+		if err != nil {
+			t.Skipf("no tzdata for %s: %v", c.TZ, err)
+		}
+		// Noon on the date in question: an instant that exists in every zone.
+		day, err := time.ParseInLocation("2006-01-02T15:04", c.Date+"T12:00", loc)
+		if err != nil {
+			t.Fatalf("%s %s: %v", c.TZ, c.Date, err)
+		}
+		got := timeutil.StartOfDay(day, loc)
+		want, err := time.Parse(time.RFC3339, c.StartOfDay)
+		if err != nil {
+			t.Fatalf("%s %s: bad startOfDay in fixture: %v", c.TZ, c.Date, err)
+		}
+		if !got.Equal(want) {
+			t.Errorf("StartOfDay(%s %s) = %v, fixture says %v (%s)",
+				c.TZ, c.Date, got, want, c.Note)
+		}
+		gotNext := timeutil.StartOfNextDay(day, loc)
+		wantNext, err := time.Parse(time.RFC3339, c.StartOfNextDay)
+		if err != nil {
+			t.Fatalf("%s %s: bad startOfNextDay in fixture: %v", c.TZ, c.Date, err)
+		}
+		if !gotNext.Equal(wantNext) {
+			t.Errorf("StartOfNextDay(%s %s) = %v, fixture says %v", c.TZ, c.Date, gotNext, wantNext)
+		}
+		if c.NaiveWrongAnswer == "" {
+			continue // control case: the naive form is right here
+		}
+		naive := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
+		wrong, err := time.Parse(time.RFC3339, c.NaiveWrongAnswer)
+		if err != nil {
+			t.Fatalf("%s %s: bad naiveWrongAnswer in fixture: %v", c.TZ, c.Date, err)
+		}
+		if !naive.Equal(wrong) {
+			t.Errorf("%s %s: the naive midnight now gives %v, fixture recorded %v — "+
+				"the hazard this case documents has changed shape, re-measure before editing",
+				c.TZ, c.Date, naive, wrong)
+		}
 	}
 }

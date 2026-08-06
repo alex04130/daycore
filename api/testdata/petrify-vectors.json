@@ -105,6 +105,40 @@
     "startOfDay": [
       { "date": "2026-03-08", "is": "2026-03-08T00:00:00-05:00", "why": "the transition is at 02:00, so midnight itself is unaffected" },
       { "date": "2026-11-01", "is": "2026-11-01T00:00:00-04:00", "why": "same — midnight is before the 01:00 transition" }
-    ]
+    ],
+    "midnightGap": {
+      "$comment": "The class the America/New_York cases above cannot reach, and the reason those cases read as reassuring: they say midnight is unaffected BECAUSE the transition is at 02:00. Some zones shift AT 00:00, and there the local day does not begin at midnight at all. Go folds a wall-clock reading that never happened BACKWARDS, so the obvious time.Date(y,m,d,0,0,0,0,loc) returns 23:00 on the PREVIOUS day — a start-of-day outside its own day. Measured against Go's tzdata. A client that computes midnight naively will disagree with the server about what has frozen and about when a card dies; before this was fixed, an ask-first card created after 23:00 on one of these dates was born already expired.",
+      "cases": [
+        {
+          "tz": "America/Havana",
+          "date": "2026-03-08",
+          "note": "clocks jump 00:00 → 01:00, so the day begins at 01:00",
+          "startOfDay": "2026-03-08T01:00:00-04:00",
+          "naiveWrongAnswer": "2026-03-07T23:00:00-05:00",
+          "startOfNextDay": "2026-03-09T00:00:00-04:00"
+        },
+        {
+          "tz": "America/Santiago",
+          "date": "2026-09-06",
+          "note": "same shape, southern hemisphere spring",
+          "startOfDay": "2026-09-06T01:00:00-03:00",
+          "naiveWrongAnswer": "2026-09-05T23:00:00-04:00",
+          "startOfNextDay": "2026-09-07T00:00:00-03:00"
+        },
+        {
+          "tz": "America/New_York",
+          "date": "2026-03-08",
+          "note": "control — the shift is at 02:00, so midnight exists and nothing moves",
+          "startOfDay": "2026-03-08T00:00:00-05:00",
+          "naiveWrongAnswer": "",
+          "startOfNextDay": "2026-03-09T00:00:00-04:00"
+        }
+      ],
+      "invariants": [
+        "startOfDay(t) falls on the same calendar date as t",
+        "startOfDay(t) <= t < startOfNextDay(t)",
+        "22h <= startOfNextDay(t) − startOfDay(t) <= 26h"
+      ]
+    }
   }
 }

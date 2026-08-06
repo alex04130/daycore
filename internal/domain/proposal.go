@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"daycore/internal/timeutil"
 )
 
 // A Proposal is everything the agent wants to do but has not done — or has done
@@ -196,9 +198,12 @@ func ProposalExpiry(p *Proposal, now time.Time, loc *time.Location, slotStart *t
 	}
 }
 
+// startOfNextDay delegates to timeutil so the day boundary has one definition.
+// It used to compute midnight itself, which meant an ask-first card created
+// after 23:00 on a zone that shifts its clocks AT midnight was capped at a
+// boundary in the past — born expired. See timeutil.StartOfDay.
 func startOfNextDay(now time.Time, loc *time.Location) time.Time {
-	y, m, d := now.In(loc).Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, loc).AddDate(0, 0, 1)
+	return timeutil.StartOfNextDay(now, loc)
 }
 
 // ErrActFirstNeedsUndo rejects a proposal that claims silence means yes without

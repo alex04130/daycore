@@ -167,3 +167,37 @@ func TestProposalExpiry(t *testing.T) {
 		t.Errorf("late card should clamp to midnight, got %v", got)
 	}
 }
+
+// A card must never be born expired. The day-boundary cap used to be computed
+// with a naive time.Date(y, m, d, 0, 0, 0, 0, loc), which folds backwards on a
+// date whose local midnight does not exist — so in a zone that shifts its
+// clocks AT 00:00, "never past the day boundary" capped an evening card at a
+// boundary in the past. Measured before the fix: a card created at 23:30 in
+// America/Havana on 2026-03-08 expired thirty minutes before it existed.
+//
+// The check runs across a whole year in the awkward zones rather than only on
+// the transition day, because the point is the invariant, not the anecdote.
+func TestProposalExpiryIsNeverInThePast(t *testing.T) {
+	for _, zone := range []string{
+		"America/Havana", "America/Santiago", "Asia/Beirut",
+		"America/New_York", "Asia/Shanghai",
+	} {
+		loc, err := time.LoadLocation(zone)
+		if err != nil {
+			t.Skipf("no tzdata for %s: %v", zone, err)
+		}
+		day := time.Date(2026, 1, 1, 0, 0, 0, 0, loc)
+		for i := 0; i < 366; i++ {
+			for _, hour := range []int{0, 6, 12, 18, 23} {
+				now := time.Date(day.Year(), day.Month(), day.Day(), hour, 30, 0, 0, loc)
+				p := &Proposal{Level: LevelL2, Kind: KindCard, TTLPolicy: TTLSilenceRejects}
+				got := ProposalExpiry(p, now, loc, nil)
+				if !got.After(now) {
+					t.Fatalf("%s %v: card created at %v expires at %v — %v of life",
+						zone, day.Format("2006-01-02"), now, got, got.Sub(now))
+				}
+			}
+			day = day.AddDate(0, 0, 1)
+		}
+	}
+}

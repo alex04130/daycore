@@ -120,6 +120,22 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 **DST 行为是实测的，不是推的**（Go 文档称空洞情形「not guaranteed」，所以观测值即契约）：spring-forward 空洞 Go **向前回退**（`02:30` → `01:30 EST`，不是推到 03:30）；fall-back 歧义取**第一次**（EDT）。两者与 5 个场景一起固化在 `api/testdata/petrify-vectors.json`，Go 侧 `phase_test.go` 读同一份跑表驱动，将来 TS 侧 vendored 同一份 —— 这是防「两颗脑子」的地基。
 
+⚠️ **「向前回退」这条会咬到日界本身**（2026-08-03 修，向量升到 v2）。有一整类时区**在 00:00 换挡**（America/Havana、America/Santiago 每年都是），那天的本地午夜**不存在**；`time.Date(y,m,d,0,0,0,0,loc)` 于是回退成**前一天 23:00** —— 一个不在自己那天里的「日始」。
+
+原来的向量只有 `America/New_York`，而那里换挡在 02:00，所以 `dst.startOfDay` 两条的 `why` 都写着「午夜不受影响」—— 问题被想到过，只在不咬人的时区回答了。
+
+三处都建在这个函数上，三处都错：
+
+| 位置 | 后果 |
+|---|---|
+| `timeutil.StartOfDay` → `PetrifyLine` | 石化线的午夜那一半提前一小时 |
+| `domain.startOfNextDay` → `ProposalExpiry` | **卡片出生即过期** —— 换挡日 23:00 后建的 ask-first 卡 `ExpiresAt` 落在过去（实测存活 −30 分钟） |
+| `tool_capture.go` 的 `mood_record` | 「今天打过卡了吗」把前一晚 23:00 之后的打卡算成今天 |
+
+现在**只有一份定义**：`timeutil.StartOfDay` / `StartOfNextDay`，另两处委托它。`StartOfNextDay` 不用 `AddDate(0,0,1)` —— 那个调用本身会被同一个空洞折回去（Havana `2026-03-07 00:30` 加一天落在不存在的 `03-08 00:30`，折回 `03-07 23:30`，比出发点还早）；改成用 `time.Date(y, m, d+1, 12, ...)` 锚在正午（没有任何时区偏移过 ±12 小时）。
+
+向量新增 `dst.midnightGap` 一节，**同时记录正确答案与朴素写法的错误答案** —— 只断言正确值的话，某台机器 tzdata 恰好不同就会「碰巧通过」；断言错误值仍是那个错误值，才证明这个案例还活着。
+
 ## Proposal（提案统一资源，2026-07-26 建模）
 
 `internal/domain/proposal.go`。**虚影 / 确认卡 / 决策卡 / 集成端审批是同一个对象**，待发池就是这张表 `state=pending` 的过滤视图 —— 不建 `/api/outbox`，靠 `kind`(timed/card/decision) + `level`(L1/L2/L3) + `delivered_at` 三个字段区分，不靠三张表。
