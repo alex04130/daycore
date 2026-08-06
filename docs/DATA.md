@@ -348,6 +348,20 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 - `rhythm_days` **一人一天一行，不是一个信号一行**。心跳每分钟一次就是每人每天约 1400 行，而 `Learn` 只读每天的首尾；`CurrentRun` 只要「这段连续清醒从何时开始」，那是 `rhythm_profiles` 上两列的 O(1) 维护。`internal/rhythm/incremental.go` 的 `Day`/`Live` 是这一对，与原始信号版本共用同一个核（`LearnDays`），有测试逐步比对两者。
 - `rapport_states` 的 `scores_json` 用 JSON 不用四对具名列：域列表今天是闭的，但一域一列会让加一个域变成三方言迁移，而且没有任何跨会话查询能从「可查询」里得到好处。
 - `rapport.NewFolderFrom(scores, resolve)` 的 `resolve` 不是可选的 —— 没有它，增量追赶会跳过「原 op 在游标之前」的 revert，缓存与重放分叉，而缓存唯一的存在理由就是它能靠重放重建。存储层用 `OperationLogRepository.Get` 填它。
+- ⚠️ **账本的时间戳不是提交序，所以键集游标在「现在」附近不安全**（2026-08-03 实测确认）。`OpLogs().Add` 在 Go 侧、写库**之前**取 `created_at`（全包无事务，没有更靠后的位置可放）。两个写者相隔微秒取戳，可以按相反顺序提交 —— SQLite 上后者可能压在写锁上等满 `busy_timeout`（5 秒），而它的戳早就取好了。消费者一旦把游标推到「当前能看到的最新行」，所有取戳更早、落地更晚的行就永远落在 `created_at > cursor` 之外。
+
+  **不是罕见交错**：8 个并发写者 + 一个增量消费者，480 行里有 34–39 行从未被投递，可复现 —— 约 8%。
+
+  修法是**成对的两半**，缺一比都不做更糟（半修的追赶看起来是对的）：
+
+  | 半 | 在哪 | 不做的后果 |
+  |---|---|---|
+  | 游标不推进到 `now − OpLogVisibilityLag`（30s） | `domain.AdvanceCursor` | 永久丢行 |
+  | 折叠按 op id 幂等 | `rapport.Folder.folded` | 重读尾部导致每轮追赶都把同一条 accept 再记一次，信任凭空上涨 |
+
+  两条测试各自盯一半，摘掉任一半对应测试立刻红：`sqlstore/cursor_safety_test.go`（朴素 vs 安全两跑，朴素那跑若不再丢行会 skip 并提示复查 lag 是否还需要）、`rapport` 的 `TestFoldIsIdempotentPerOperation`。
+
+  ⚠️ 这条今天是**潜伏**的 —— `Rapport()` 零生产调用方，游标从未被推进过。它在接线的那一刻变活，所以接线批次必须带着这两半一起落。
 
 ## 心情窗口（`internal/mood/`，体验内核 §12.6，2026-07-26）
 

@@ -307,3 +307,59 @@ func TestUnresolvableOriginIsSkipped(t *testing.T) {
 		t.Errorf("value = %v, want untouched %v", got, base)
 	}
 }
+
+// A catch-up that is safe against the ledger's unordered timestamps cannot
+// advance its cursor into the window where rows may still be landing, so it
+// re-reads that tail on every pass (domain.AdvanceCursor). Folding therefore
+// has to be idempotent per operation id, or trust climbs a little every time
+// the daemon wakes up and nobody can point at what earned it.
+//
+// The two halves are a pair. Remove the dedup and this test fails; remove the
+// cursor lag and TestCursorAdvanceSurvivesUnorderedTimestamps fails. Either
+// alone is worse than neither, because a half-fixed catch-up looks correct.
+func TestFoldIsIdempotentPerOperation(t *testing.T) {
+	ops := []domain.OperationLog{
+		{ID: "1", Actor: domain.ActorUser, Action: ActionProposalAccept, Domain: domain.OpDomainSchedule},
+		{ID: "2", Actor: domain.ActorUser, Action: ActionProposalReject, Domain: domain.OpDomainCare},
+		{ID: "3", Actor: domain.ActorAgent, Action: "plan_add", Domain: domain.OpDomainSchedule},
+		{ID: "4", Actor: domain.ActorSystem, Action: ActionRevert, TargetID: "3"},
+	}
+	once := NewFolder()
+	for _, op := range ops {
+		once.Fold(op)
+	}
+
+	// Same ledger, but every page overlaps the previous one by half — the shape
+	// a lagging cursor actually produces.
+	twice := NewFolder()
+	for i := range ops {
+		twice.Fold(ops[i])
+		if i > 0 {
+			twice.Fold(ops[i-1])
+		}
+	}
+
+	for _, d := range Domains {
+		a, b := once.Scores().Get(d), twice.Scores().Get(d)
+		if a.Value != b.Value || a.Evidence != b.Evidence {
+			t.Errorf("domain %s: one pass gives {%.4f, %d}, overlapping passes give {%.4f, %d}",
+				d, a.Value, a.Evidence, b.Value, b.Evidence)
+		}
+	}
+
+	// And the whole ledger replayed twice end to end, which is what a resumed
+	// catch-up from a stale cursor looks like.
+	full := NewFolder()
+	for i := 0; i < 2; i++ {
+		for _, op := range ops {
+			full.Fold(op)
+		}
+	}
+	for _, d := range Domains {
+		a, b := once.Scores().Get(d), full.Scores().Get(d)
+		if a.Value != b.Value || a.Evidence != b.Evidence {
+			t.Errorf("domain %s: replaying the ledger twice changed it: {%.4f, %d} vs {%.4f, %d}",
+				d, a.Value, a.Evidence, b.Value, b.Evidence)
+		}
+	}
+}
