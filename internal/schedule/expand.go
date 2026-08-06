@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/timeutil"
 )
 
 const dateLayout = "2006-01-02"
@@ -184,4 +185,47 @@ func containsInt(xs []int, x int) bool {
 // weekStart returns the Sunday beginning d's week.
 func weekStart(d time.Time) time.Time {
 	return d.AddDate(0, 0, -int(d.Weekday()))
+}
+
+// SpillsInto reports whether a block that belongs to planDate is still running
+// at the start of the next day, and is therefore part of that day too.
+//
+// Consensus 25: a cross-midnight block counts on BOTH days — one row of data,
+// rendered and counted twice. The 1 a.m. finish belongs to the evening it
+// continued and to the day it landed in; picking one would either hide it from
+// the day the user remembers or move it off the day it started.
+//
+// It is a read-time derivation, like petrification and the rest: no second row,
+// no duplication in storage, nothing to migrate if the rule changes.
+func SpillsInto(b domain.TimeBlock, planDate string, loc *time.Location) bool {
+	start, end, ok := b.Span(planDate, loc)
+	if !ok || b.Hidden {
+		return false
+	}
+	return end.After(timeutil.StartOfNextDay(start, loc))
+}
+
+// SpillIns returns the blocks from the day before `date` that run past midnight
+// into it, tagged so the reader can tell them apart.
+//
+// The tag matters: a spilled block is a VIEW of yesterday's row. Writing to it
+// as though it belonged to today would create a second row and break the "one
+// row of data" half of the consensus, so the copies carry their own date and
+// the caller is expected to leave them alone.
+func SpillIns(prevDay []domain.TimeBlock, prevDate string, loc *time.Location) []domain.TimeBlock {
+	var out []domain.TimeBlock
+	for _, b := range prevDay {
+		if !SpillsInto(b, prevDate, loc) {
+			continue
+		}
+		cp := b
+		// Its own date, always — a spilled block is read on a day that is not
+		// the one it belongs to, and an empty date would make Span resolve it
+		// against the WRONG day and move it twenty-four hours.
+		if cp.Date == "" {
+			cp.Date = prevDate
+		}
+		out = append(out, cp)
+	}
+	return out
 }

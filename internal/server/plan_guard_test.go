@@ -400,3 +400,110 @@ func TestPlanLockEndpoint(t *testing.T) {
 		t.Errorf("an unknown block should be 404, got %d", rec.Code)
 	}
 }
+
+// Re-fishing: the client says WHAT it is retrying, the server works out how
+// deep the chain is. Taking the count from the request would make the cap
+// decorative — a client that reset its own counter could be offered the same
+// undone thing forever.
+func TestRescheduleChainIsServerSide(t *testing.T) {
+	s, sid := newAgentTestServer(t)
+	ctx := context.Background()
+	loc := s.planLocation()
+	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	today := time.Now().In(loc).Format("2006-01-02")
+
+	seedBlock(t, s, sid, yesterday, domain.TimeBlock{
+		ID: "run1", Title: "跑步", Type: domain.BlockTask, Time: hhmm("07:00"), DurationMin: mins(30),
+	})
+
+	// A retry that lies about its depth is corrected, not believed.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, today, "zh-CN", planAction{
+		Action: "add",
+		Block: map[string]any{
+			"id": "run2", "title": "跑步", "type": "task", "time": "07:00", "duration_min": 30,
+			"rescheduled_from": "run1", "reschedule_count": 0,
+		},
+	}, domain.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.store.DayPlans().Get(ctx, sid, today)
+	got := p.Blocks[0]
+	if got.RescheduledFrom != "run1" || got.RescheduleCount != 1 {
+		t.Fatalf("chain = %q/%d, want run1/1", got.RescheduledFrom, got.RescheduleCount)
+	}
+
+	// A third attempt keeps pointing at the ROOT, not at the previous try.
+	tomorrow := time.Now().In(loc).AddDate(0, 0, 1).Format("2006-01-02")
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, tomorrow, "zh-CN", planAction{
+		Action: "add",
+		Block: map[string]any{
+			"id": "run3", "title": "跑步", "type": "task", "time": "07:00", "duration_min": 30,
+			"rescheduled_from": "run2",
+		},
+	}, domain.ActorUser); err != nil {
+		t.Fatal(err)
+	}
+	p, _ = s.store.DayPlans().Get(ctx, sid, tomorrow)
+	if p.Blocks[0].RescheduledFrom != "run1" || p.Blocks[0].RescheduleCount != 2 {
+		t.Errorf("chain = %q/%d, want run1/2 — it should point at what the user wanted, not the last attempt",
+			p.Blocks[0].RescheduledFrom, p.Blocks[0].RescheduleCount)
+	}
+}
+
+func TestRescheduleRefusalsAndFallbacks(t *testing.T) {
+	s, sid := newAgentTestServer(t)
+	ctx := context.Background()
+	loc := s.planLocation()
+	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
+	today := time.Now().In(loc).Format("2006-01-02")
+
+	// A booking's time WAS the point; a missed lecture is missed.
+	seedBlock(t, s, sid, yesterday, domain.TimeBlock{
+		ID: "lec", Title: "高等数学（课）", Type: domain.BlockAppointment,
+		Time: hhmm("09:00"), DurationMin: mins(60),
+	})
+	_, _, _, err := s.applyPlanPatch(ctx, sid, today, "zh-CN", planAction{
+		Action: "add",
+		Block:  map[string]any{"id": "lec2", "title": "高等数学", "type": "task", "rescheduled_from": "lec"},
+	}, domain.ActorUser)
+	var blocked *planBlocked
+	if !errors.As(err, &blocked) || blocked.Code != "refish_capped" {
+		t.Errorf("re-fishing a booking: got %v, want a refusal", err)
+	}
+
+	// At the cap, the system stops asking. That is the anti-shame half: after a
+	// few honest tries the question becomes an accusation.
+	seedBlock(t, s, sid, yesterday, domain.TimeBlock{
+		ID: "tired", Title: "整理房间", Type: domain.BlockTask,
+		Time: hhmm("20:00"), DurationMin: mins(30), RescheduleCount: domain.RescheduleCap,
+	})
+	_, _, _, err = s.applyPlanPatch(ctx, sid, today, "zh-CN", planAction{
+		Action: "add",
+		Block:  map[string]any{"id": "tired2", "title": "整理房间", "type": "task", "rescheduled_from": "tired"},
+	}, domain.ActorUser)
+	if !errors.As(err, &blocked) || blocked.Code != "refish_capped" {
+		t.Errorf("at the cap: got %v, want a refusal", err)
+	}
+
+	// An origin nobody can find drops the claim, not the block: the thing the
+	// user is adding still wants to exist.
+	if _, _, _, err := s.applyPlanPatch(ctx, sid, today, "zh-CN", planAction{
+		Action: "add",
+		Block:  map[string]any{"id": "orphan", "title": "读书", "type": "task", "rescheduled_from": "long-gone"},
+	}, domain.ActorUser); err != nil {
+		t.Fatalf("an unknown origin should not fail the write: %v", err)
+	}
+	p, _ := s.store.DayPlans().Get(ctx, sid, today)
+	var orphan *domain.TimeBlock
+	for i := range p.Blocks {
+		if p.Blocks[i].ID == "orphan" {
+			orphan = &p.Blocks[i]
+		}
+	}
+	if orphan == nil {
+		t.Fatal("the block was dropped along with its bad claim")
+	}
+	if orphan.RescheduledFrom != "" || orphan.RescheduleCount != 0 {
+		t.Errorf("a chain pointing nowhere survived: %q/%d", orphan.RescheduledFrom, orphan.RescheduleCount)
+	}
+}

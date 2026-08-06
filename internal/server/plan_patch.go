@@ -70,6 +70,13 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date, locale string, a
 		matched = len(affected)
 	}
 
+	// A retry names what it is retrying; the server works out the rest. Done
+	// here rather than in applyPlanAction because it needs the ORIGINAL block,
+	// which only exists before the action runs.
+	if err := s.resolveReschedule(ctx, sid, blocks, &action); err != nil {
+		return nil, "", 0, err
+	}
+
 	// The gate, before any mutation and before the keep_manual flip: a refused
 	// write must leave the plan exactly as it found it, including origin.
 	if err := s.guardPlanWrite(blocks, date, action, actor, time.Now(), s.planLocation()); err != nil {

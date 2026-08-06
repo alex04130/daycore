@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -65,6 +66,8 @@ func init() {
 
 func (e *planBlocked) message(locale string) string {
 	switch {
+	case e.Code == "refish_capped":
+		return i18n.T(keyPlanRefishCapped, locale)
 	case e.Code == "petrified":
 		return i18n.T(keyPlanPetrified, locale)
 	case e.LockLevel == domain.LockSoft:
@@ -230,4 +233,99 @@ func (s *Server) planLocation() *time.Location {
 		return time.UTC
 	}
 	return resolveLocation(s.cfg.WorkerDefaultTZ)
+}
+
+const keyPlanRefishCapped = "plan.refish.capped"
+
+func init() {
+	i18n.Register(keyPlanRefishCapped, i18n.Text{
+		"zh-CN": "这件事已经改期够多次了 —— 也许它现在不重要，那也没关系",
+		"en-US": "This has been moved enough times — maybe it is not the moment, and that is fine",
+	})
+}
+
+// resolveReschedule fills in a retry's chain from the block it names.
+//
+// The caller says only WHAT it is retrying (`rescheduled_from`); the depth and
+// the root come from the original row. Taking the count from the request would
+// make RescheduleCap decorative — a client that reset its own counter could be
+// offered the same undone thing forever, which is the debt spiral the cap
+// exists to prevent.
+//
+// Refusing at the cap is a product decision, not a resource limit: after a few
+// honest tries, "you still have not done this" stops being information and
+// becomes an accusation. The refusal text says so.
+func (s *Server) resolveReschedule(ctx context.Context, sid string, blocks []map[string]any, action *planAction) error {
+	if action.Action != "add" || action.Block == nil {
+		return nil
+	}
+	from, _ := action.Block["rescheduled_from"].(string)
+	if from == "" {
+		return nil
+	}
+	// The original is usually on another day — that is the whole point of a
+	// retry — so look past today's blocks when it is not here.
+	original, ok := findBlockByID(blocks, from)
+	if !ok {
+		var err error
+		original, err = s.findBlockAcrossDays(ctx, sid, from)
+		if err != nil || original.ID == "" {
+			// An unknown origin is not worth failing the write over: the block
+			// still wants to exist. Drop the claim rather than the block, so
+			// nothing downstream reads a chain that points nowhere.
+			delete(action.Block, "rescheduled_from")
+			delete(action.Block, "reschedule_count")
+			return nil
+		}
+	}
+	if !original.Refishable() {
+		return &planBlocked{Code: "refish_capped", BlockID: original.ID}
+	}
+	root, count := domain.RescheduleChain(original)
+	action.Block["rescheduled_from"] = root
+	action.Block["reschedule_count"] = count
+	return nil
+}
+
+func findBlockByID(blocks []map[string]any, id string) (domain.TimeBlock, bool) {
+	for _, raw := range blocks {
+		if got, _ := raw["id"].(string); got != id {
+			continue
+		}
+		b, err := blockFromMap(raw)
+		return b, err == nil
+	}
+	return domain.TimeBlock{}, false
+}
+
+// RescheduleLookbackDays bounds the search for a retry's original.
+//
+// Re-fishing is about the recent past — the run you meant to do on Tuesday,
+// not something from last term. A bounded window keeps this one range query
+// instead of a scan, and the bound is not arbitrary: past the petrify horizon
+// plus a couple of weeks, an undone block has stopped being a plan and become
+// a record, and offering it a new slot would be asking about something the
+// user has already moved on from.
+const RescheduleLookbackDays = 21
+
+// findBlockAcrossDays looks for a block in the recent past. Not finding it is
+// an ordinary answer, not an error — the id may be stale, or from further back
+// than the window.
+func (s *Server) findBlockAcrossDays(ctx context.Context, sid, blockID string) (domain.TimeBlock, error) {
+	loc := s.planLocation()
+	now := time.Now().In(loc)
+	from := now.AddDate(0, 0, -RescheduleLookbackDays).Format("2006-01-02")
+	to := now.Format("2006-01-02")
+	plans, err := s.store.DayPlans().Range(ctx, sid, from, to)
+	if err != nil {
+		return domain.TimeBlock{}, err
+	}
+	for _, p := range plans {
+		for _, b := range p.Blocks {
+			if b.ID == blockID {
+				return b, nil
+			}
+		}
+	}
+	return domain.TimeBlock{}, nil
 }

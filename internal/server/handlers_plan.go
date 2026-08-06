@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -72,6 +73,11 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 		}
 		// No stored plan, but rules produce blocks: synthesize a non-persisted
 		// plan so standing commitments are always visible.
+		occurrences = append(occurrences, s.spillInsFor(ctx, sid, date, locale)...)
+		if len(occurrences) == 0 {
+			s.writeJSON(w, http.StatusOK, nil)
+			return
+		}
 		sortBlocks(occurrences)
 		s.normalizePlanBlocks(occurrences, date, "", locale)
 		localizeLockReasons(occurrences, locale)
@@ -85,6 +91,7 @@ func (s *Server) handlePlanGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plan.Blocks = schedule.Visible(schedule.Merge(plan.Blocks, occurrences))
+	plan.Blocks = append(plan.Blocks, s.spillInsFor(ctx, sid, date, locale)...)
 	sortBlocks(plan.Blocks)
 	s.normalizePlanBlocks(plan.Blocks, date, "", locale) // backfill UTC anchors + locks for legacy/rule blocks
 	localizeLockReasons(plan.Blocks, locale)
@@ -364,4 +371,26 @@ func (s *Server) handlePlanLock(w http.ResponseWriter, r *http.Request) {
 	updated.Blocks = schedule.Visible(updated.Blocks)
 	localizeLockReasons(updated.Blocks, locale)
 	s.writeJSON(w, http.StatusOK, updated)
+}
+
+// spillInsFor returns the previous day's blocks that are still running when
+// this date begins (consensus 25: a cross-midnight block counts on both days).
+//
+// A read-time derivation, deliberately: storing a second row would make the
+// two copies drift the first time someone edited one, and "数据一条" is half
+// the consensus. Storage failures degrade to "no spill-ins" — a missing
+// yesterday should not fail today.
+func (s *Server) spillInsFor(ctx context.Context, sid, date, locale string) []domain.TimeBlock {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return nil
+	}
+	prev := d.AddDate(0, 0, -1).Format("2006-01-02")
+	plan, err := s.store.DayPlans().Get(ctx, sid, prev)
+	if err != nil {
+		return nil
+	}
+	blocks := schedule.Merge(plan.Blocks, s.ruleOccurrences(ctx, sid, prev, prev))
+	s.normalizePlanBlocks(blocks, prev, "", locale)
+	return schedule.SpillIns(schedule.Visible(blocks), prev, s.planLocation())
 }
