@@ -83,6 +83,15 @@ func (h mongoHarness) BackdateJobRuns(t *testing.T, sessionID string, d time.Dur
 	}
 }
 
+func (h mongoHarness) BackdateProposals(t *testing.T, sessionID string, at time.Time) {
+	t.Helper()
+	if _, err := h.s.c("proposals").UpdateMany(context.Background(),
+		bson.M{"session_id": sessionID},
+		bson.M{"$set": bson.M{"updated_at": at.UTC()}}); err != nil {
+		t.Fatalf("backdate proposals: %v", err)
+	}
+}
+
 func (h mongoHarness) ForceProposalCreatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	if _, err := h.s.c("proposals").UpdateMany(context.Background(),

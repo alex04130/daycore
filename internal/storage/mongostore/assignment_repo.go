@@ -123,3 +123,14 @@ func (r assignmentRepo) SetStatus(ctx context.Context, sessionID, id, status str
 	}
 	return nil
 }
+
+func (r assignmentRepo) Delete(ctx context.Context, sessionID, id string) error {
+	res, err := r.c("assignments").DeleteOne(ctx, bson.M{"_id": id, "session_id": sessionID})
+	if err != nil {
+		return err
+	}
+	if res.DeletedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}

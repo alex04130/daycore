@@ -25,7 +25,7 @@
 
 **能力发现一律靠可选接口断言**，不进 `AIProvider`：`PartCarrier`（`CarriagesFor`）、`ToolStreamer`、`ImageGenerator`、`SpeechSynthesizer`、`Transcriber`、`Embedder`，各有 `As*` 助手函数。**沉默一律当「不支持」** —— 猜低只多一次 base64 往返，猜高是用户看着模型无视了他的附件。
 
-`ContentPart{Type, Text, MIME, Data, URL, FileID, Name}` 是消息里的一段；`ChatResponse.Parts` 装产物，`ChatResponse.Usage` 装用量（含 `CachedTokens` / `ReasoningTokens`）。⚠️ `Usage` **目前没有任何写入方** —— `AICallLogRepository` 那张表因此永远是空的（见 `ROADMAP.md` 已知缺口）。
+`ContentPart{Type, Text, MIME, Data, URL, FileID, Name}` 是消息里的一段；`ChatResponse.Parts` 装产物，`ChatResponse.Usage` 装用量（含 `CachedTokens` / `ReasoningTokens`）。三个格式的 Chat 与 ChatStream 都解析 usage（流式经 `ai.Chunk.Usage` 末帧 → `StreamAccumulator` 汇总；openai 发 `stream_options.include_usage`，anthropic 拼 message_start/message_delta，ollama 取末帧计数）。server 侧 `s.logAICall`（best-effort）把**每一次模型调用**落进 `ai_call_logs`：9 个非流式端点 + companion 每轮一条。Catalog 另有四个能力选择器（`Transcriber()`/`SpeechSynthesizer()`/`ImageGenerator()`/`Embedder()`，断言遍历目录首个命中），`GET /api/version` 的 `features` 字段由它们派生——端侧据此发现本部署能力，不硬编码假设。
 
 `GeneratedMedia` 拿的是字节不是 `blob.Ref`：这一层不许依赖存储层，而且 OpenAI 的图像端点现在只返回 base64，字节本来就是实际到手的东西。落不落盘由调用方决定。
 

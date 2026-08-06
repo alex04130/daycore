@@ -152,8 +152,18 @@ type Origin func(id string) (actor, domain string, ok bool)
 // doing — and it is scored against the domain of that original operation, not
 // the revert's own.
 type Folder struct {
-	scores  Scores
-	seen    map[string]seenOp
+	scores Scores
+	// seen answers "what was this operation" — actor and domain — and is filled
+	// both by folding and by resolve. It is a lookup cache, not a record of
+	// what has been counted.
+	seen map[string]seenOp
+	// folded records what HAS been counted, which is a different question. A
+	// catch-up that is safe against the ledger's unordered timestamps has to
+	// re-read its tail (see domain.AdvanceCursor), so the same operation
+	// arrives more than once and must move the score only the first time.
+	// Keeping this separate from seen matters: seen holds ids that were merely
+	// looked up as some revert's target and never folded at all.
+	folded  map[string]bool
 	resolve Origin
 }
 
@@ -165,7 +175,7 @@ type seenOp struct {
 // NewFolder starts from the cold-start baseline. A full replay needs no Origin:
 // every operation a revert can name has already passed through Fold.
 func NewFolder() *Folder {
-	return &Folder{scores: Cold(), seen: map[string]seenOp{}}
+	return &Folder{scores: Cold(), seen: map[string]seenOp{}, folded: map[string]bool{}}
 }
 
 // NewFolderFrom resumes from a cached snapshot, for catching up rather than
@@ -184,7 +194,7 @@ func NewFolderFrom(s Scores, resolve Origin) *Folder {
 			cp[d] = cold
 		}
 	}
-	return &Folder{scores: cp, seen: map[string]seenOp{}, resolve: resolve}
+	return &Folder{scores: cp, seen: map[string]seenOp{}, folded: map[string]bool{}, resolve: resolve}
 }
 
 // Fold applies one operation. Operations must arrive oldest-first; a revert
@@ -194,6 +204,14 @@ func (f *Folder) Fold(op domain.OperationLog) {
 	if d == "" {
 		d = domain.OpDomainOf(op.Action)
 	}
+	// Idempotent per id. A safe catch-up cannot advance its cursor into the
+	// window where rows may still be in flight, so it re-reads that tail every
+	// pass; without this guard each pass would bump the same accept again and
+	// trust would drift upward for no reason anyone could point at.
+	if f.folded[op.ID] {
+		return
+	}
+	f.folded[op.ID] = true
 	f.seen[op.ID] = seenOp{actor: op.Actor, domain: d}
 
 	switch op.Action {

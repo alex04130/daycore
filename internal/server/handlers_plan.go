@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 	"daycore/internal/schedule"
 )
 
@@ -135,6 +136,23 @@ func (s *Server) handlePlanUpsert(w http.ResponseWriter, r *http.Request) {
 // Rule occurrences for the date are materialized into the stored plan first, so
 // actions can target them and their state (completion, edits, tombstones)
 // persists.
+
+const (
+	keyPlanEmptyMatch    = "plan.patch.emptyMatch"
+	keyPlanUnknownAction = "plan.patch.unknownAction"
+)
+
+func init() {
+	i18n.Register(keyPlanEmptyMatch, i18n.Text{
+		"zh-CN": "match 不能为空——不带条件的 update/remove 会波及全天所有块",
+		"en-US": "match must not be empty — an unconditional update/remove would hit every block of the day",
+	})
+	i18n.Register(keyPlanUnknownAction, i18n.Text{
+		"zh-CN": "action 必须是 add / update / remove 之一",
+		"en-US": "action must be one of add / update / remove",
+	})
+}
+
 func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)
 	if !ok {
@@ -146,6 +164,21 @@ func (s *Server) handlePlanPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Date == "" {
 		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 date 或 action")
+		return
+	}
+	// The tool layer refuses an empty match; the HTTP layer did not, so a
+	// {"action":"remove","match":{}} request tombstoned the whole day. The
+	// guard belongs on both sides of the door — a client bug should not be
+	// able to reach what the model is not allowed to reach.
+	switch body.Action.Action {
+	case "update", "remove":
+		if len(body.Action.Match) == 0 {
+			s.writeErr(w, http.StatusBadRequest, "empty_match", i18n.T(keyPlanEmptyMatch, s.requestLocale(r)))
+			return
+		}
+	case "add":
+	default:
+		s.writeErr(w, http.StatusBadRequest, "unknown_action", i18n.T(keyPlanUnknownAction, s.requestLocale(r)))
 		return
 	}
 	updated, _, _, err := s.applyPlanPatch(r.Context(), sid, body.Date, body.Action, domain.ActorUser)

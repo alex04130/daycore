@@ -47,10 +47,13 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
 		return
 	}
-	resp, err := s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages:    []ai.Message{{Role: ai.RoleUser, Content: sys}},
 		Temperature: 0.7, MaxTokens: 300,
 	})
+	s.logAICall(ctx, sessionIDFrom(r.Context()), epMoodReply, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai mood", "err", err)
 		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "response": "遇到了点问题，稍后再试一下吧。"})

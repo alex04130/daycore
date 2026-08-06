@@ -193,13 +193,16 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	if locale == "en-US" {
 		userMsg = "Generate the plan."
 	}
-	resp, err := s.catalog.Planner().Chat(ctx, ai.ChatRequest{
+	planner := s.catalog.Planner()
+	start := time.Now()
+	resp, err := planner.Chat(ctx, ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: sys},
 			{Role: ai.RoleUser, Content: userMsg},
 		},
 		Temperature: 0.3, MaxTokens: 8192, JSONMode: true,
 	})
+	s.logAICall(ctx, sid, epAutoPlan, planner.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai auto-plan", "err", err)
 		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "自主规划出了点问题，请稍后再试"})
@@ -223,18 +226,24 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	for d := fromT; !d.After(toT); d = d.AddDate(0, 0, 1) {
 		date := d.Format("2006-01-02")
 		blocks := append(keptByDate[date], newBlocks[date]...)
-		if len(blocks) == 0 {
-			continue
+		old, existed := storedByDate[date]
+		if len(blocks) == 0 && (!existed || len(old) == 0) {
+			continue // nothing generated and nothing stale to clear
 		}
+		// An empty result must still be persisted when a stored plan exists:
+		// skipping the upsert left the old auto blocks in place, which is the
+		// opposite of what replace_all (and keep_manual on an all-auto day)
+		// promised.
 		sortBlocks(blocks)
-		// Recovery snapshot: the blocks being overwritten, one log per date.
-		if old, existed := storedByDate[date]; existed {
-			s.logOp(ctx, &domain.OperationLog{
-				SessionID: sid, Actor: domain.ActorAgent, Action: "plan_autoplan", Date: date,
-				Summary: fmt.Sprintf("%s: replaced %d blocks", date, len(old)),
-				Detail:  marshalCompact(map[string]any{"before": old}),
-			})
-		}
+		// Every regenerated date lands in the ledger, including first-time
+		// plans (before=nil) and days the regeneration emptied — a write that
+		// is not logged is a write that cannot be reverted, and "replan my
+		// week" is exactly the operation a new user must be able to take back.
+		s.logOp(ctx, &domain.OperationLog{
+			SessionID: sid, Actor: domain.ActorAgent, Action: "plan_autoplan", Date: date,
+			Summary: fmt.Sprintf("%s: replaced %d blocks", date, len(old)),
+			Detail:  marshalCompact(map[string]any{"before": old}),
+		})
 		planNote := noteByDate[date]
 		if note != "" {
 			planNote = &note

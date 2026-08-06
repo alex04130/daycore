@@ -49,6 +49,12 @@ type Harness interface {
 	// ForceProposalCreatedAt sets every proposal in a session to one instant, so
 	// the same-millisecond tie two daemons hit routinely is deterministic here.
 	ForceProposalCreatedAt(t *testing.T, sessionID string, at time.Time)
+	// BackdateProposals moves updated_at, which is the column retention is
+	// measured from — a record is kept for so long after it SETTLED, not after
+	// it was created. Separate from ForceProposalCreatedAt because the two
+	// columns answer different questions and a helper that quietly moved both
+	// would let a Prune test pass without pruning anything.
+	BackdateProposals(t *testing.T, sessionID string, at time.Time)
 }
 
 // Factory returns a fresh Harness.
@@ -106,6 +112,11 @@ var cases = []suiteCase{
 	{"OpLog/ScanIsOldestFirstFromACursor", opLogScan},
 	{"Upsert/EmptyCanvasIDIsRefused", upsertEmptyKey},
 	{"List/LimitDefaultAndCeilingAgree", listLimitsAgree},
+	{"Delete/ScopedToSessionAndReportsAbsence", deleteScopeAndAbsence},
+	{"Proposal/FilterDimensionsAndCount", proposalFilterDimensions},
+	{"Proposal/StackIsAConjunctionNotAStamp", proposalStackIsAConjunction},
+	{"Proposal/PruneSparesPending", proposalPruneSparesPending},
+	{"Proposal/OwnerInstanceIsQueryable", proposalOwnerInstanceIsQueryable},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -466,7 +477,7 @@ func proposalNilEmpty(t *testing.T, h Harness) {
 	if back.DeliveredAt != nil && !back.DeliveredAt.IsZero() {
 		t.Errorf("a zero-time pointer became %v", back.DeliveredAt)
 	}
-	pool, err := s.Proposals().List(bg(), domain.ProposalFilter{SessionID: "s1", Undelivered: true})
+	pool, err := s.Proposals().List(bg(), domain.ProposalFilter{SessionID: "s1", Delivered: domain.PresenceUnset})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -707,7 +718,7 @@ func proposalSupersedeMissing(t *testing.T, h Harness) {
 	}
 }
 
-// "Undelivered" on its own is not the outbox: it includes cards that lapsed in
+// An unset delivered stamp on its own is not the outbox: it includes cards that lapsed in
 // the pool and cards held back for later, neither of which the user may see. The
 // filter has to exclude them in the query, because a limit applied before a
 // caller-side filter can return an empty page while live cards wait behind it.
@@ -724,7 +735,7 @@ func proposalDeliverable(t *testing.T, h Harness) {
 		mustCreate(t, s, p)
 	}
 	pool, err := s.Proposals().List(bg(), domain.ProposalFilter{
-		SessionID: "s1", State: domain.ProposalPending, Undelivered: true, DeliverableAt: now,
+		SessionID: "s1", State: domain.ProposalPending, Delivered: domain.PresenceUnset, DeliverableAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1198,5 +1209,300 @@ func listLimitsAgree(t *testing.T, h Harness) {
 	// a fixed page size.
 	if got, err = s.Moods().List(bg(), "s1", 2); err != nil || len(got) != 2 {
 		t.Errorf("limit=2 returned %d rows (err=%v)", len(got), err)
+	}
+}
+
+// Delete on moods and assignments is what makes the four capture tools
+// undoable: reverting an agent-recorded check-in or an agent-created deadline
+// means the row goes away, not that it acquires a "dismissed" state a user
+// would then see.
+//
+// Three properties, and every one of them is somewhere the two stores could
+// have drifted without anything noticing:
+//
+//   - Session scope. Both take (sessionID, id) and both must put the session in
+//     the predicate. A delete that keys on id alone works identically in every
+//     test that uses one session, and lets one user erase another's row in
+//     production.
+//   - ErrNotFound for a row that is not there, rather than nil. The revert path
+//     ignores this error today, but "gone" and "never existed" are different
+//     answers and the next caller may care.
+//   - Idempotence in the sense that a second delete does not resurrect, corrupt
+//     or panic — it just reports the same absence.
+func deleteScopeAndAbsence(t *testing.T, h Harness) {
+	s := h.Store()
+	mine, err := s.Moods().Create(bg(), &domain.MoodCheckin{
+		SessionID: "s1", Mood: "calm", Source: domain.MoodSourceAgent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another session's row with the same shape — the one a mis-scoped delete
+	// would take out.
+	theirs, err := s.Moods().Create(bg(), &domain.MoodCheckin{
+		SessionID: "s2", Mood: "calm", Source: domain.MoodSourceAgent,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Moods().Delete(bg(), "s2", mine.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("deleting another session's id: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Moods().List(bg(), "s1", 10); len(rows) != 1 {
+		t.Errorf("a cross-session delete removed the row anyway: %d left", len(rows))
+	}
+	if err := s.Moods().Delete(bg(), "s1", mine.ID); err != nil {
+		t.Fatalf("deleting own row: %v", err)
+	}
+	if err := s.Moods().Delete(bg(), "s1", mine.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second delete: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Moods().List(bg(), "s2", 10); len(rows) != 1 || rows[0].ID != theirs.ID {
+		t.Errorf("the other session lost its row")
+	}
+
+	// Same three properties for assignments, whose delete backs
+	// revertAssignmentUpsert's create branch.
+	a, err := s.Assignments().UpsertByCanvasID(bg(), &domain.Assignment{
+		SessionID: "s1", CanvasID: "manual:x", Title: "读第三章", Source: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Assignments().Delete(bg(), "s2", a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("cross-session assignment delete: got %v, want ErrNotFound", err)
+	}
+	if err := s.Assignments().Delete(bg(), "s1", a.ID); err != nil {
+		t.Fatalf("deleting own assignment: %v", err)
+	}
+	if err := s.Assignments().Delete(bg(), "s1", a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("second assignment delete: got %v, want ErrNotFound", err)
+	}
+	if rows, _ := s.Assignments().List(bg(), "s1", domain.AssignmentFilter{}); len(rows) != 0 {
+		t.Errorf("%d assignment(s) survived the delete", len(rows))
+	}
+}
+
+// The three dimensions the attention ladder needed and the filter could not
+// express: which rung a proposal is on, whether a nullable stamp is set, and
+// how many match rather than how many fit on a page.
+//
+// Every call here carries SessionID because both backends put it in the
+// predicate unconditionally — a filter that leaves it out matches nothing, and
+// that is the intended behaviour rather than an oversight to work around.
+func proposalFilterDimensions(t *testing.T, h Harness) {
+	s := h.Store()
+	now := time.Now()
+	mk := func(title string, level domain.ProposalLevel) *domain.Proposal {
+		p := pending("s1", title)
+		p.Level = level
+		return p
+	}
+	l3a, l3b, l2 := mk("推送甲", domain.LevelL3), mk("推送乙", domain.LevelL3), mk("卡片", domain.LevelL2)
+	for _, p := range []*domain.Proposal{l3a, l3b, l2} {
+		mustCreate(t, s, p)
+	}
+	// Another session's L3, to catch a predicate that forgot the session.
+	other := mk("别人的推送", domain.LevelL3)
+	other.SessionID = "s2"
+	mustCreate(t, s, other)
+
+	byLevel, err := s.Proposals().List(bg(), domain.ProposalFilter{SessionID: "s1", Level: domain.LevelL3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(byLevel) != 2 {
+		t.Errorf("Level=L3 returned %d, want 2", len(byLevel))
+	}
+	n, err := s.Proposals().Count(bg(), domain.ProposalFilter{SessionID: "s1", Level: domain.LevelL3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Errorf("Count(Level=L3) = %d, want 2", n)
+	}
+	if n, _ := s.Proposals().Count(bg(), domain.ProposalFilter{SessionID: "s1"}); n != 3 {
+		t.Errorf("Count(session) = %d, want 3 — the other session leaked in", n)
+	}
+
+	// Count answers "how many match", not "how many fit on a page": a budget
+	// that saturates at the page size is not a budget.
+	if n, _ := s.Proposals().Count(bg(), domain.ProposalFilter{SessionID: "s1", Limit: 1}); n != 3 {
+		t.Errorf("Count with Limit=1 = %d, want 3 — Limit must not reach Count", n)
+	}
+
+	// Push one of them and check all three answers about the stamp.
+	pushed := now.Add(-time.Hour)
+	l3a.PushedAt = &pushed
+	if err := s.Proposals().Update(bg(), l3a); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		f    domain.ProposalFilter
+		want int
+	}{
+		{"any", domain.ProposalFilter{SessionID: "s1", Level: domain.LevelL3}, 2},
+		{"set", domain.ProposalFilter{SessionID: "s1", Level: domain.LevelL3, Pushed: domain.PresenceSet}, 1},
+		{"unset", domain.ProposalFilter{SessionID: "s1", Level: domain.LevelL3, Pushed: domain.PresenceUnset}, 1},
+	} {
+		got, err := s.Proposals().Count(bg(), c.f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("Pushed=%s: count %d, want %d", c.name, got, c.want)
+		}
+	}
+
+	// The window is half-open, and it is what the budget actually counts —
+	// presence alone would count every push this session has ever received,
+	// because pushed_at is never cleared.
+	start, end := domain.PushBudgetWindow(now, time.UTC)
+	inWindow, err := s.Proposals().Count(bg(), domain.ProposalFilter{
+		SessionID: "s1", PushedSince: start, PushedBefore: end,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inWindow != 1 {
+		t.Errorf("pushes inside today's window = %d, want 1", inWindow)
+	}
+	// A window that ended before the push began must exclude it — the half-open
+	// end is exclusive.
+	if n, _ := s.Proposals().Count(bg(), domain.ProposalFilter{
+		SessionID: "s1", PushedSince: start, PushedBefore: pushed,
+	}); n != 0 {
+		t.Errorf("PushedBefore is inclusive: got %d, want 0", n)
+	}
+}
+
+// delivered_at is a permanent stamp, so "how many cards are in the stack" is a
+// conjunction — pending, delivered, and still deliverable — not a question
+// about the stamp alone. Asking only about presence would let a user see three
+// cards in their life and then never again, which is why this case exists
+// alongside the dimensions above rather than inside them.
+func proposalStackIsAConjunction(t *testing.T, h Harness) {
+	s := h.Store()
+	now := time.Now()
+	delivered := now.Add(-time.Hour)
+
+	live := pending("s1", "还在堆叠里")
+	live.DeliveredAt = &delivered
+	mustCreate(t, s, live)
+
+	answered := pending("s1", "早就答过了")
+	answered.DeliveredAt = &delivered
+	answered.State = domain.ProposalAccepted
+	answered.Resolution = domain.ResolutionUser
+	mustCreate(t, s, answered)
+
+	lapsed := pending("s1", "投递过但已过期")
+	lapsed.DeliveredAt = &delivered
+	lapsed.ExpiresAt = now.Add(-time.Minute)
+	mustCreate(t, s, lapsed)
+
+	all, err := s.Proposals().Count(bg(), domain.ProposalFilter{
+		SessionID: "s1", Delivered: domain.PresenceSet,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all != 3 {
+		t.Errorf("ever delivered = %d, want 3", all)
+	}
+	stack, err := s.Proposals().Count(bg(), domain.ProposalFilter{
+		SessionID: "s1", State: domain.ProposalPending,
+		Delivered: domain.PresenceSet, DeliverableAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stack != 1 {
+		t.Errorf("in the stack right now = %d, want 1 (presence alone would say %d)", stack, all)
+	}
+}
+
+// Prune bounds the one new table that had no way to shrink. Settled rows go;
+// pending rows stay at any age, because an old pending row is one Expire has
+// not reached yet and deleting it would drop a card the user was still owed.
+func proposalPruneSparesPending(t *testing.T, h Harness) {
+	s := h.Store()
+	old := time.Now().Add(-72 * time.Hour)
+
+	stillWaiting := pending("s1", "老但仍待答")
+	mustCreate(t, s, stillWaiting)
+	settled := pending("s1", "老且已答")
+	settled.State = domain.ProposalRejected
+	settled.Resolution = domain.ResolutionUser
+	mustCreate(t, s, settled)
+	fresh := pending("s1", "刚答的")
+	fresh.State = domain.ProposalAccepted
+	fresh.Resolution = domain.ResolutionUser
+	mustCreate(t, s, fresh)
+
+	// Backdate everything, then bring the recent one back to now through the
+	// ordinary write path. Doing it in that order rather than backdating a
+	// subset keeps the helper dumb (it has no filter) and still produces the
+	// only arrangement that can distinguish a working Prune from a no-op: one
+	// old pending, one old settled, one recent settled.
+	h.BackdateProposals(t, "s1", old)
+	again, err := s.Proposals().Get(bg(), "s1", fresh.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Proposals().Update(bg(), again); err != nil {
+		t.Fatalf("refresh updated_at: %v", err)
+	}
+
+	n, err := s.Proposals().Prune(bg(), time.Now().Add(-48*time.Hour))
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	left, err := s.Proposals().List(bg(), domain.ProposalFilter{SessionID: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]bool{}
+	for _, p := range left {
+		byTitle[p.Title] = true
+	}
+	if !byTitle["老但仍待答"] {
+		t.Errorf("prune took a pending proposal — %d deleted, %d left", n, len(left))
+	}
+	if !byTitle["刚答的"] {
+		t.Errorf("prune took a recently settled proposal")
+	}
+	if byTitle["老且已答"] {
+		t.Errorf("prune left an old settled proposal behind — it deleted %d rows", n)
+	}
+	if n != 1 {
+		t.Errorf("prune reported %d deletions, want 1", n)
+	}
+}
+
+// OwnerInstance was stored by both backends and queryable by neither, so the
+// crash sweep it exists for could not be written.
+func proposalOwnerInstanceIsQueryable(t *testing.T, h Harness) {
+	s := h.Store()
+	mine, theirs := pending("s1", "本实例持有"), pending("s1", "别的实例持有")
+	mine.OwnerInstance = "inst-a"
+	theirs.OwnerInstance = "inst-b"
+	mustCreate(t, s, mine)
+	mustCreate(t, s, theirs)
+	orphan := pending("s1", "无主")
+	mustCreate(t, s, orphan)
+
+	got, err := s.Proposals().List(bg(), domain.ProposalFilter{SessionID: "s1", OwnerInstance: "inst-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Title != "别的实例持有" {
+		t.Fatalf("OwnerInstance filter returned %d rows: %+v", len(got), got)
+	}
+	// An empty OwnerInstance means "don't care", not "unowned" — otherwise the
+	// console's view of one session would quietly become "the unclaimed ones".
+	if n, _ := s.Proposals().Count(bg(), domain.ProposalFilter{SessionID: "s1"}); n != 3 {
+		t.Errorf("empty OwnerInstance filtered instead of matching any: %d", n)
 	}
 }

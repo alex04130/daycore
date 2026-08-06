@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"daycore/internal/ai"
 )
@@ -66,13 +67,16 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: sys},
 			{Role: ai.RoleUser, Content: body.Description},
 		},
 		Temperature: 0.3, MaxTokens: 4096, JSONMode: true,
 	})
+	s.logAICall(ctx, sessionIDFrom(r.Context()), epAIPlan, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai plan-text", "err", err)
 		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "日程生成出了点问题，请稍后再试"})

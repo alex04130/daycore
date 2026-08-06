@@ -81,6 +81,10 @@ func init() {
 	registerRevert("memory_add", (*Server).revertMemoryAdd_delete)
 	registerRevert("memory_delete", (*Server).revertMemoryAdd)
 	registerRevert("memory_clear", (*Server).revertMemoryClear)
+	registerRevert("assignment_upsert", (*Server).revertAssignmentUpsert)
+	registerRevert("wish_create", (*Server).revertWishCreate_delete)
+	registerRevert("mood_record", (*Server).revertMoodRecord_delete)
+	registerRevert("material_create", (*Server).revertMaterialCreate_delete)
 }
 
 // The two one-liners that used to sit inline in the switch. They are named for
@@ -93,6 +97,45 @@ func (s *Server) revertRuleCreate_delete(ctx context.Context, w http.ResponseWri
 
 func (s *Server) revertMemoryAdd_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Memory().DeleteFact(ctx, sid, orig.TargetID)
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+// revertAssignmentUpsert undoes both halves of the tool: a creation is
+// deleted outright (dismissal is a workflow state, not an erasure), an update
+// is restored from its before snapshot via the same canvas-id upsert that
+// wrote it.
+func (s *Server) revertAssignmentUpsert(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, detail revertDetail) {
+	if detail.Before == nil {
+		_ = s.store.Assignments().Delete(ctx, sid, orig.TargetID)
+		s.finishRevert(ctx, w, sid, orig)
+		return
+	}
+	var before domain.Assignment
+	b, _ := json.Marshal(detail.Before)
+	_ = json.Unmarshal(b, &before)
+	if before.CanvasID == "" {
+		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		return
+	}
+	if _, err := s.store.Assignments().UpsertByCanvasID(ctx, &before); err != nil {
+		s.writeErr(w, http.StatusInternalServerError, "internal", "撤销失败")
+		return
+	}
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+func (s *Server) revertWishCreate_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+	_ = s.store.Wishes().Delete(ctx, sid, orig.TargetID)
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+func (s *Server) revertMoodRecord_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+	_ = s.store.Moods().Delete(ctx, sid, orig.TargetID)
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+func (s *Server) revertMaterialCreate_delete(ctx context.Context, w http.ResponseWriter, sid string, orig *domain.OperationLog, _ revertDetail) {
+	_ = s.store.Materials().Delete(ctx, sid, orig.TargetID)
 	s.finishRevert(ctx, w, sid, orig)
 }
 

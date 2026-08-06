@@ -21,8 +21,10 @@
 // It is not authorization. A Store maps an id to bytes and knows nothing about
 // sessions — the same split the reference MCP servers use, where the file bus is
 // dumb and the orchestrator decides who may read. Whoever hands out a Ref is
-// responsible for deciding who may use it; see the signing helpers in
-// internal/auth for the shape that answer should take.
+// responsible for deciding who may use it. The intended shape (signed refs for
+// transient handouts, a blobs table row for persisted ones) is an open roadmap
+// decision — see docs/ROADMAP.md 「待拍板」; no signing helper exists yet, and
+// until it does a Ref must only be handed to the session that put the bytes in.
 //
 // It is also not a database. There is no listing, no query, no transaction. A
 // backend that can only PUT and GET a key is a legitimate implementation, which

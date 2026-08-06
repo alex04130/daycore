@@ -67,12 +67,15 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
 		return
 	}
-	resp, err := s.catalog.DefaultChat().Chat(ctx, ai.ChatRequest{
+	provider := s.catalog.DefaultChat()
+	start := time.Now()
+	resp, err := provider.Chat(ctx, ai.ChatRequest{
 		Messages:    []ai.Message{{Role: ai.RoleUser, Content: prompt}},
 		JSONMode:    true,
 		Temperature: 0.6,
 		MaxTokens:   4096,
 	})
+	s.logAICall(ctx, sid, epTravel, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai travel", "err", err)
 		s.writeErr(w, http.StatusInternalServerError, "server_error", "行程生成出了点问题，请稍后再试")

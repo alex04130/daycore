@@ -47,7 +47,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、31 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、36 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -119,6 +119,22 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 - `TimeBlock.Frozen(...)` 是写路径唯一要 gate 的谓词。
 
 **DST 行为是实测的，不是推的**（Go 文档称空洞情形「not guaranteed」，所以观测值即契约）：spring-forward 空洞 Go **向前回退**（`02:30` → `01:30 EST`，不是推到 03:30）；fall-back 歧义取**第一次**（EDT）。两者与 5 个场景一起固化在 `api/testdata/petrify-vectors.json`，Go 侧 `phase_test.go` 读同一份跑表驱动，将来 TS 侧 vendored 同一份 —— 这是防「两颗脑子」的地基。
+
+⚠️ **「向前回退」这条会咬到日界本身**（2026-08-03 修，向量升到 v2）。有一整类时区**在 00:00 换挡**（America/Havana、America/Santiago 每年都是），那天的本地午夜**不存在**；`time.Date(y,m,d,0,0,0,0,loc)` 于是回退成**前一天 23:00** —— 一个不在自己那天里的「日始」。
+
+原来的向量只有 `America/New_York`，而那里换挡在 02:00，所以 `dst.startOfDay` 两条的 `why` 都写着「午夜不受影响」—— 问题被想到过，只在不咬人的时区回答了。
+
+三处都建在这个函数上，三处都错：
+
+| 位置 | 后果 |
+|---|---|
+| `timeutil.StartOfDay` → `PetrifyLine` | 石化线的午夜那一半提前一小时 |
+| `domain.startOfNextDay` → `ProposalExpiry` | **卡片出生即过期** —— 换挡日 23:00 后建的 ask-first 卡 `ExpiresAt` 落在过去（实测存活 −30 分钟） |
+| `tool_capture.go` 的 `mood_record` | 「今天打过卡了吗」把前一晚 23:00 之后的打卡算成今天 |
+
+现在**只有一份定义**：`timeutil.StartOfDay` / `StartOfNextDay`，另两处委托它。`StartOfNextDay` 不用 `AddDate(0,0,1)` —— 那个调用本身会被同一个空洞折回去（Havana `2026-03-07 00:30` 加一天落在不存在的 `03-08 00:30`，折回 `03-07 23:30`，比出发点还早）；改成用 `time.Date(y, m, d+1, 12, ...)` 锚在正午（没有任何时区偏移过 ±12 小时）。
+
+向量新增 `dst.midnightGap` 一节，**同时记录正确答案与朴素写法的错误答案** —— 只断言正确值的话，某台机器 tzdata 恰好不同就会「碰巧通过」；断言错误值仍是那个错误值，才证明这个案例还活着。
 
 ## Proposal（提案统一资源，2026-07-26 建模）
 
@@ -332,6 +348,20 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 - `rhythm_days` **一人一天一行，不是一个信号一行**。心跳每分钟一次就是每人每天约 1400 行，而 `Learn` 只读每天的首尾；`CurrentRun` 只要「这段连续清醒从何时开始」，那是 `rhythm_profiles` 上两列的 O(1) 维护。`internal/rhythm/incremental.go` 的 `Day`/`Live` 是这一对，与原始信号版本共用同一个核（`LearnDays`），有测试逐步比对两者。
 - `rapport_states` 的 `scores_json` 用 JSON 不用四对具名列：域列表今天是闭的，但一域一列会让加一个域变成三方言迁移，而且没有任何跨会话查询能从「可查询」里得到好处。
 - `rapport.NewFolderFrom(scores, resolve)` 的 `resolve` 不是可选的 —— 没有它，增量追赶会跳过「原 op 在游标之前」的 revert，缓存与重放分叉，而缓存唯一的存在理由就是它能靠重放重建。存储层用 `OperationLogRepository.Get` 填它。
+- ⚠️ **账本的时间戳不是提交序，所以键集游标在「现在」附近不安全**（2026-08-03 实测确认）。`OpLogs().Add` 在 Go 侧、写库**之前**取 `created_at`（全包无事务，没有更靠后的位置可放）。两个写者相隔微秒取戳，可以按相反顺序提交 —— SQLite 上后者可能压在写锁上等满 `busy_timeout`（5 秒），而它的戳早就取好了。消费者一旦把游标推到「当前能看到的最新行」，所有取戳更早、落地更晚的行就永远落在 `created_at > cursor` 之外。
+
+  **不是罕见交错**：8 个并发写者 + 一个增量消费者，480 行里有 34–39 行从未被投递，可复现 —— 约 8%。
+
+  修法是**成对的两半**，缺一比都不做更糟（半修的追赶看起来是对的）：
+
+  | 半 | 在哪 | 不做的后果 |
+  |---|---|---|
+  | 游标不推进到 `now − OpLogVisibilityLag`（30s） | `domain.AdvanceCursor` | 永久丢行 |
+  | 折叠按 op id 幂等 | `rapport.Folder.folded` | 重读尾部导致每轮追赶都把同一条 accept 再记一次，信任凭空上涨 |
+
+  两条测试各自盯一半，摘掉任一半对应测试立刻红：`sqlstore/cursor_safety_test.go`（朴素 vs 安全两跑，朴素那跑若不再丢行会 skip 并提示复查 lag 是否还需要）、`rapport` 的 `TestFoldIsIdempotentPerOperation`。
+
+  ⚠️ 这条今天是**潜伏**的 —— `Rapport()` 零生产调用方，游标从未被推进过。它在接线的那一刻变活，所以接线批次必须带着这两半一起落。
 
 ## 心情窗口（`internal/mood/`，体验内核 §12.6，2026-07-26）
 
@@ -378,7 +408,7 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 写侧现在**拒绝**未知 id（400 `unknown_mood`）：解析不出的值没有 valence，而没有 valence 的打卡不是弱信号，是没有信号。三条回归测试端到端锁住这个接缝 —— 单测两侧都会通过（仓库存了给它的东西，窗口正确地跳过了它读不懂的东西），错的只有中间那一道缝。
 
-⚠️ **不过现在没有心情打卡工具** —— `companionToolDefs` 的 11 个工具里没有它，所以生产代码里唯一写 `Source` 的地方就是 `POST /api/mood` 那条恒定 `user` 的路径。「agent 写 agent」是留好的位子，不是已经在跑的东西。
+**agent 代打卡已落地**（β0+）：`mood_record` 工具写 `Source=agent`，且当天已有用户手动打卡时不新建（EXPERIENCE_CORE §12.1 三边界）。撤销走 `mood_record` 的注册 revert（`MoodRepository.Delete`）。
 
 **设计上用得到的地方都要走同一个窗口**（`s.moodWindow(ctx, sid)`）：companion 上下文注入 · 默契的语气档位与主动性门槛 · Protector 的 20h 关怀措辞 · 晨卡与晚复盘 · 提案卡语气 · auto-plan 强度。六处各算各的迟早会分叉，用户会遇到一个「同一周里这里温柔那里干脆」的系统。
 

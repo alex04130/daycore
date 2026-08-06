@@ -4,7 +4,7 @@
 
 ## 这是什么
 
-Daycore 是一个面向学生的「AI 自主规划 + 温和陪伴」应用（v2 beta）：把 Canvas 作业成绩、课程表、长期习惯交给它，每天一键生成合理的日程（`keep_manual` 保护手动改过的块），再通过聊天随口微调。功能面：重复/长期日程（含墓碑）、Canvas/ICS/截图导入、陪伴聊天（SSE 流式 + 11 个 agent 工具）、每用户长期记忆、主题工作室、心情打卡、一键撤销（append-only 操作日志）、收件箱/决策卡、许愿池、多语言（用户自选一主一副）。
+Daycore 是一个面向学生的「AI 自主规划 + 温和陪伴」应用（v2 beta）：把 Canvas 作业成绩、课程表、长期习惯交给它，每天一键生成合理的日程（`keep_manual` 保护手动改过的块），再通过聊天随口微调。功能面：重复/长期日程（含墓碑）、Canvas/ICS/截图导入、陪伴聊天（SSE 流式 + 15 个 agent 工具）、每用户长期记忆、主题工作室、心情打卡、一键撤销（append-only 操作日志）、收件箱/决策卡、许愿池、多语言（用户自选一主一副）。
 
 仓库根即实现面，无子项目分层：**Go 单二进制后端 + Vite/React 前端 + Chrome MV3 插件**，全部在一个 module 里。
 
@@ -66,10 +66,10 @@ go build ./... && go vet ./... && go test ./...
 - **存储注册模式**：`internal/storage/registry.go` 的 `storage.Register(dbType, opener)`，sqlstore/mongostore 在 `init()` 自注册，main.go blank import。`domain.Store` 是组合接口（约 179 个方法），**业务代码只 import `domain`，绝不直接引用具体 store** —— 漏一个 accessor 是编译错误，这正是两个 store 同步的强制手段。
 - **版本三层，不要混**（唯一真源 `internal/version/version.go`，同步 `web/frontend/package.json`）：
   1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`2.<minor>.<patch>-beta`；`GET /api/healthz`、设置页显示）。
-  2. **API 契约版本** `APIVersion=1` / `APIMinor=1`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
+  2. **API 契约版本** `APIVersion=1` / `APIMinor=2`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
   3. 各前端自己的版本号（在各自子仓库，与本仓解耦）。
 - **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。11 个 key。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。
-- **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，11 个工具定义在 `agent_tools.go` 的 `companionToolDefs`。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。
+- **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，15 个工具定义在 `agent_tools.go` 的 `companionToolDefs`（11 个原有 + 4 个捕捉工具 assignment_upsert/wish_add/mood_record/material_add，β0+ 补齐，实现集中在 `tool_capture.go`）。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。每次模型调用（流式按轮）落一行 `ai_call_logs`（`s.logAICall`，best-effort）；第三方文本进提示词必须过 `untrustedWrap`（web_search 已接）。
 - **Worker**（`internal/server/worker.go`）：cron 驱动；产出全部落库、由 App 读，推到通道只是可选的最后一步。按用户排程是**首次请求时懒排**（`SetScheduleOnUse`，`markAwake` 节流放行时调一次；⚠️ 代价是重启当天早上有个缺口）。三个定时时刻由节律派生：`PlanAt = Wake − 3h30m`（默认 04:00）、`BriefAt = Wake`（07:30）、`ReviewAt = Sleep − 90m`（21:00）。另有 deadline 巡检、20h 关怀（Protector）。
 - **多语言三层**（`internal/i18n/`）：DB `locale_overrides` → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US。**给后端加一门语言是丢一个翻译文件，不用改代码、不用发版**；内嵌两种是「地板」不是全集。用户自选一主一副（`SessionPrefs.PrimaryLocale`/`SecondaryLocale`），部署只给默认值（`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`）。⚠️ 前端还不是这样 —— `web/frontend/src/i18n.js` 是硬编码双语言字典。
 
@@ -81,7 +81,7 @@ go build ./... && go vet ./... && go test ./...
 | `internal/server/` | 路由、中间件、全部 handler、agent loop、cron Worker（一个文件一组 handler） |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PG/MySQL，`Dialect` 抽象），每实体一文件；三份 DDL 由 `dialect_parity_test.go` 静态比对 |
 | `internal/storage/mongostore/` | MongoDB，每实体一 repo 文件；`bson_test.go`（免真机）+ `conformance_test.go`（真机行为套件） |
-| `internal/storage/storagetest/` | **行为一致性套件**（31 例）：所有后端跑同一份，加后端的验收标准 |
+| `internal/storage/storagetest/` | **行为一致性套件**（36 例）：所有后端跑同一份，加后端的验收标准 |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
 | `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说 |
@@ -108,7 +108,7 @@ go build ./... && go vet ./... && go test ./...
 
 ## 测试策略
 
-- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：31 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
+- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：36 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
 - **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
 - **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
 - **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。
@@ -118,7 +118,7 @@ go build ./... && go vet ./... && go test ./...
 ## 部署
 
 - **单二进制模式**（推荐）：`cd web/frontend && npm run build` → `make build` → 上传 `bin/daycore` + `config/` + `web/frontend/dist`；`STATIC_DIR` 指向 dist，Go 同时托管前端与 `/api`（`/assets/` immutable 长缓存，SPA fallback 回 index.html；`STATIC_DIR=""` 或无构建产物 = 纯 API 模式）。
-- **生产环境变量**：`APP_ENV=production` 后 `JWT_SECRET`/`COOKIE_SECRET` 缺失直接启动失败；**`ADMIN_TOKEN` 不是可选的**（不设时管理面鉴权退化成「只看 `APP_ENV` 是不是 production」，而管理面含 `GET`/`DELETE /api/admin/db/table/{name}` 裸库读删）；`SECURE_COOKIES=true`；`PUBLIC_BASE_URL` 给 OAuth 回调用；`HOST=127.0.0.1` 只监听本机由 nginx 对外。环境变量完整清单在 `docs/ARCHITECTURE.md`（`.env.example` 是常用子集，缺 9 项）。
+- **生产环境变量**：`APP_ENV=production` 后 `JWT_SECRET`/`COOKIE_SECRET` 缺失直接启动失败；**`ADMIN_TOKEN` 不是可选的**（不设时管理面鉴权退化成「只看 `APP_ENV` 是不是 production」，而管理面含 `GET`/`DELETE /api/admin/db/table/{name}` 裸库读删）；`SECURE_COOKIES=true`；`PUBLIC_BASE_URL` 给 OAuth 回调用；`HOST=127.0.0.1` 只监听本机由 nginx 对外（此时 `TRUST_PROXY_HEADERS=true` 限流才按真实 IP 分桶）。环境变量完整清单在 `docs/ARCHITECTURE.md`（`.env.example` 是常用子集，完整清单以 ARCHITECTURE 为准）。
 - **nginx**：`proxy_buffering off` 是 SSE 硬要求，`proxy_read_timeout 300s`（AI 请求慢）。样例 `deploy/nginx.conf`。
 - **Docker**：`deploy/Dockerfile` 是纯 API 镜像（不 COPY 前端产物），`docker-compose.yml` 带 postgres/mysql/mongo 三个本地开发 profile（`make db-postgres` 等）。
 - **数据库**：`DB_TYPE`/`DB_DSN` 一键切换 sqlite/postgres/mysql/mongodb。**MongoDB 是推荐部署**，但四个后端都要能跑（行为套件守着）。

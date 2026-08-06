@@ -149,6 +149,14 @@ type chatResp struct {
 	} `json:"message"`
 	Done  bool   `json:"done"`
 	Error string `json:"error"`
+	// Ollama reports accounting only on the terminal frame of a stream and on
+	// the non-streaming response; both land here.
+	PromptEvalCount int `json:"prompt_eval_count"`
+	EvalCount       int `json:"eval_count"`
+}
+
+func (r *chatResp) usage() ai.Usage {
+	return ai.Usage{PromptTokens: r.PromptEvalCount, CompletionTokens: r.EvalCount}
 }
 
 func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatResponse, error) {
@@ -169,6 +177,7 @@ func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRespon
 		return nil, fmt.Errorf("ollama: %s", cr.Error)
 	}
 	out := &ai.ChatResponse{Content: cr.Message.Content}
+	out.Usage = cr.usage()
 	for i, tc := range cr.Message.ToolCalls {
 		args, _ := json.Marshal(tc.Function.Arguments)
 		out.ToolCalls = append(out.ToolCalls, ai.ToolCall{
@@ -212,8 +221,9 @@ func (p *provider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan a
 				}
 			}
 			if ev.Done {
+				u := ev.usage()
 				select {
-				case out <- ai.Chunk{Done: true}:
+				case out <- ai.Chunk{Done: true, Usage: &u}:
 				case <-ctx.Done():
 				}
 				return

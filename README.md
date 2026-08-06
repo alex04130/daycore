@@ -15,11 +15,11 @@ Daycore 是一个面向学生的「AI 自主规划 + 温和陪伴」应用：把
 - **自主规划**：汇总课表规则、临期作业（按 due 与分值倒排）、长期记忆，一键生成单日或多日（≤7 天）计划；`keep_manual` 模式保护你手动改过的块。
 - **重复 / 长期日程**：每天 / 每周某几天 / 每月 / 每 N 天 / 远期精确日期；读计划自动展开、删除当日不复活（墓碑）。
 - **资料导入**：Chrome 插件抓 Canvas（课程/成绩/作业 due）导出 JSON 或直推；ICS 课表（零依赖解析器）；周课表截图 AI 识别 → 候选确认。
-- **陪伴聊天（SSE 流式）**：说"以后每 3 天提醒我浇花"就建规则、"把会议改到 3 点"就改计划、"记住我 11 点后不干活"就写入长期记忆（**工具调用**：11 个工具，`agent_tools.go`；早先的 `<plan_update>` 标签协议已废弃，对接细节以 [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) §B 的 SSE v2 帧协议为准）。
+- **陪伴聊天（SSE 流式）**：说"以后每 3 天提醒我浇花"就建规则、"把会议改到 3 点"就改计划、"记住我 11 点后不干活"就写入长期记忆（**工具调用**：15 个工具，`agent_tools.go`；早先的 `<plan_update>` 标签协议已废弃，对接细节以 [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) §B 的 SSE v2 帧协议为准）。
 - **每用户长期记忆**：所有上传 append-only 归档 + AI 可读写的事实库；设置页可删单条/清空（隐私）。
 - **主题工作室**：4 套内置玻璃拟态主题 + 自定义主题存库 + AI 生成配色（"像深夜的海"→ 实时预览 → 保存）。
 - **心情打卡**：12 种心情 + AI 回应 + 呼吸/伸展/着地三种练习。
-- **一键撤销**：所有写操作走 append-only 操作日志（`GET /api/ops`），逐条可反向补偿（`POST /api/ops/{id}/revert`，当前 12 种动作）—— 撤销是新的一笔，不是橡皮擦。
+- **一键撤销**：所有写操作走 append-only 操作日志（`GET /api/ops`），逐条可反向补偿（`POST /api/ops/{id}/revert`，当前 16 种动作）—— 撤销是新的一笔，不是橡皮擦。
 - **收件箱 / 决策卡**：随手丢进来的东西先归类再落库（`/api/inbox/*`）；需要你拍板的走提案卡（agent 的 `propose_decision` 工具），不理它也不出事。
 - **许愿池**：想做但还没安排的事进池子，agent 全局可读可写，排计划时自己拿出来提。
 - **多语言**：用户自选**一主一副**两种语言、首页一键切换，AI 回复语言跟随。提示词按 locale 组织（11 key × 2 locale，运行时可在控制台覆盖）。后端的界面文案是**三层目录**（DB 覆盖 → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US），**给后端加一门语言是丢一个翻译文件，不用改代码也不用发版**。
@@ -134,7 +134,7 @@ Daycore is an "AI autonomous planning + gentle companion" app for students: hand
 - **Autonomous planning**: aggregates timetable rules, upcoming deadlines (backward-planned by due date & points) and long-term memory into a one-tap plan for a day or a range (≤7 days); `keep_manual` mode protects blocks you edited.
 - **Recurring / long-term schedule**: daily / weekly on weekdays / monthly / every-N-days / precise far-future dates; occurrences expand on read, per-day hide uses tombstones.
 - **Material imports**: Chrome extension scrapes Canvas (courses/grades/due dates) to JSON export or direct push; ICS timetables (zero-dependency parser); weekly-timetable screenshots via AI extraction with candidate confirmation.
-- **Companion chat (streaming SSE)**: "remind me to water the plants every 3 days" creates a rule, "move the meeting to 3pm" edits the plan, "remember I don't work after 11pm" writes long-term memory (**tool calls** — 11 tools in `agent_tools.go`; the old `<plan_update>` tag protocol is gone. Frame protocol: [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) §B).
+- **Companion chat (streaming SSE)**: "remind me to water the plants every 3 days" creates a rule, "move the meeting to 3pm" edits the plan, "remember I don't work after 11pm" writes long-term memory (**tool calls** — 15 tools in `agent_tools.go`; the old `<plan_update>` tag protocol is gone. Frame protocol: [`api/FRONTEND_HANDOFF.md`](api/FRONTEND_HANDOFF.md) §B).
 - **Per-user long-term memory**: every upload archived append-only + an AI-writable fact store; delete one / clear all from Settings (privacy).
 - **Theme studio**: 4 built-in glassmorphism themes + custom themes stored server-side + AI-generated palettes ("like the sea at midnight" → live preview → save).
 - **Mood check-ins**: 12 moods + AI responses + breathing/stretch/grounding exercises.

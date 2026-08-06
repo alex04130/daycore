@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -20,6 +21,10 @@ func init() {
 		mux.HandleFunc("POST /api/decisions/{id}/respond", s.handleDecisionRespond)
 	})
 }
+
+// errStreamRound is what the call ledger records for a failed round; the
+// underlying provider error was already logged with its detail by streamRound.
+var errStreamRound = errors.New("stream round failed")
 
 // ─── SSE v2 sender ───────────────────────────────────────────────────────────
 // One `data:` frame per event, discriminated by "type":
@@ -185,10 +190,13 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 		if round > 0 && !s.limiter.Allow(s.clientIP(r)) {
 			break
 		}
+		roundStart := time.Now()
 		resp, ok := s.streamRound(ctx, sink, provider, ai.ChatRequest{Messages: messages, Tools: tools, Temperature: 0.7})
 		if !ok {
+			s.logAICall(ctx, sid, epCompanion, provider.Model(), roundStart, ai.Usage{}, errStreamRound)
 			return answer.String()
 		}
+		s.logAICall(ctx, sid, epCompanion, provider.Model(), roundStart, usageOf(resp), nil)
 		appendAnswer(resp.Content)
 		if len(resp.ToolCalls) == 0 {
 			// A provider that says it is calling tools and then delivers none has
@@ -238,7 +246,7 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 				out["error"] = res.ErrMsg
 			}
 			sink.send(out)
-			messages = append(messages, ai.Message{Role: ai.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: res.JSON()})
+			messages = append(messages, ai.Message{Role: ai.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: res.forModelJSON()})
 
 			if cancelled { // the user moved on — this stream is stale
 				sink.send(map[string]any{"type": "done"})
@@ -250,10 +258,13 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 	// Rounds (or the rate budget) exhausted: force a plain wrap-up, mirroring
 	// vision.go's fallback — never end the stream without a spoken answer.
 	messages = append(messages, ai.Message{Role: ai.RoleUser, Content: wrapUpNudge(locale)})
+	wrapStart := time.Now()
 	resp, ok := s.streamRound(ctx, sink, provider, ai.ChatRequest{Messages: messages, Temperature: 0.7})
 	if !ok {
+		s.logAICall(ctx, sid, epCompanion, provider.Model(), wrapStart, ai.Usage{}, errStreamRound)
 		return answer.String() // streamRound already emitted error + done
 	}
+	s.logAICall(ctx, sid, epCompanion, provider.Model(), wrapStart, usageOf(resp), nil)
 	if resp != nil {
 		appendAnswer(resp.Content)
 	}

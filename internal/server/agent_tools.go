@@ -16,6 +16,19 @@ type toolResult struct {
 	Summary string
 	ErrMsg  string
 	OpID    string
+	// ForModel, when set, replaces JSON() as the tool-message content the model
+	// sees. It exists for results that carry third-party text: the client gets
+	// the clean Data while the model gets the same bytes wrapped by
+	// untrustedWrap.
+	ForModel string
+}
+
+// forModelJSON is the content injected back into the conversation.
+func (t toolResult) forModelJSON() string {
+	if t.ForModel != "" {
+		return t.ForModel
+	}
+	return t.JSON()
 }
 
 func (t toolResult) JSON() string {
@@ -85,6 +98,14 @@ func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, c
 		return s.toolMemoryAdd(ctx, sid, call.Arguments)
 	case "memory_remove":
 		return s.toolMemoryRemove(ctx, sid, call.Arguments)
+	case "assignment_upsert":
+		return s.toolAssignmentUpsert(ctx, sid, call.Arguments)
+	case "wish_add":
+		return s.toolWishAdd(ctx, sid, call.Arguments)
+	case "mood_record":
+		return s.toolMoodRecord(ctx, sid, tz, call.Arguments)
+	case "material_add":
+		return s.toolMaterialAdd(ctx, sid, call.Arguments)
 	case "get_weather":
 		return s.toolGetWeather(ctx, sid, locale, call.Arguments)
 	case "web_search":
@@ -102,6 +123,14 @@ func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, c
 // timeout for an answer that can never arrive.
 func companionToolDefs(caps ai.Capabilities, interactive bool) []ai.ToolDef {
 	blockType := map[string]any{"type": "string", "enum": []string{"task", "appointment", "break", "relax", "meal"}, "description": "块类型，默认 task"}
+	// The mood enum is derived from the domain registry, not copied: the
+	// twelve ids are a product decision with one owner (mood_kind.go), and a
+	// second list here is how the prompt vocabulary drifted from the check-in
+	// vocabulary once already.
+	moodIDs := make([]string, 0, len(domain.MoodKinds()))
+	for _, k := range domain.MoodKinds() {
+		moodIDs = append(moodIDs, k.ID)
+	}
 	tools := []ai.ToolDef{
 		{
 			Name:        "plan_add",
@@ -163,6 +192,42 @@ func companionToolDefs(caps ai.Capabilities, interactive bool) []ai.ToolDef {
 			Name:        "memory_remove",
 			Description: "忘记一条长期记忆。",
 			Parameters:  schemaObj(map[string]any{"id": schemaStr("fact id，来自上下文长期记忆列表")}, "id"),
+		},
+		{
+			Name:        "assignment_upsert",
+			Description: "记录或修改作业/截止时间（\"下周三交离散\"→新建；\"考试提前到周五\"→带 id 改 due）。不确定用户说的是哪门课时省略 courseName。",
+			Parameters: schemaObj(map[string]any{
+				"id":         schemaStr("要修改的作业 id（上下文作业列表里有）；新建时省略"),
+				"title":      schemaStr("作业/事项标题（新建必填）"),
+				"courseId":   schemaStr("课程 id（上下文课程列表里有，最可靠）"),
+				"courseName": schemaStr("课程名，不知道 id 时给名字即可"),
+				"dueAt":      schemaStr("截止时间，YYYY-MM-DD 或 YYYY-MM-DDTHH:MM；必须从相对日期对照表推算"),
+			}),
+		},
+		{
+			Name:        "wish_add",
+			Description: "把未定时间的意图投进愿望池（\"想学 Rust\"\"改天去看展\"\"哦对要买牛奶\"）。顺手估个耗时；写前会想一遍是否已经记过——重复的愿望不用再记。",
+			Parameters: schemaObj(map[string]any{
+				"text":      schemaStr("愿望内容，简短"),
+				"effortMin": schemaInt("预估耗时（分钟），用于填缝匹配"),
+			}, "text"),
+		},
+		{
+			Name:        "mood_record",
+			Description: "从对话里察觉到的情绪直接替用户打卡（\"累死了\"→tired）。映射最接近的一种，原话要点入 note。用户今天已手动打卡过就不要再记（工具会告诉你 alreadyCheckedIn）。",
+			Parameters: schemaObj(map[string]any{
+				"mood": map[string]any{"type": "string", "enum": moodIDs, "description": "最接近的一种心情"},
+				"note": schemaStr("触发原话的要点，≤50 字"),
+			}, "mood"),
+		},
+		{
+			Name:        "material_add",
+			Description: "归档有长期参考价值的外部知识（考试重点、教室位置、图书馆哪层安静）。正文可长，不受 50 字限制。关于用户自己的规律/偏好用 memory_add，别用错。",
+			Parameters: schemaObj(map[string]any{
+				"title":    schemaStr("资料标题"),
+				"body":     schemaStr("资料正文，可长"),
+				"category": schemaStr("类别 id（上下文资料类别列表里有）；不确定可省略"),
+			}, "title", "body"),
 		},
 		{
 			Name:        "get_weather",

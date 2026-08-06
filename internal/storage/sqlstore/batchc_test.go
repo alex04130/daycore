@@ -242,7 +242,7 @@ func TestProposalListFilters(t *testing.T) {
 	if len(day) != 1 || day[0].Title != "今天" {
 		t.Errorf("date filter: %+v", day)
 	}
-	pool, _ := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", Undelivered: true})
+	pool, _ := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", Delivered: domain.PresenceUnset})
 	if len(pool) != 2 {
 		t.Errorf("the outbox is undelivered-only; got %d", len(pool))
 	}
@@ -675,7 +675,7 @@ func TestDeliverableFilterExcludesLapsedAndHeldBack(t *testing.T) {
 	}
 
 	pool, err := s.Proposals().List(ctx, domain.ProposalFilter{
-		SessionID: "s1", State: domain.ProposalPending, Undelivered: true, DeliverableAt: now,
+		SessionID: "s1", State: domain.ProposalPending, Delivered: domain.PresenceUnset, DeliverableAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
