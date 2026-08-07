@@ -73,6 +73,13 @@ type Server struct {
 	// asyncWG tracks detached background goroutines (async companion turns,
 	// inbound channel handling) so graceful shutdown can wait for them.
 	asyncWG sync.WaitGroup
+
+	// Background tick loops (see ticker.go). tickOnce lazily creates ticksDone so
+	// the zero value of Server stays usable — RouteTable(&Server{}) builds one.
+	tickOnce  sync.Once
+	tickStop  sync.Once
+	ticksDone chan struct{}
+	tickWG    sync.WaitGroup
 }
 
 // GoTracked runs fn on a goroutine tracked by the background WaitGroup so

@@ -184,6 +184,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 ## main.go 启动/关停
 
 - 启动顺序：config.Load → store.Open+Migrate → catalog/prompts → server.New → locale 覆盖层 → 两个 cleanup ticker → **Worker（无条件启动）** → channels（仅当配了通道）→ inbound 消费循环。
+- **后台 tick 循环现在停得下来**（`everyTick` / `everyTickNow` / `StopTicks`，2026-08-06）。原先它们连个停止信号都没有 —— 没有 ctx、没有 channel、没有返回值。**只做无状态清理时这是站得住的**（「进程退出即弃，无碍」），一旦某个 tick **持有**东西就不成立：ζ 要加的续租循环若在关停后继续跑，会把本进程刚释放的租约重新抢回来，下一个实例得等满一个 TTL 才等到一个已经退出的 leader。`StopTicks` 在 `httpSrv.Shutdown` 之后、`WaitBackground` 之前调用，等在途的那一跳跑完。`everyTickNow` 是「先跑一次再进循环」的变体：ticker 的第一跳在一整个 interval 之后，这对清理是对的（新进程没有陈旧数据），对**建立状态**的循环是错的。
 - **`ScheduleUser` 是幂等的**（2026-08-06 修好；此前不是）。守卫读 `w.jobs[sid+":"+tz]`，而四处写的是带 `:morning`/`:evening`/`:deadline`/`:replan` 后缀的键 —— **那个键从来没被写过，守卫恒假**。`markAwake` 每会话每 5 分钟放行一次并调它，于是连续活跃一小时就攒下 12 套 cron 条目：下一个半点 `checkRollingReplan` 跑 12 遍，12 次模型调用、12 次推送。这不是多实例问题，是**单实例今天就在犯**的。改成按 sid 存一组 EntryID + 记住排给它的时区；换时区先摘旧条目（否则同一份早报按两个时区各发一次）。
 - **未知时区回退而不是部分失败**（同批）。`CRON_TZ=<bad>` 会让早报与晚复盘两条 `AddFunc` 报错，而 deadline / replan 两条没有 CRON_TZ 前缀、照样注册成功 —— 于是会话被记成「已排程」，那个用户**从此再也收不到简报，也没有任何东西会重试**。现在先 `resolveTZ`：坏时区退到 `WORKER_DEFAULT_TZ` 再退到 UTC，记一条 warn。与 `markAwake` 记节律信号是同一个取舍 —— 时刻错了看得见，压根不发看不见。
 - **Worker 不再绑在 OneBot 上**（2026-07-29）。它曾经只在 `ONEBOT_WS_URL` 非空时启动，于是没绑 QQ 的用户拿不到早报、晚复盘、定时 auto-plan、deadline 巡检 —— 产品「主动」那一半被一个无关设置整体关掉。Worker 做的事没有一件需要通道：产出全部落库、由 App 读，推到通道只是可选的最后一步（`sendToChannels` 在 registry 为 nil 时只记日志，那个分支本来就有）。

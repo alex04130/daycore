@@ -294,6 +294,12 @@ func run(logger *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		err := httpSrv.Shutdown(shutdownCtx)
+		// Stop the tick loops before anything else waits: they are the only
+		// background work that re-enters the store on a schedule, and a tick that
+		// fires after the store closes logs an error nobody can act on. It also
+		// has to happen before any loop that OWNS something (a lease) exists —
+		// that loop would otherwise reclaim what the process is giving up.
+		srv.StopTicks()
 		// Wait for detached background work (async turns, channel replies) so
 		// in-flight results still get persisted; stale pending placeholders
 		// from a hard deadline are swept to "error" on the next boot.
