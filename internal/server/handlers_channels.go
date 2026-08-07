@@ -114,7 +114,7 @@ func (s *Server) handleChannelVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	// Now that the session has a channel, schedule its proactive jobs.
 	if s.worker != nil {
-		s.worker.ScheduleUser(pending.SessionID, s.cfg.WorkerDefaultTZ)
+		s.worker.ScheduleUser(pending.SessionID, s.sessionTimezone(r.Context(), pending.SessionID))
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": channel, "externalId": body.ExternalID})
 }

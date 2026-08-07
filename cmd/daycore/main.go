@@ -258,7 +258,9 @@ func run(logger *slog.Logger) error {
 	// this is avoiding, and it belongs with Lease-based election (batch ζ) —
 	// otherwise every instance would schedule every user.
 	srv.SetScheduleOnUse(func(sid string) {
-		worker.ScheduleUser(sid, cfg.WorkerDefaultTZ)
+		// The session's own zone, not the deployment default — see
+		// internal/server/session_timezone.go.
+		worker.ScheduleUser(sid, srv.SessionTimezone(context.Background(), sid))
 	})
 
 	if registry != nil {

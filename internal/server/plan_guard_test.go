@@ -38,7 +38,7 @@ func mins(v int) *int       { return &v }
 func TestPlanGate(t *testing.T) {
 	s, sid := newAgentTestServer(t)
 	ctx := context.Background()
-	loc := s.planLocation()
+	loc := s.planLocation(context.Background(), sid)
 	today := time.Now().In(loc).Format("2006-01-02")
 	longAgo := time.Now().In(loc).AddDate(0, 0, -3).Format("2006-01-02")
 	tomorrow := time.Now().In(loc).AddDate(0, 0, 1).Format("2006-01-02")
@@ -208,7 +208,7 @@ func TestPlanGateHTTPEnvelope(t *testing.T) {
 	// every caller that does not care.
 	s.cookies = auth.NewCookieSigner("plan-gate-test-secret")
 
-	loc := s.planLocation()
+	loc := s.planLocation(context.Background(), sid)
 	today := time.Now().In(loc).Format("2006-01-02")
 	seedBlock(t, s, sid, today, domain.TimeBlock{
 		ID: "b", Title: "高数（课）", Time: hhmm("09:00"), DurationMin: mins(60),
@@ -249,7 +249,7 @@ func TestPlanGateHTTPEnvelope(t *testing.T) {
 func TestLockIsDerivedOnWrite(t *testing.T) {
 	s, sid := newAgentTestServer(t)
 	ctx := context.Background()
-	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+	date := time.Now().In(s.planLocation(context.Background(), sid)).AddDate(0, 0, 1).Format("2006-01-02")
 
 	// An appointment whose title reads as a class: hard by the shared rules.
 	if _, _, _, err := s.applyPlanPatch(ctx, sid, date, "zh-CN", planAction{
@@ -321,7 +321,7 @@ func TestPlanLockEndpoint(t *testing.T) {
 	s, sid := newAgentTestServer(t)
 	s.cookies = auth.NewCookieSigner("plan-lock-test-secret")
 	ctx := context.Background()
-	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+	date := time.Now().In(s.planLocation(context.Background(), sid)).AddDate(0, 0, 1).Format("2006-01-02")
 
 	post := func(t *testing.T, payload string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -408,7 +408,7 @@ func TestPlanLockEndpoint(t *testing.T) {
 func TestRescheduleChainIsServerSide(t *testing.T) {
 	s, sid := newAgentTestServer(t)
 	ctx := context.Background()
-	loc := s.planLocation()
+	loc := s.planLocation(context.Background(), sid)
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 	today := time.Now().In(loc).Format("2006-01-02")
 
@@ -453,7 +453,7 @@ func TestRescheduleChainIsServerSide(t *testing.T) {
 func TestRescheduleRefusalsAndFallbacks(t *testing.T) {
 	s, sid := newAgentTestServer(t)
 	ctx := context.Background()
-	loc := s.planLocation()
+	loc := s.planLocation(context.Background(), sid)
 	yesterday := time.Now().In(loc).AddDate(0, 0, -1).Format("2006-01-02")
 	today := time.Now().In(loc).Format("2006-01-02")
 

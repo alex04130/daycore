@@ -39,7 +39,7 @@ func do(t *testing.T, s *Server, sid, method, path, body string) *httptest.Respo
 func TestMarkConflictCreatesARealProposal(t *testing.T) {
 	s, sid := proposalTestServer(t)
 	ctx := context.Background()
-	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+	date := time.Now().In(s.planLocation(context.Background(), sid)).AddDate(0, 0, 1).Format("2006-01-02")
 
 	if _, err := s.store.DayPlans().Upsert(ctx, &domain.DayPlan{
 		SessionID: sid, Date: date, SourceType: "manual",
@@ -107,7 +107,7 @@ func TestMarkConflictCreatesARealProposal(t *testing.T) {
 // the cards, so the marker refuses rather than inventing one.
 func TestMarkConflictRefusesToInventOne(t *testing.T) {
 	s, sid := proposalTestServer(t)
-	date := time.Now().In(s.planLocation()).AddDate(0, 0, 1).Format("2006-01-02")
+	date := time.Now().In(s.planLocation(context.Background(), sid)).AddDate(0, 0, 1).Format("2006-01-02")
 	if _, err := s.store.DayPlans().Upsert(context.Background(), &domain.DayPlan{
 		SessionID: sid, Date: date, SourceType: "manual",
 		Blocks: []domain.TimeBlock{

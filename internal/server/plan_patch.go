@@ -79,7 +79,7 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date, locale string, a
 
 	// The gate, before any mutation and before the keep_manual flip: a refused
 	// write must leave the plan exactly as it found it, including origin.
-	if err := s.guardPlanWrite(blocks, date, action, actor, time.Now(), s.planLocation()); err != nil {
+	if err := s.guardPlanWrite(blocks, date, action, actor, time.Now(), s.planLocation(ctx, sid)); err != nil {
 		return nil, "", 0, err
 	}
 

@@ -20,7 +20,7 @@
 
 **版本号分三层，不要混**：
 1. 后端构建版本 — `internal/version/version.go` 的 `Version` + `Channel`（现 `2.2.0-beta`）
-2. **API 契约版本** — 同文件 `APIVersion` + `APIMinor`（现 `1` / `6`）。**四个前端子仓握手用的是这个**；breaking 改动升 `APIVersion`，additive 升 `APIMinor`
+2. **API 契约版本** — 同文件 `APIVersion` + `APIMinor`（现 `1` / `7`）。**四个前端子仓握手用的是这个**；breaking 改动升 `APIVersion`，additive 升 `APIMinor`
 3. 各前端自己的版本号 — 独立迭代，与上面两个解耦（`design-ui/API_CONTRACT.md` 抬头的「v4」就是这一层，不是 API 版本）
 
 ## 实时文档铁律

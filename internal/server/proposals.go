@@ -258,7 +258,7 @@ func (s *Server) handlePlanConflict(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	blocks := s.planBlocksForDate(ctx, sid, body.Date)
-	overlaps := schedule.Overlaps(blocks, body.Date, s.planLocation())
+	overlaps := schedule.Overlaps(blocks, body.Date, s.planLocation(ctx, sid))
 
 	var hit *schedule.Overlap
 	for i := range overlaps {
@@ -304,7 +304,7 @@ func (s *Server) handlePlanConflict(w http.ResponseWriter, r *http.Request) {
 			{ID: "leave_both", Label: i18n.T(keyConflictOptStand, locale), State: domain.ProposalPending},
 		},
 	}
-	p.ExpiresAt = domain.ProposalExpiry(p, time.Now(), s.planLocation(), nil)
+	p.ExpiresAt = domain.ProposalExpiry(p, time.Now(), s.planLocation(ctx, sid), nil)
 	now := time.Now()
 	p.DeliveredAt = &now
 	if err := s.store.Proposals().Create(ctx, p); err != nil {

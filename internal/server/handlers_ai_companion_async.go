@@ -137,6 +137,7 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 
 	// Pre-generate both IDs: mongostore's AppendMessages does not write
 	// generated IDs back to the caller's slice.
+	s.noteClientTimezone(r.Context(), sid, body.Timezone)
 	atts, aerr := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
 	if aerr != nil {
 		s.writeAttachmentErr(w, r, "aICompanionAsync", aerr)

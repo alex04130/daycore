@@ -94,14 +94,16 @@ paths:
     get:
       operationId: getPreferences
       tags: [session]
-      summary: Get the proactive-feature toggles, category overrides and language pair.
+      summary: Get the proactive-feature toggles, timezone, category overrides and language pair.
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
     patch:
       operationId: setPreferences
       tags: [session]
-      summary: Partial update of toggles, category overrides and language pair.
+      summary: Partial update of toggles, timezone, category overrides and language pair.
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+        '400': { description: "bad_timezone (not an IANA zone this build can load), bad_category, or unsupported_locale." }
 
   # ─── plan ─────────────────────────────────────────────────────────────────
   /api/plan:
@@ -1042,6 +1044,24 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        timezone:
+          type: string
+          description: >
+            The IANA zone this user's own day is measured in — it decides when
+            the petrify line falls, where their rhythm day boundary sits, and
+            what time the morning brief arrives. Empty means "follow the device,
+            and until it reports, the deployment default" (WORKER_DEFAULT_TZ).
+            Setting it here is the USER choosing, which outranks whatever their
+            device reports from then on; send "" to go back to following the
+            device. A client also reports its zone implicitly via the timezone
+            field on POST /api/ai/companion, which fills in or updates a
+            device-detected value but never overwrites this one. 400
+            bad_timezone if it is not a zone this build can load.
+        timezoneSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
         primaryLocale:
           type: string
           description: >

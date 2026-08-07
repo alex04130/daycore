@@ -55,6 +55,10 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sid := sessionIDFrom(r.Context())
+	// The device is the only thing that knows which zone it is in, so this is a
+	// hint we accept rather than context we refuse — see session_timezone.go for
+	// why that is not a hole in "never trust client-supplied context".
+	s.noteClientTimezone(r.Context(), sid, body.Timezone)
 	atts, err := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
 	if err != nil {
 		s.writeAttachmentErr(w, r, "aICompanion", err)

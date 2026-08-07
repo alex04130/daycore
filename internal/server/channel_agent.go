@@ -54,7 +54,7 @@ func (s *Server) runChannelMessage(ctx context.Context, sid, text string) string
 	if name == "" {
 		name = "Leo"
 	}
-	tz := s.cfg.WorkerDefaultTZ
+	tz := s.sessionTimezone(ctx, sid)
 	sys, err := s.companionSystemPrompt(ctx, sid, locale, tz, name)
 	if err != nil {
 		return ""

@@ -392,5 +392,5 @@ func (s *Server) spillInsFor(ctx context.Context, sid, date, locale string) []do
 	}
 	blocks := schedule.Merge(plan.Blocks, s.ruleOccurrences(ctx, sid, prev, prev))
 	s.normalizePlanBlocks(blocks, prev, "", locale)
-	return schedule.SpillIns(schedule.Visible(blocks), prev, s.planLocation())
+	return schedule.SpillIns(schedule.Visible(blocks), prev, s.planLocation(ctx, sid))
 }

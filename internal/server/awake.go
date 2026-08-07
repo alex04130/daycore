@@ -90,17 +90,14 @@ func (s *Server) markAwake(sid string) {
 	if f := s.scheduleOnUse.Load(); f != nil {
 		(*f)(sid)
 	}
-	loc := time.UTC
-	if s.cfg != nil && s.cfg.WorkerDefaultTZ != "" {
-		if l, err := time.LoadLocation(s.cfg.WorkerDefaultTZ); err == nil {
-			loc = l
-		}
-	}
-	// TODO(rhythm): per-session timezone. WORKER_DEFAULT_TZ is a deployment-wide
-	// default, so a user in another zone gets their day boundary drawn in the
-	// wrong place. Recording in the wrong zone is still better than not
-	// recording — the day key is recomputable from the minutes, a missing day is
-	// not — but this has to be fixed before the learner ships (batch ζ).
+	// The session's own zone (ζ-4). This used to be the deployment-wide
+	// WORKER_DEFAULT_TZ, which drew a user in another zone's day boundary in the
+	// wrong place — and the day boundary is the whole unit the learner works in.
+	//
+	// It reads the session on the hot path only once per awakeThrottle (five
+	// minutes), because markAwake has already passed the admission gate by the
+	// time it gets here.
+	loc := s.sessionLocation(context.Background(), sid)
 	cfg := rhythm.DefaultConfig()
 	day, minute := rhythm.DayOf(now, loc, cfg)
 

@@ -788,6 +788,19 @@ type SessionPrefs struct {
 	// page switch. A pair is a preference; the current one is state.
 	PrimaryLocale   string `json:"primaryLocale,omitempty"`
 	SecondaryLocale string `json:"secondaryLocale,omitempty"`
+
+	// Timezone is the IANA zone this user's own day is measured in — the
+	// petrify line, the rhythm day key, and when the morning brief fires.
+	// Empty means "use the deployment default" (WORKER_DEFAULT_TZ).
+	//
+	// TimezoneSource says who decided it: TZSourceUser (settings page) or
+	// TZSourceDetected (a client hint). The distinction is load-bearing — a
+	// device hint may fill in or update a detected value but must never
+	// overwrite a user's own choice, or somebody who deliberately keeps their
+	// schedule on home time has it moved the first time they open the app from
+	// an airport. See timezone.go.
+	Timezone       string `json:"timezone,omitempty"`
+	TimezoneSource string `json:"timezoneSource,omitempty"`
 }
 
 // DefaultPrefs returns the default (all-on) preferences.

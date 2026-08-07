@@ -190,6 +190,24 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        timezone:
+          type: string
+          description: >
+            The IANA zone this user's own day is measured in — it decides when
+            the petrify line falls, where their rhythm day boundary sits, and
+            what time the morning brief arrives. Empty means "follow the device,
+            and until it reports, the deployment default" (WORKER_DEFAULT_TZ).
+            Setting it here is the USER choosing, which outranks whatever their
+            device reports from then on; send "" to go back to following the
+            device. A client also reports its zone implicitly via the timezone
+            field on POST /api/ai/companion, which fills in or updates a
+            device-detected value but never overwrites this one. 400
+            bad_timezone if it is not a zone this build can load.
+        timezoneSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
         primaryLocale:
           type: string
           description: >

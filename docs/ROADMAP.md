@@ -101,7 +101,8 @@
 ### ζ worker / 多实例
 
 - ✅ **Lease 选主 + 场次占有**（2026-08-06）—— `internal/server/leader.go`；`claim`/`finish` 装进四个作业体，位置是**抑制门之后、干活之前**。设计与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。顺带修掉两个既有缺陷：`ScheduleUser` 的死守卫（**单实例上就在重复发**）、坏时区的部分失败伪装成成功。
-- ⬜ 节律学习作业 → ⬜ Protector → ⬜ **每会话时区** → ⬜ 撤销闭合（`registerRevert` 12 条搬到各自文件）。
+- ✅ **每会话时区**（2026-08-06）—— `SessionPrefs.Timezone` + `TimezoneSource`；石化线、节律 day key、cron 排程、通道回复全部改读会话自己的。设备提示可以填也可以更新一个 `detected` 值，但**绝不覆盖用户自己在设置页选的**。`APIMinor` 6→7。设计见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- ⬜ 节律学习作业 → ⬜ Protector → ⬜ 撤销闭合（`registerRevert` 12 条搬到各自文件）。
 
 ⚠️ 时区一项的紧迫性已重估（2026-08-05）：`awake.go` 的 TODO 注释写明 day key 可由 (day, minute) + 已知录制时区重算——**节律信号是可追认的**，STRATEGY §五.3 的「不可追认」论证已化解，本批位置维持。Lease 是存储层就绪、server 零引用的纯接线活，工作量比表观小。
 
@@ -212,6 +213,6 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
-- 早晚简报的天气地点**写死北京**（`worker.go:401` 自己写着 "future: session setting"）。
+- 早晚简报的天气地点**写死北京**（`worker.go` 自己写着 "future: session setting"）。⚠️ ζ-4 只解决了时区，**地点是另一件事** —— 时区不能反推经纬度。
 - 一致性套件 32 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
 - 前端 `i18n.js` 是硬编码双语字典。

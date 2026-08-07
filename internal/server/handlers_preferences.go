@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -39,6 +40,11 @@ type sessionPrefsPatch struct {
 	// Send "" for secondary to drop the switch entirely.
 	PrimaryLocale   *string `json:"primaryLocale"`
 	SecondaryLocale *string `json:"secondaryLocale"`
+
+	// Timezone is the user choosing their own zone, which outranks whatever
+	// their device reports from then on. Send "" to go back to following the
+	// device (and, until it reports, the deployment default).
+	Timezone *string `json:"timezone"`
 }
 
 // sessionPrefs loads a session's preferences, falling back to defaults (the
@@ -153,6 +159,23 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	tzChanged := false
+	if patch.Timezone != nil {
+		tz := strings.TrimSpace(*patch.Timezone)
+		switch {
+		case tz == "":
+			// Back to following the device. Clearing the source is what lets a
+			// later client hint take effect again.
+			tzChanged = prefs.Timezone != ""
+			prefs.Timezone, prefs.TimezoneSource = "", ""
+		case !validTimezone(tz):
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_timezone", "err.sessionPreferences.bad_timezone")
+			return
+		default:
+			tzChanged = prefs.Timezone != tz
+			prefs.Timezone, prefs.TimezoneSource = tz, TZSourceUser
+		}
+	}
 	if patch.MaterialCategories != nil {
 		if prefs.MaterialCategories == nil {
 			prefs.MaterialCategories = map[string]bool{}
@@ -181,6 +204,13 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 		s.log.Error("update session preferences", "err", err)
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionPreferences.internal2")
 		return
+	}
+	if tzChanged && s.worker != nil {
+		// The cron entries carry CRON_TZ of the OLD zone. Re-arm them here rather
+		// than waiting for the next markAwake: a user who just moved their
+		// timezone expects tomorrow's brief in the new one, and markAwake only
+		// reschedules when it also happens to admit.
+		s.worker.ScheduleUser(sid, s.sessionTimezone(ctx, sid))
 	}
 	s.writeJSON(w, http.StatusOK, prefs)
 }

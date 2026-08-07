@@ -222,17 +222,16 @@ func blockFromMap(raw map[string]any) (domain.TimeBlock, error) {
 // planLocation is the timezone the petrify line is drawn in.
 //
 // The deployment default, because sessions do not carry a timezone yet — the
-// same limitation awake.go records for the rhythm day key, and the same fix
-// (per-session timezone, batch ζ) closes both. For a user whose real timezone
-// differs, the line moves by that offset: their evening freezes early or late.
-// That is a real defect and it is the reason ζ calls this correctness rather
-// than polish; it is not a NEW defect, since every other clock in the server
-// already reads from here.
-func (s *Server) planLocation() *time.Location {
-	if s == nil || s.cfg == nil {
+// ζ-4 (2026-08-06) closed this: it now reads the session's own zone, falling
+// back to WORKER_DEFAULT_TZ and then UTC. Before that every clock in the server
+// read one deployment-wide value, so a user in another zone had their evening
+// freeze early or late by that offset — see session_timezone.go for why the
+// value lives in preferences and why a client hint is allowed to set it.
+func (s *Server) planLocation(ctx context.Context, sid string) *time.Location {
+	if s == nil {
 		return time.UTC
 	}
-	return resolveLocation(s.cfg.WorkerDefaultTZ)
+	return s.sessionLocation(ctx, sid)
 }
 
 const keyPlanRefishCapped = "plan.refish.capped"
@@ -312,7 +311,7 @@ const RescheduleLookbackDays = 21
 // an ordinary answer, not an error — the id may be stale, or from further back
 // than the window.
 func (s *Server) findBlockAcrossDays(ctx context.Context, sid, blockID string) (domain.TimeBlock, error) {
-	loc := s.planLocation()
+	loc := s.planLocation(ctx, sid)
 	now := time.Now().In(loc)
 	from := now.AddDate(0, 0, -RescheduleLookbackDays).Format("2006-01-02")
 	to := now.Format("2006-01-02")
