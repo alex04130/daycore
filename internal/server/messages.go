@@ -98,6 +98,13 @@ func init() {
 	// ε — the file bus. "no_file_bus" is a deployment without BLOB_STORE, which
 	// is a supported configuration rather than a fault, so the message says what
 	// is missing instead of apologising for an error.
+	// Four messages that the first version of the gate below could not see: three
+	// were wrapped in fmt.Sprintf and one spanned two lines, so a regex over the
+	// literal argument matched none of them. The gate is an AST walk now.
+	i18n.Register("err.aIAutoPlan.range_too_large", i18n.Text{"zh-CN": "一次最多规划 %d 天"})
+	i18n.Register("err.importCanvas.unsupported_export_version", i18n.Text{"zh-CN": "导出文件版本不支持（%q，期望 %q）"})
+	i18n.Register("err.tempContextPut.payload_too_large", i18n.Text{"zh-CN": "payload 过长，最大 %d 字节"})
+	i18n.Register("err.moodCreate.unknown_mood", i18n.Text{"zh-CN": "未知的心情 id —— 请从 GET /api/mood/kinds 取值"})
 	i18n.Register("err.fileUpload.no_file_bus", i18n.Text{"zh-CN": "这个部署没有配置文件总线（BLOB_STORE），暂时不能上传文件"})
 	i18n.Register("err.fileUpload.bad_request", i18n.Text{"zh-CN": "上传需要在 Content-Type 里说明文件类型，请求体是文件原始字节"})
 	i18n.Register("err.fileUpload.too_large", i18n.Text{"zh-CN": "文件太大了，上限是 %d MiB"})

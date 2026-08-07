@@ -113,8 +113,8 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	}
 	days := int(toT.Sub(fromT).Hours()/24) + 1
 	if days > s.cfg.AutoPlanMaxDays {
-		s.writeErr(w, http.StatusBadRequest, "range_too_large",
-			fmt.Sprintf("一次最多规划 %d 天", s.cfg.AutoPlanMaxDays))
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "range_too_large",
+			"err.aIAutoPlan.range_too_large", s.cfg.AutoPlanMaxDays)
 		return
 	}
 

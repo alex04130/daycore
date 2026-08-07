@@ -338,6 +338,20 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 **外部 provider 的语言参数是另一回事**（`internal/weather/lang.go` 的 `Lang(locale, codes, fallback)`）：每个上游有自己的代码空间（QWeather `zh`/`zh-hant`、OWM `zh_cn`/`zh_tw`、wttr.in 只有一种中文），表跟着 provider 走，只共享查表逻辑。上游没有的语言退回它自己的默认值 —— 语言不对的天气预报仍然告诉你会下雨。
 
+### 闸门（`TestNoHardcodedUserFacingText`）与它的盲区
+
+迁移一次只修今天，闸门修的是以后 —— 这个仓库被「靠自觉遵守的规则」坑过太多次。闸门找每一处 `writeErr` 调用，**walk 它整棵参数子树**，任何含汉字的字符串字面量当场变红并报文件行号与原文。
+
+⚠️ **它的第一版是 regex，漏了四条**（`fmt.Sprintf("一次最多规划 %d 天", …)` 这类包裹的三条，加一条消息写在下一行的）。**有盲区的闸门比没有闸门更糟** —— 它报绿，于是这条规则就不再由任何东西保证了。改成 AST 之后，`fmt.Sprintf` 包裹、字符串拼接、跨行调用、以及下一次出现的新形状都盖得住。
+
+**它明确看不见的**（写出来是为了不让人以为它什么都管）：
+
+- 不经 `writeErr` 出去的文案（`writeJSON` 的响应体、SSE 帧、提示词）。放宽成「包里任何汉字字面量」做不到：`messages.go` 本身通篇是汉字字面量，测试夹具也是。
+- 由非字面量拼出来的消息（一个装着中文的变量）。
+- `internal/server` 以外的地方。
+
+这几条是**已知缺口，不是疏漏**。哪天其中一条开始付代价，修法是再加一次定向 walk，而不是把正则放松。
+
 ### 还没做的
 
 - ~~**DB 覆盖层的表**~~ **已完成**：`locale_overrides` 与批次 C 的五张表同批建好，接线（`server.ReloadLocaleOverrides`，启动时调一次）也在 2026-07-29 补上了。**三层今天是真的三层。**

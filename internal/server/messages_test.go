@@ -1,9 +1,12 @@
 package server
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -23,33 +26,55 @@ import (
 // which matters more: "remember to use the catalog" is a rule, and this repo
 // has been bitten repeatedly by rules that depended on remembering.
 func TestNoHardcodedUserFacingText(t *testing.T) {
-	// s.writeErr's fourth argument, when it is a literal. writeErrL and
-	// writeErrf take a key instead, so they never match.
-	call := regexp.MustCompile(`s\.writeErr\(w,[^,]+,\s*"[a-z_]*",\s*"([^"]*)"`)
-
-	entries, err := os.ReadDir("./")
+	// An AST walk, not a regex over lines.
+	//
+	// The first version of this gate matched `s.writeErr(w, <status>, "<code>",
+	// "<message>"` on a single line, and it let four messages through — three
+	// wrapped in fmt.Sprintf and one whose message sat on the following line.
+	// A gate with a blind spot is worse than no gate: it reports clean and the
+	// rule stops being enforced by anything else.
+	//
+	// So: find every call to writeErr, walk its whole argument subtree, and flag
+	// any string literal in it that contains a Han character. That covers
+	// fmt.Sprintf wrapping, concatenation, multi-line calls, and whatever the
+	// next shape turns out to be.
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go")
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var offenders []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(filepath.Join(".", name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i, line := range strings.Split(string(src), "\n") {
-			m := call.FindStringSubmatch(line)
-			if m == nil {
-				continue
-			}
-			if !hasCJK(m[1]) {
-				continue
-			}
-			offenders = append(offenders, filepath.Join("internal/server", name)+":"+itoa(i+1)+"  "+m[1])
+	for _, pkg := range pkgs {
+		for path, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "writeErr" {
+					return true
+				}
+				for _, arg := range call.Args {
+					ast.Inspect(arg, func(m ast.Node) bool {
+						lit, ok := m.(*ast.BasicLit)
+						if !ok || lit.Kind != token.STRING {
+							return true
+						}
+						text, err := strconv.Unquote(lit.Value)
+						if err != nil || !hasCJK(text) {
+							return true
+						}
+						pos := fset.Position(lit.Pos())
+						offenders = append(offenders,
+							filepath.Join("internal/server", filepath.Base(path))+":"+itoa(pos.Line)+"  "+text)
+						return true
+					})
+				}
+				return true
+			})
 		}
 	}
 	if len(offenders) > 0 {
@@ -60,6 +85,18 @@ func TestNoHardcodedUserFacingText(t *testing.T) {
 			len(offenders), strings.Join(offenders, "\n"))
 	}
 }
+
+// What this gate does NOT see, stated so nobody assumes it sees everything:
+//
+//   - Text that reaches a response by some route other than writeErr (a
+//     writeJSON body, an SSE frame, a prompt). Widening it to "any Han literal
+//     in the package" is not possible today: messages.go itself is nothing but
+//     Han literals, and so are the tests' own fixtures.
+//   - A message assembled from non-literal pieces (a variable holding Chinese).
+//   - Anything outside internal/server.
+//
+// Those are known gaps, not oversights. If one of them starts costing
+// something, the fix is another targeted walk, not a looser regex.
 
 func hasCJK(s string) bool {
 	for _, r := range s {

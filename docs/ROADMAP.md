@@ -203,7 +203,7 @@ Lease 选主排在 ζ，而 α 之后排程改成了**首次请求时懒排**（
 ## 已知缺口（不在批次里，但要记着）
 
 - ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。**但同类的另一半还在**：`POST /api/assignments`、`PATCH /api/assignments/{id}`、`POST /api/mood`、`POST /api/materials` 这几条 HTTP 直写路径**不调 logOp**（工具路径已入账，HTTP 路径没有）——前端手建作业/打卡/归档不可撤销，与「所有写路径必须 logOp」铁律相悖，补法是每处一行 + 复用 β0+ 注册的四个 revert。
-- `POST /api/tempcontext` 的 TTL **完全由客户端给**（`handlers_tempcontext.go` 读 `body.TTLSeconds`），没有服务端默认也没有上限 —— 端一改就能把「临时上下文」变成永久上下文。inbox 那条用的是固定 1 小时，形状是对的。
+- ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。

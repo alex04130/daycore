@@ -21,12 +21,22 @@ import (
 
 // Worker runs background scheduled tasks on a per-user-timezone cadence.
 type Worker struct {
-	cron     *cron.Cron
-	s        *Server
-	log      *slog.Logger
-	mu       sync.Mutex
-	jobs     map[string]cron.EntryID // session_id:timezone_hash → entry
-	channels *channels.Registry      // nil when channels are not wired
+	cron *cron.Cron
+	s    *Server
+	log  *slog.Logger
+	mu   sync.Mutex
+	// jobs holds every cron entry a session owns, and sched remembers which
+	// timezone they were built for.
+	//
+	// Keyed by session id alone, NOT by "sid:tz". The previous shape kept one
+	// EntryID per (sid, tz, job) and looked up "sid:tz" to decide whether the
+	// session was already scheduled — a key nothing ever wrote, so the guard was
+	// dead and every admission through markAwake added four more entries. Keying
+	// by session is also what makes a timezone change removable: the old
+	// entries are found by the same key that replaces them.
+	jobs     map[string][]cron.EntryID
+	sched    map[string]string  // session_id → timezone its entries were built for
+	channels *channels.Registry // nil when channels are not wired
 }
 
 // NewWorker creates a background worker. Call Start() to begin.
@@ -36,7 +46,8 @@ func NewWorker(s *Server, chReg *channels.Registry) *Worker {
 		cron:     cron.New(cron.WithLocation(time.UTC)),
 		s:        s,
 		log:      s.log,
-		jobs:     make(map[string]cron.EntryID),
+		jobs:     make(map[string][]cron.EntryID),
+		sched:    make(map[string]string),
 		channels: chReg,
 	}
 }
@@ -54,47 +65,96 @@ func (w *Worker) Stop() {
 
 // ScheduleUser runs the standard proactive jobs for a session at its timezone.
 func (w *Worker) ScheduleUser(sid, tz string) {
+	if sid == "" {
+		return
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	key := sid + ":" + tz
-	if _, ok := w.jobs[key]; ok {
-		return // already scheduled
+	if prev, ok := w.sched[sid]; ok {
+		if prev == tz {
+			return // already scheduled, at this timezone
+		}
+		// The timezone moved. Take the old entries out before adding new ones —
+		// leaving them would fire the same brief twice, once per zone.
+		w.unscheduleLocked(sid)
+	}
+
+	tz = w.resolveTZ(sid, tz)
+	var ids []cron.EntryID
+	add := func(name, spec string, fn func()) {
+		id, err := w.cron.AddFunc(spec, fn)
+		if err != nil {
+			w.log.Error("schedule proactive job", "job", name, "sid", sid, "spec", spec, "err", err)
+			return
+		}
+		ids = append(ids, id)
 	}
 	// Morning brief: 07:30 in the user's own timezone (CRON_TZ prefix).
-	morningSpec := cronScheduleAt(7, 30, tz)
-	id, err := w.cron.AddFunc(morningSpec, func() {
-		w.runBrief(sid, tz, "morning")
-	})
-	if err != nil {
-		w.log.Error("schedule morning brief", "sid", sid, "spec", morningSpec, "err", err)
-	} else {
-		w.jobs[key+":morning"] = id
-	}
+	add("morning", cronScheduleAt(7, 30, tz), func() { w.runBrief(sid, tz, "morning") })
 	// Evening review: 21:00 in the user's own timezone.
-	eveningSpec := cronScheduleAt(21, 0, tz)
-	id, err = w.cron.AddFunc(eveningSpec, func() {
-		w.runBrief(sid, tz, "evening")
-	})
-	if err != nil {
-		w.log.Error("schedule evening review", "sid", sid, "spec", eveningSpec, "err", err)
-	} else {
-		w.jobs[key+":evening"] = id
-	}
+	add("evening", cronScheduleAt(21, 0, tz), func() { w.runBrief(sid, tz, "evening") })
 	// Deadline check: every 2 hours.
-	id, err = w.cron.AddFunc("0 */2 * * *", func() {
-		w.checkDeadlines(sid, tz)
-	})
-	if err == nil {
-		w.jobs[key+":deadline"] = id
-	}
+	add("deadline", "0 */2 * * *", func() { w.checkDeadlines(sid, tz) })
 	// Rolling replan: every 30 minutes.
-	id, err = w.cron.AddFunc("*/30 * * * *", func() {
-		w.checkRollingReplan(sid, tz)
-	})
-	if err == nil {
-		w.jobs[key+":replan"] = id
+	add("replan", "*/30 * * * *", func() { w.checkRollingReplan(sid, tz) })
+
+	if len(ids) == 0 {
+		// Nothing was scheduled — recording the session as scheduled here would
+		// make the failure permanent for the life of the process.
+		return
 	}
-	w.log.Info("scheduled proactive jobs", "sid", sid, "tz", tz)
+	w.jobs[sid] = ids
+	w.sched[sid] = tz
+	w.log.Info("scheduled proactive jobs", "sid", sid, "tz", tz, "entries", len(ids))
+}
+
+// UnscheduleUser removes a session's proactive jobs.
+func (w *Worker) UnscheduleUser(sid string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.unscheduleLocked(sid)
+}
+
+func (w *Worker) unscheduleLocked(sid string) {
+	for _, id := range w.jobs[sid] {
+		w.cron.Remove(id)
+	}
+	delete(w.jobs, sid)
+	delete(w.sched, sid)
+}
+
+// EntryCount reports how many cron entries are registered. Exported for the
+// test that keeps ScheduleUser idempotent — the property is invisible from
+// outside otherwise, which is exactly how it broke.
+func (w *Worker) EntryCount() int { return len(w.cron.Entries()) }
+
+// resolveTZ maps a timezone onto one cron can actually parse.
+//
+// An unloadable zone used to be a partial failure that looked like a success:
+// the two CRON_TZ-prefixed jobs (morning brief, evening review) failed to
+// register while the two plain ones did, the session was recorded as scheduled,
+// and no later call retried — so that user silently never got a brief again.
+//
+// Falling back is the same trade markAwake already makes for rhythm signals: a
+// brief at a possibly-wrong hour beats no brief, and the wrong hour is visible
+// while the absence is not.
+func (w *Worker) resolveTZ(sid, tz string) string {
+	if tz != "" {
+		if _, err := time.LoadLocation(tz); err == nil {
+			return tz
+		}
+	}
+	fallback := "UTC"
+	if w.s != nil && w.s.cfg != nil && w.s.cfg.WorkerDefaultTZ != "" {
+		if _, err := time.LoadLocation(w.s.cfg.WorkerDefaultTZ); err == nil {
+			fallback = w.s.cfg.WorkerDefaultTZ
+		}
+	}
+	if tz != "" {
+		w.log.Warn("unknown timezone; scheduling proactive jobs in the fallback zone",
+			"sid", sid, "tz", tz, "fallback", fallback)
+	}
+	return fallback
 }
 
 // cronScheduleAt builds a 5-field cron spec that fires at hour:min in the given

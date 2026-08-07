@@ -55,8 +55,8 @@ func (s *Server) handleImportCanvas(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Version != canvasExportVersion {
-		s.writeErr(w, http.StatusBadRequest, "unsupported_export_version",
-			fmt.Sprintf("导出文件版本不支持（%q，期望 %q）", body.Version, canvasExportVersion))
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_export_version",
+			"err.importCanvas.unsupported_export_version", body.Version, canvasExportVersion)
 		return
 	}
 

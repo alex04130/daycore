@@ -70,8 +70,8 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 	// resolve has no valence, and a check-in with no valence is not a weaker
 	// signal, it is no signal.
 	if _, known := domain.MoodKindByID(body.Mood); !known {
-		s.writeErr(w, http.StatusBadRequest, "unknown_mood",
-			"未知的心情 id —— 请从 GET /api/mood/kinds 取值")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unknown_mood",
+			"err.moodCreate.unknown_mood")
 		return
 	}
 	// Source is set here, never read from the body. A check-in that arrives on

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -85,8 +84,8 @@ func (s *Server) handleTempContextPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Payload) > maxPayloadLen {
-		s.writeErr(w, http.StatusBadRequest, "bad_request",
-			fmt.Sprintf("payload 过长，最大 %d 字节", maxPayloadLen))
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "bad_request",
+			"err.tempContextPut.payload_too_large", maxPayloadLen)
 		return
 	}
 	ttl := time.Duration(body.TTLSeconds) * time.Second
