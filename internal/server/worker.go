@@ -171,6 +171,100 @@ func cronScheduleAt(hour, min int, tz string) string {
 	return fmt.Sprintf("CRON_TZ=%s %d %d * * *", tz, min, hour)
 }
 
+// ─── leadership and occurrence ownership ─────────────────────────────────────
+
+// claim takes ownership of one occurrence of one job for one session, and
+// reports whether this instance should do the work.
+//
+// # Where this call belongs
+//
+// AFTER the suppression gates (the user's toggles, Do Not Disturb) and after
+// deciding there is actually something to do — never at the top of the job.
+// domain.JobRunRepository.Claim says why: "Writing a row every half hour to
+// record that nothing happened would bury the rows that mean something." The
+// rolling replan fires 48 times a day per session and almost always decides to
+// do nothing; claiming first would put 48 rows a day per session into the table
+// whose only reader is a human asking "did my brief go out".
+//
+// # What it guarantees, and what it does not
+//
+// Guarantees: two instances that both reach here for the same occurrence — which
+// the lease is supposed to prevent but clocks make possible — will not both come
+// back true. That is a unique index doing the work, which is the only mutual
+// exclusion all four backends share.
+//
+// Does not guarantee: that a failed occurrence is ever retried. Nothing
+// re-drives it. See leader.go.
+//
+// A storage error returns false. Running unguarded when the guard is broken is
+// exactly the duplicate this whole mechanism exists to prevent, and a proactive
+// message that does not go out is cheaper than one that goes out twice.
+func (w *Worker) claim(ctx context.Context, sid, job, runKey string) (*domain.JobRun, bool) {
+	if !w.s.LeadsWorker() {
+		return nil, false
+	}
+	run := &domain.JobRun{
+		SessionID: sid, Job: job, RunKey: runKey, Instance: w.s.InstanceID(),
+	}
+	ok, err := w.s.store.JobRuns().Claim(ctx, run)
+	if err != nil {
+		w.log.Warn("could not claim a job occurrence; skipping it rather than risking a duplicate",
+			"sid", sid, "job", job, "runKey", runKey, "err", err)
+		return nil, false
+	}
+	if !ok {
+		w.log.Debug("job occurrence already claimed", "sid", sid, "job", job, "runKey", runKey)
+		return nil, false
+	}
+	return run, true
+}
+
+// finish closes an occurrence.
+//
+// context.WithoutCancel plus a fresh timeout: the job's own context is 15–30
+// seconds and is very often the thing that just expired. Closing the row on a
+// dead context would leave it "running" forever, which reads as a crash and
+// blocks the occurrence for JobStaleAfter. Same reasoning as settleDecision in
+// agent.go.
+func (w *Worker) finish(ctx context.Context, run *domain.JobRun, jobErr error) {
+	if run == nil {
+		return
+	}
+	status, msg := domain.JobDone, ""
+	if jobErr != nil {
+		status, msg = domain.JobFailed, jobErr.Error()
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := w.s.store.JobRuns().Finish(fctx, run.ID, status, msg, time.Now()); err != nil {
+		w.log.Warn("could not close a job occurrence; it will read as a crash",
+			"sid", run.SessionID, "job", run.Job, "err", err)
+	}
+}
+
+// dayKey names a once-a-day occurrence: the local date.
+//
+// Local, not UTC. A daily job is daily in the user's own day — an occurrence key
+// in UTC would let a user near the date line get two morning briefs on one of
+// their days and none on another.
+func dayKey(now time.Time, loc *time.Location) string {
+	return now.In(loc).Format("2006-01-02")
+}
+
+// slotKey names an occurrence of a job that repeats within a day: the local date
+// plus the slot the firing falls in.
+//
+// Truncation is on the wall clock in the user's zone, and it is plain truncation
+// with no grace window. robfig/cron fires from a timer that Go guarantees not to
+// run early, so the body's own time.Now() is always at or after the slot
+// boundary; a grace window would only serve to push a delayed tick into the NEXT
+// slot, stealing an occurrence that has not happened yet and making the real
+// firing find it taken.
+func slotKey(now time.Time, loc *time.Location, slot time.Duration) string {
+	t := now.In(loc)
+	return t.Format("2006-01-02") + "T" + t.Truncate(slot).Format("1504")
+}
+
 // ─── Brief generation ────────────────────────────────────────────────────────
 
 // runBrief generates and sends a morning or evening brief for a session.
@@ -191,22 +285,33 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 		name = "Daycore"
 	}
 
+	job := domain.JobMorningBrief
 	switch kind {
 	case "morning":
 		if !prefs.MorningBrief || prefs.DoNotDisturb {
 			return
 		}
-		w.log.Info("running morning brief", "sid", sid)
 	case "evening":
+		job = domain.JobEveningReview
 		if !prefs.EveningReview || prefs.DoNotDisturb {
 			return
 		}
-		w.log.Info("running evening review", "sid", sid)
 	}
 
 	loc := resolveLocation(tz)
 	now := time.Now().In(loc)
 	today := now.Format("2006-01-02")
+
+	// Claim after the toggles, before the work. One occurrence per session per
+	// local day per kind — so a second instance, or this instance after a
+	// restart that re-fires the same cron minute, does not send it twice.
+	run, ok := w.claim(ctx, sid, job, dayKey(now, loc))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
+	w.log.Info("running brief", "sid", sid, "kind", kind)
 
 	// Gather context: weather, today's plan, upcoming deadlines.
 	weatherSummary := w.lookupWeather(ctx, locale)
@@ -219,6 +324,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	})
 	if err != nil {
 		w.log.Error("worker: brief prompt", "err", err)
+		jobErr = err
 		return
 	}
 	if kind == "morning" && prefs.GapSuggestions {
@@ -245,11 +351,15 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	w.s.logAICall(ctx, sid, epBrief, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker runBrief: agent call", "sid", sid, "kind", kind, "err", err)
+		jobErr = err
 		return
 	}
 
 	text := strings.TrimSpace(resp.Content)
 	if text == "" {
+		// An empty answer is a done occurrence, not a failed one: the model was
+		// asked and had nothing to say. Marking it failed would make the row read
+		// like an outage.
 		return
 	}
 
@@ -296,14 +406,27 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 	}
 
 	if len(urgent) == 0 {
+		// Nothing to say. Claiming here would write a row every two hours per
+		// session to record that nothing happened, burying the rows that mean
+		// something — which is exactly what JobRunRepository.Claim warns against.
 		return
 	}
+
+	// Two-hour slots, so two instances firing the same 0-mod-2 hour agree on the
+	// occurrence, and so a restart inside the same slot does not re-warn.
+	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, slotKey(now, loc, 2*time.Hour))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
 
 	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent))
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
 		w.log.Warn("worker checkDeadlines: get session", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
@@ -353,14 +476,25 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	}
 
 	if len(overdue) == 0 {
+		// The common case, 48 times a day per session. Claiming before this check
+		// would make job_runs almost entirely rows that say "nothing happened".
 		return
 	}
+
+	// Half-hour slots, matching the cron cadence.
+	run, ok := w.claim(ctx, sid, domain.JobRollingReplan, slotKey(now, loc, 30*time.Minute))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
 
 	w.log.Info("rolling replan", "sid", sid, "overdue", len(overdue))
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
 		w.log.Warn("worker checkRollingReplan: get session", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
@@ -372,6 +506,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	})
 	if err != nil {
 		w.log.Error("worker: replan prompt", "err", err)
+		jobErr = err
 		return
 	}
 	userMsg := buildReplanUserPrompt(locale, string(overdueJSON))
@@ -389,6 +524,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	w.s.logAICall(ctx, sid, epReplan, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker checkRollingReplan: agent call", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 

@@ -198,6 +198,17 @@ func run(logger *slog.Logger) error {
 	// its row keeps the blob referenced, so no other sweep can reclaim it.
 	srv.StartAttachmentCleanup(0)
 
+	// Leader election. Starts before the Worker so that the first cron firing
+	// already has an answer to "do I lead" — LeadsWorker is false until the
+	// first renewal lands, and starting the other way round would let the first
+	// minute run unguarded.
+	//
+	// ⚠️ This is what makes more than one instance safe, together with the
+	// per-occurrence job rows. Read docs/ARCHITECTURE.md before changing the
+	// order of any of this.
+	srv.StartWorkerLease()
+	srv.StartJobRunPrune()
+
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
 
@@ -300,6 +311,11 @@ func run(logger *slog.Logger) error {
 		// has to happen before any loop that OWNS something (a lease) exists —
 		// that loop would otherwise reclaim what the process is giving up.
 		srv.StopTicks()
+		// Only now: the renewal loop is stopped, so nothing can take the lease
+		// back after this. Releasing before StopTicks would let the next tick
+		// re-acquire what this process is giving up, and the next instance would
+		// wait a whole TTL for a leader that has already exited.
+		srv.ReleaseWorkerLease()
 		// Wait for detached background work (async turns, channel replies) so
 		// in-flight results still get persisted; stale pending placeholders
 		// from a hard deadline are swept to "error" on the next boot.

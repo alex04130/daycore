@@ -80,6 +80,13 @@ type Server struct {
 	tickStop  sync.Once
 	ticksDone chan struct{}
 	tickWG    sync.WaitGroup
+
+	// Leader election for the background worker (see leader.go). instanceID is
+	// generated on first use rather than in New so that the zero value keeps
+	// working and so that it can never come from configuration.
+	instanceOnce sync.Once
+	instanceID   string
+	lease        workerLease
 }
 
 // GoTracked runs fn on a goroutine tracked by the background WaitGroup so

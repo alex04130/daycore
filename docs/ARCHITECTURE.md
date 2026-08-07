@@ -98,6 +98,72 @@ CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，并有�
 
 **主题变量是侧表更合适的那一类**：F7 的补算要问「哪些主题缺 token X」，侧表是一个 `WHERE`，blob 是全表扫加逐个解析；「给所有主题加一个 token」也变成每主题一次 INSERT 而不是整体重写。
 
+## 多实例：选主与场次占有（ζ-1，2026-08-06）
+
+### 两个机制，各背一半承诺 —— 不要合并
+
+| | 承诺什么 | 靠什么 |
+|---|---|---|
+| **`job_runs` 行** | **正确性**：「早报只发一次」 | `(session_id, job_name, run_key)` 唯一索引 —— 四个后端唯一共有的互斥手段（sqlstore 全包无事务） |
+| **`leases` 行** | **节流**：N 个实例不必各自醒来、建上下文、调模型，然后 N−1 个发现自己白干 | 一条带条件的 UPDATE + TTL |
+
+**正确性绝不能压在 lease 上**，因为 lease 压在时钟上，而不同机器的时钟不一致。凡是「两个实例都以为自己是 leader 就会出错」的事，必须由行来守。有一条测试专门制造这个分裂（`TestOccurrenceIsClaimedOnceEvenIfBothLead`：强行让 b 相信自己 lead，断言它仍然抢不到那个场次）。
+
+### `Claim` 的位置是这套东西最容易写错的地方
+
+**在抑制门之后、在真正干活之前。** 不是作业开头。
+
+`JobRunRepository.Claim` 的注释自己写着理由：「Writing a row every half hour to record that nothing happened would bury the rows that mean something.」rolling replan 每天每会话触发 48 次、绝大多数次决定什么都不做；在开头 claim 会让这张表每天每会话多出 48 行「无事发生」，而它唯一的读者是一个人在问「我的早报到底发了没有」。
+
+于是三处的落点各不相同：
+
+| 作业 | claim 在哪一步之后 | run key |
+|---|---|---|
+| 早报 / 晚复盘 | 用户开关 + 免打扰之后 | `dayKey` = **用户本地日期** |
+| deadline 提醒 | 算完发现 `len(urgent) > 0` 之后 | `slotKey(2h)` |
+| rolling replan | 算完发现 `len(overdue) > 0` 之后 | `slotKey(30min)` |
+
+**`dayKey` 必须是本地日期**：用 UTC 的话，靠近日界线的用户会在自己的某一天收到两次早报、另一天一次都收不到。
+
+**`slotKey` 是纯截断，不留 grace 窗口。** robfig/cron 从 `time.Timer` 触发，Go 保证定时器不会提前，所以作业体里的 `time.Now()` 永远 ≥ 槽边界。加一个 grace 只会把被延迟的一跳推进**下一个槽**，抢走一个还没发生的场次，让真正的下一跳发现已占而跳过 —— 方向正好是反的。
+
+### 三个分支必须保持三个
+
+`renewWorkerLease` 的 `Acquire` 有三种结果，**合并后两种就是两个 leader 的做法**：
+
+| 结果 | 动作 | 为什么 |
+|---|---|---|
+| `ok=true` | 延长持有；fence 变了就记一条交接日志 | — |
+| `ok=false, err=nil` | **立刻**放弃 | 我们确知输了。这是 N−1 个实例的常态，所以是 Debug 不是 Warn |
+| `err != nil` | **保持不动** | `LeaseRenewIn = LeaseTTL/3` 存在的全部理由。一次慢查询就交出租约，会把一个抖动的数据库变成 leader 来回跳，那比多当一个周期的陈旧 leader 更糟 |
+
+### fence 用来做什么、不用来做什么
+
+`Lease.Fence` 只在**交接**时 +1，续期不动 —— 于是一个停顿过久的持有者能分辨「还是我的」与「别人拿过之后又回到我这」。我们**记录它并在交接时打日志**。
+
+**我们有意不拿它给写操作盖章**：场次行在接管时已经轮换了 claim id，僵尸迟到的 `Finish` 自然落空。在一个已经生效的守卫上再叠一个更弱的守卫，那是抄仪式不是防御。
+
+### 这套东西不提供什么（说清楚，免得有人以为它提供）
+
+**重试。** `JobMaxAttempts` / `JobMaxCrashAttempts` 描述的是 `Claim` **允许**什么，但**没有任何东西会去重驱一个失败的场次**：每个作业由恰好一次 cron 触发，到下一次触发时 run key 已经变了。一次失败的早报就是一个没有早报的早上 —— `domain/coordination.go` 的注释早就警告过这一点。补它需要一个扫描失败行并重驱的 sweeper，那是另一件事，且有它自己的失败模式（07:31 失败、09:00 重试，用户收到的是一个他没要过的时刻的早报）。
+
+### 启动与关停的顺序（改之前先读这里）
+
+**启动**：`StartWorkerLease()` 必须在 `worker.Start()` **之前** —— `LeadsWorker()` 在第一次续租落地前是 false，反过来会让第一分钟无保护地跑。`StartWorkerLease` 用的是 `everyTickNow`（先跑一次再进循环），否则每次重启后有 `LeaseRenewIn` = 20 秒没有 leader。
+
+**关停**：`httpSrv.Shutdown` → **`StopTicks()`** → **`ReleaseWorkerLease()`** → `WaitBackground` → `worker.Stop()`。
+
+⚠️ **`StopTicks` 必须在 `Release` 之前。** 反过来的话，还在跑的续租循环会把本进程刚释放的租约重新抢回来（`Release` 把 `expires_at` 置 0，正好命中 `Acquire` 的接管分支），fence+1、再持有一整个 TTL —— 下一个实例等的是一个已经退出的 leader。这个顺序错了不会有任何报错。
+
+### 丢主时不做的两件事
+
+- **不杀在途作业**：场次归属靠 `Claim` 不靠 lease，接管会轮换 claim 令牌，迟到的 `Finish` 自动落空。
+- **不 `cron.Stop()`**：cron 是进程级的，Stop 之后条目全丢，而 `ScheduleUser` 只由 `markAwake` 与通道验证懒触发 —— 新 leader 要等每个用户各自再发一次请求才重新排上。作业体各自查 `LeadsWorker()` 就够了。
+
+### 实例身份
+
+`InstanceID()` = 主机名 + 进程内生成的 UUID，**绝不来自配置**。同名重启的 pod 否则会继承自己上一次的租约与占有，整套机制跨重启静默失效。
+
 ## 文件总线的 HTTP 面：取舍与边界（ε，2026-08-06）
 
 存储侧在 [DATA.md「附件与文件总线」](DATA.md)。这里是端点这一层为什么长这样。

@@ -363,9 +363,9 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 | 表 | 作用 | 现在接了吗 |
 |---|---|---|
-| `proposals` | 提案统一资源持久化 —— 取代 `agent.go` 的进程内 `map`，那是水平扩展的直接阻碍 | **未接线**，批次 D |
-| `leases` | 选主，只让一个实例跑后台任务 | **未接线**，批次 5 |
-| `job_runs` | 每个任务「场次」的占有与审计 | **未接线**，批次 5 |
+| `proposals` | 提案统一资源持久化 —— 取代 `agent.go` 的进程内 `map`，那是水平扩展的直接阻碍 | ✅ 已接线（γ，2026-08-03）|
+| `leases` | 选主，只让一个实例跑后台任务 | ✅ 已接线（ζ-1，2026-08-06）—— `internal/server/leader.go` |
+| `job_runs` | 每个任务「场次」的占有与审计 | ✅ 已接线（ζ-1）—— `Claim` 的**位置**是设计的一半，见 ARCHITECTURE.md |
 | `rapport_states` | 默契评分缓存 + 账本游标 | **未接线**，批次 D |
 | `rhythm_profiles` / `rhythm_days` | 节律画像 + 每日首尾 | **未接线**，批次 5 |
 | `locale_overrides` | 消息目录的 DB 层 | **已接线**（`server.ReloadLocaleOverrides`，2026-07-29）；控制台的编辑端点还没有 → 批次 F |
@@ -374,7 +374,7 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 ### 两条贯穿性设计
 
-**`job_runs` 是正确性机制，`leases` 只是节流。** 唯一索引 `(session_id, job_name, run_key)` 是四个后端唯一共有的互斥手段（sqlstore 全包无事务），所以**先写行再干活**：INSERT 成功即占有，撞唯一键即别人已占。反过来「干完再记」会留下这张表本来要关掉的窗口。lease 只是省掉「N 个实例各自醒来、建上下文、然后 N−1 个白干」。**正确性不能压在 lease 上，因为 lease 压在时钟上，而不同机器的时钟不一致。**
+**`job_runs` 是正确性机制，`leases` 只是节流。**（落地形状与 `Claim` 的位置规则见 [ARCHITECTURE.md「多实例：选主与场次占有」](ARCHITECTURE.md)。） 唯一索引 `(session_id, job_name, run_key)` 是四个后端唯一共有的互斥手段（sqlstore 全包无事务），所以**先写行再干活**：INSERT 成功即占有，撞唯一键即别人已占。反过来「干完再记」会留下这张表本来要关掉的窗口。lease 只是省掉「N 个实例各自醒来、建上下文、然后 N−1 个白干」。**正确性不能压在 lease 上，因为 lease 压在时钟上，而不同机器的时钟不一致。**
 
 - lease 的 `fence` 只在**交接**时 +1，续期不动。停顿过久的持有者靠比对 fence 就能发现自己已经不是 leader —— 这是时间戳给不了的，因为它自己的时钟正是不能信的那个东西。
 - **接管时轮换行的 id**。原持有者要是终于醒过来调 `Finish`，它手上的 id 已经匹配不到任何行，那次迟到的写入变成无害空操作，而不是对新持有者那次运行的判决。Mongo 侧因为 `_id` 不可变，用「删旧 + 插新」复现同一语义。
