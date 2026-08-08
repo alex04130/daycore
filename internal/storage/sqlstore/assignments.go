@@ -13,7 +13,7 @@ import (
 type assignmentRepo struct{ *Store }
 
 const assignmentSelect = `SELECT id, session_id, course_id, canvas_id, title, due_at, points_possible,
-	submitted, graded, score, COALESCE(html_url, ''), source, status, created_at, updated_at FROM assignments`
+	submitted, graded, score, COALESCE(html_url, ''), source, status, reminders_off, created_at, updated_at FROM assignments`
 
 func (r assignmentRepo) Get(ctx context.Context, sessionID, id string) (*domain.Assignment, error) {
 	row := r.queryRow(ctx, assignmentSelect+` WHERE session_id = ? AND id = ?`, sessionID, id)
@@ -112,6 +112,24 @@ func (r assignmentRepo) SetStatus(ctx context.Context, sessionID, id, status str
 	return nil
 }
 
+// SetReminders silences or restores the deadline ladder for one item.
+//
+// Separate from SetStatus because they mean different things: status is the
+// planner workflow, this is whether the fact track may speak. Folding them
+// together would make "stop reminding me" delete the item from every count.
+func (r assignmentRepo) SetReminders(ctx context.Context, sessionID, id string, on bool) error {
+	res, err := r.exec(ctx,
+		`UPDATE assignments SET reminders_off = ?, updated_at = ? WHERE session_id = ? AND id = ?`,
+		boolToInt(!on), nowMillis(), sessionID, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r assignmentRepo) Delete(ctx context.Context, sessionID, id string) error {
 	res, err := r.exec(ctx,
 		`DELETE FROM assignments WHERE session_id = ? AND id = ?`, sessionID, id)
@@ -132,17 +150,19 @@ func scanAssignment(scan func(dest ...any) error) (*domain.Assignment, error) {
 		submitted int
 		graded    int
 		score     sql.NullFloat64
+		mutedInt  int
 		createdAt int64
 		updatedAt int64
 	)
 	err := scan(&a.ID, &a.SessionID, &a.CourseID, &a.CanvasID, &a.Title, &dueAt, &points,
-		&submitted, &graded, &score, &a.HTMLURL, &a.Source, &a.Status, &createdAt, &updatedAt)
+		&submitted, &graded, &score, &a.HTMLURL, &a.Source, &a.Status, &mutedInt, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
+	a.RemindersOff = mutedInt != 0
 	if dueAt.Valid {
 		t := fromMillis(dueAt.Int64)
 		a.DueAt = &t

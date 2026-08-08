@@ -271,6 +271,7 @@ func (sqliteDialect) Migrations() []string {
 			html_url TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT 'canvas',
 			status TEXT NOT NULL DEFAULT 'pending',
+			reminders_off INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -444,7 +445,9 @@ func (sqliteDialect) NormalizeDSN(dsn string) string {
 
 func (sqliteDialect) Quote(ident string) string { return `"` + ident + `"` }
 
-func (sqliteDialect) ColumnMigrations() []ColumnMigration { return sessionColumnMigrations("TEXT") }
+func (sqliteDialect) ColumnMigrations() []ColumnMigration {
+	return sessionColumnMigrations("TEXT", "INTEGER")
+}
 
 // ConditionalMigrations builds the FTS5 external-content index over materials.
 // trigram tokenizer: CJK-friendly substring-ish matching (unicode61 would treat

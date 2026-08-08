@@ -370,7 +370,23 @@ components:
         pointsPossible: { type: number, nullable: true }
         submitted: { type: boolean }
         graded: { type: boolean }
-        status: { type: string, enum: [pending, planned, done, dismissed] }
+        status:
+          type: string
+          enum: [pending, planned, done, dismissed]
+          description: >
+            The planner workflow. "dismissed" means "I am not doing this" — it
+            removes the item from counts and plans. To keep the item but stop
+            being reminded about it, use remindersOff instead.
+        remindersOff:
+          type: boolean
+          description: >
+            Silences the deadline ladder for this one item without changing what
+            it is. STRATEGY §1.3: the fact track can only be turned off one item
+            at a time; the global deadlineAlerts toggle is deliberately blunt and
+            this is what means a user does not have to reach for it.
+            The ladder itself is 24h → 12h → 1h → overdue, one message per rung
+            per item, ever — which is why the fact track needs no daily budget and
+            does not consume the ≤3/day suggestion budget.
     OperationLog:
       type: object
       properties:

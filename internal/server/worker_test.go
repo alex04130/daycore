@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"daycore/internal/domain"
 )
 
 func discardLogger() *slog.Logger {
@@ -131,5 +133,50 @@ func TestParseBlockTimeUsesTheDateItIsGiven(t *testing.T) {
 		if y, m, d := got.Date(); y != today.Year() || m != today.Month() || d != today.Day() {
 			t.Errorf("parseBlockTime(%q) = %v, want today", bad, got)
 		}
+	}
+}
+
+// The fact-track ladder (STRATEGY §1.3).
+//
+// checkDeadlines used to re-list everything due within 48 hours every two hours
+// and send the same message again — nothing recorded that an item had already
+// been warned about, so a deadline three days out produced roughly two dozen
+// identical messages, and the only way to stop them was DeadlineAlerts, which
+// turns the whole fact track off.
+func TestDeadlineRungs(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		due  time.Time
+		want time.Duration
+		in   bool
+	}{
+		{"three days out", now.Add(72 * time.Hour), 0, false},
+		{"just over a day", now.Add(25 * time.Hour), 0, false},
+		{"inside 24h", now.Add(20 * time.Hour), 24 * time.Hour, true},
+		{"exactly 24h", now.Add(24 * time.Hour), 24 * time.Hour, true},
+		{"inside 12h", now.Add(6 * time.Hour), 12 * time.Hour, true},
+		{"inside 1h", now.Add(30 * time.Minute), time.Hour, true},
+		{"overdue", now.Add(-time.Hour), 0, true},
+	}
+	for _, tc := range cases {
+		got, in := domain.DeadlineRungFor(tc.due, now)
+		if in != tc.in || got != tc.want {
+			t.Errorf("%s: rung=%v in=%v, want %v/%v", tc.name, got, in, tc.want, tc.in)
+		}
+	}
+
+	// Each rung is its own occurrence, so climbing produces three messages and
+	// re-checking inside one produces none.
+	seen := map[string]bool{}
+	for _, left := range []time.Duration{20 * time.Hour, 18 * time.Hour, 6 * time.Hour, 5 * time.Hour, 30 * time.Minute} {
+		rung, _ := domain.DeadlineRungFor(now.Add(left), now)
+		seen[deadlineRunKey("a1", rung)] = true
+	}
+	if len(seen) != 3 {
+		t.Errorf("five checks across the ladder produced %d occurrence keys, want 3: %v", len(seen), seen)
+	}
+	if deadlineRunKey("a1", 0) != "due:a1:overdue" {
+		t.Errorf("the overdue key is %q; run keys are read by people too", deadlineRunKey("a1", 0))
 	}
 }

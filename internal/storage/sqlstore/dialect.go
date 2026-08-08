@@ -73,7 +73,12 @@ const legacyPromptCopy = `INSERT INTO prompt_overrides (prompt_key, locale, cont
 
 // sessionColumnMigrations builds the shared sessions-table column additions;
 // only the column type token differs per engine.
-func sessionColumnMigrations(textType string) []ColumnMigration {
+// sessionColumnMigrations is the shared ALTER list. It takes the dialect's own
+// spelling for the types it needs, because the DDL a fresh database gets from
+// CREATE TABLE and the DDL an existing one gets from ALTER must produce the SAME
+// column — dialect_parity_test.go asserts exactly that, and it is the test that
+// caught reminders_off being TINYINT(1) in one and INTEGER in the other.
+func sessionColumnMigrations(textType, boolType string) []ColumnMigration {
 	migs := []ColumnMigration{
 		{Table: "sessions", Column: "language",
 			DDL: `ALTER TABLE sessions ADD COLUMN language ` + textType + ` NOT NULL DEFAULT ''`},
@@ -93,6 +98,11 @@ func sessionColumnMigrations(textType string) []ColumnMigration {
 			DDL: `ALTER TABLE sessions ADD COLUMN persona_prompt TEXT`},
 		{Table: "sessions", Column: "preferences",
 			DDL: `ALTER TABLE sessions ADD COLUMN preferences TEXT`},
+		// The fact track's per-item mute (ζ½/η). INTEGER rather than the
+		// dialect's boolean spelling for the same reason every other flag here
+		// is: SQLite has no BOOLEAN, and the three dialects share this list.
+		{Table: "assignments", Column: "reminders_off",
+			DDL: `ALTER TABLE assignments ADD COLUMN reminders_off ` + boolType + ` NOT NULL DEFAULT 0`},
 	}
 	intType := "INTEGER"
 	if strings.Contains(textType, "VARCHAR") {

@@ -27,6 +27,16 @@
   patch:
     operationId: patchAssignment
     tags: [import]
+    summary: Planner status and/or the per-item reminder switch.
+    description: >-
+      Two independent fields, and the distinction matters: status "dismissed"
+      means "I am not doing this" and removes the item from counts and plans,
+      while remindersOff keeps it and only silences the deadline ladder.
+      At least one of the two must be present. STRATEGY §1.3 — the fact track can
+      only be turned off one item at a time.
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-    requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
-    responses: { '200': { description: OK } }
+    requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] }, remindersOff: { type: boolean } } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+      '400': { description: Neither field was sent, or an unknown status. }
+      '404': { description: No such assignment in this session. }

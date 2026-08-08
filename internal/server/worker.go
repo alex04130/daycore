@@ -409,7 +409,6 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 
 	loc := resolveLocation(tz)
 	now := time.Now().In(loc)
-	deadline := now.Add(48 * time.Hour)
 
 	assigns, err := w.s.store.Assignments().List(ctx, sid, domain.AssignmentFilter{})
 	if err != nil {
@@ -417,40 +416,54 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 		return
 	}
 
+	// The ladder (STRATEGY §1.3). This used to be a single 48-hour window: every
+	// two hours it re-listed everything due within two days and sent the same
+	// message again. Nothing recorded that an item had already been warned about,
+	// so a deadline three days out produced roughly two dozen identical messages
+	// before it arrived — and the only way to stop them was DeadlineAlerts, which
+	// turns the whole fact track off.
+	//
+	// Now: each item climbs 24h → 12h → 1h → overdue, and each rung fires at most
+	// once for that item because the occurrence key is (assignment, rung). Three
+	// or four messages over the life of a deadline, structurally, with no daily
+	// budget needed — which is what lets the fact track stay out of the ≤3/day
+	// suggestion budget honestly rather than as a loophole.
 	var urgent []domain.Assignment
+	rungs := map[string]time.Duration{}
 	for _, a := range assigns {
-		if a.DueAt == nil {
+		if a.DueAt == nil || a.RemindersOff {
 			continue
 		}
 		if a.Status == domain.AssignmentDone || a.Status == domain.AssignmentDismissed {
 			continue
 		}
-		if a.DueAt.After(now) && a.DueAt.Before(deadline) {
-			urgent = append(urgent, a)
+		rung, in := domain.DeadlineRungFor(*a.DueAt, now)
+		if !in {
+			continue
 		}
-		// Also flag overdue assignments (due_at < now) that aren't done yet.
-		if a.DueAt.Before(now) && a.Status != domain.AssignmentDone && a.Status != domain.AssignmentDismissed {
-			urgent = append(urgent, a)
+		// Claim per (assignment, rung): whoever gets it sends, everybody else —
+		// the next tick, the other instance, the process that just restarted —
+		// finds it taken and stays quiet.
+		if _, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, deadlineRunKey(a.ID, rung)); !ok {
+			continue
 		}
+		urgent = append(urgent, a)
+		rungs[a.ID] = rung
 	}
 
 	if len(urgent) == 0 {
-		// Nothing to say. Claiming here would write a row every two hours per
-		// session to record that nothing happened, burying the rows that mean
-		// something — which is exactly what JobRunRepository.Claim warns against.
 		return
 	}
 
-	// Two-hour slots, so two instances firing the same 0-mod-2 hour agree on the
-	// occurrence, and so a restart inside the same slot does not re-warn.
-	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, slotKey(now, loc, 2*time.Hour))
+	// One occurrence row for the message itself, so the send is claimed too.
+	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, "batch:"+slotKey(now, loc, 2*time.Hour))
 	if !ok {
 		return
 	}
 	var jobErr error
 	defer func() { w.finish(ctx, run, jobErr) }()
 
-	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent))
+	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent), "rungs", rungs)
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
@@ -462,6 +475,23 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 
 	msg := formatDeadlineWarning(locale, urgent, now)
 	w.sendToChannels(ctx, sid, msg)
+}
+
+// deadlineRunKey names one rung of one assignment.
+//
+// The rung is part of the key, so an item that crosses 24h, then 12h, then 1h
+// produces three distinct occurrences and therefore three messages — and
+// crossing the same rung again (a re-check two hours later) produces none.
+//
+// "overdue" rather than "0" for the past-due rung: run keys end up in a MySQL
+// VARCHAR(64) and in a Mongo _id built by concatenation, so they are read by
+// people as often as by code.
+func deadlineRunKey(assignmentID string, rung time.Duration) string {
+	name := "overdue"
+	if rung > 0 {
+		name = rung.String()
+	}
+	return "due:" + assignmentID + ":" + name
 }
 
 // ─── Rolling replan ──────────────────────────────────────────────────────────

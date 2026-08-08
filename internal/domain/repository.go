@@ -217,4 +217,9 @@ type AssignmentRepository interface {
 	// agent-created assignment means the row goes away, not that it gets
 	// dismissed — dismissal is a user-visible workflow state, not an erasure.
 	Delete(ctx context.Context, sessionID, id string) error
+	// SetReminders silences or restores the deadline ladder for one item —
+	// STRATEGY §1.3's "the fact track can only be turned off one item at a
+	// time". Separate from SetStatus: status is the planner workflow, this is
+	// whether the fact track may speak.
+	SetReminders(ctx context.Context, sessionID, id string, on bool) error
 }

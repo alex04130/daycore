@@ -290,6 +290,7 @@ func (postgresDialect) Migrations() []string {
 			html_url TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT 'canvas',
 			status TEXT NOT NULL DEFAULT 'pending',
+			reminders_off INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -444,7 +445,9 @@ func (postgresDialect) NormalizeDSN(dsn string) string { return dsn }
 
 func (postgresDialect) Quote(ident string) string { return `"` + ident + `"` }
 
-func (postgresDialect) ColumnMigrations() []ColumnMigration { return sessionColumnMigrations("TEXT") }
+func (postgresDialect) ColumnMigrations() []ColumnMigration {
+	return sessionColumnMigrations("TEXT", "INTEGER")
+}
 
 // ConditionalMigrations adds a generated tsvector column + GIN index over
 // materials (the generated column backfills existing rows automatically).

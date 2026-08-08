@@ -275,6 +275,7 @@ func (mysqlDialect) Migrations() []string {
 			html_url TEXT,
 			source VARCHAR(16) NOT NULL DEFAULT 'canvas',
 			status VARCHAR(16) NOT NULL DEFAULT 'pending',
+			reminders_off TINYINT(1) NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL,
 			UNIQUE KEY assignments_session_canvas (session_id, canvas_id),
@@ -453,7 +454,7 @@ func (mysqlDialect) NormalizeDSN(dsn string) string {
 func (mysqlDialect) Quote(ident string) string { return "`" + ident + "`" }
 
 func (mysqlDialect) ColumnMigrations() []ColumnMigration {
-	return sessionColumnMigrations("VARCHAR(64)")
+	return sessionColumnMigrations("VARCHAR(64)", "TINYINT(1)")
 }
 
 // ConditionalMigrations adds a FULLTEXT index over materials with the built-in

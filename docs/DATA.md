@@ -8,7 +8,7 @@
 |---|---|---|
 | chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, Status, **Attachments**} | `Attachments` **不是列**，读时从 `attachments` 表批量水合 |
 | companion.go | Message, Role 常量(user/assistant/system/tool), CompanionMemory | |
-| courses.go | Course, Assignment{Source: canvas/manual; Status: pending/planned/done/dismissed} | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文 |
+| courses.go | Course, Assignment{Source, Status, **RemindersOff**} + **DeadlineRungs/DeadlineRungFor**（事实轨阶梯） | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文；`RemindersOff` 与 `status=dismissed` 有意分开，见 STRATEGY §1.3 |
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
 | material_category.go | MaterialCategory 注册表（10 类，note/diet/health/academic/travel 默认开）+ MaterialCategoryByID | 加类别 = 此文件加一条目（含 `Names` 与 `Hints`，**两者都要每种 Supported locale 齐全**，见下「Go 侧显示名的多语言机制」）；写侧枚举校验在 handlers_materials_full.go `normalizeCategory`（空→note，未知→400；读侧不拦 legacy 自由文本）；会话级开关在 SessionPrefs.MaterialCategories |
 | plan.go | DayPlan, TimeBlock, BlockType, TimeMode(floating/fixed/local), Origin(auto/manual/rule), **LockLevel(""/none/soft/hard)** | 见下「块的锁定与重捞字段」 |
