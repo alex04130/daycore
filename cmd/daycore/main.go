@@ -208,6 +208,11 @@ func run(logger *slog.Logger) error {
 	// order of any of this.
 	srv.StartWorkerLease()
 	srv.StartJobRunPrune()
+	// Proposal lifecycle. Its first pass runs at boot, which is what settles the
+	// decision cards orphaned by the process that died — they are already lapsed
+	// (a decision card's TTL is the agent's own wait budget), so they need
+	// expiring, not a special case. See proposal_sweep.go.
+	srv.StartProposalSweep()
 
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
