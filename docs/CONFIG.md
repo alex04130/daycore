@@ -64,12 +64,12 @@
 
 | 环境变量 | Config 字段 | 密钥 | 为什么 / 注意 |
 |---|---|---|---|
-| `DEFAULT_CHAT_MODEL` | `DefaultChatModel` |  | selects among already-constructed catalog entries |
+| `DEFAULT_CHAT_MODEL` | `DefaultChatModel` |  | ⚠️ runtime by nature — it only selects among already-constructed catalog entries — but NOT hot yet: LoadCatalog bakes the choice in at startup. Making it hot means a setter on the Catalog. Classified by nature rather than by today's wiring, because the console needs to know which it is |
 | `DEFAULT_VISION_MODEL` | `DefaultVisionModel` |  | same |
 | `DEFAULT_PLANNER_MODEL` | `DefaultPlannerModel` |  | same |
-| `WEATHER_PROVIDER` | `WeatherProvider` |  | the provider chain is rebuilt per lookup |
+| `WEATHER_PROVIDER` | `WeatherProvider` |  | ⚠️ same shape: weather.New builds the chain once at startup, so a change needs a restart until that gains a setter |
 | `AI_REQUEST_TIMEOUT` | `AIRequestTimeout` |  | — |
-| `AI_RATE_LIMIT_PER_MIN` | `RateLimitPerMin` |  | ⚠️ the limiter is constructed in New with this value baked in — it is runtime by nature and NOT yet hot. Making it so means giving rateLimiter a setter, which is F4b's job |
+| `AI_RATE_LIMIT_PER_MIN` | `RateLimitPerMin` |  | ⚠️ the limiter is constructed in New with this value baked in — runtime by nature, NOT hot yet. Making it so means a setter on rateLimiter |
 | `AUTH_RATE_LIMIT_PER_MIN` | `AuthRateLimitPerMin` |  | same |
 | `AGENT_MAX_ROUNDS` | `AgentMaxRounds` |  | — |
 | `MAX_IMAGE_BYTES` | `MaxImageBytes` |  | — |
@@ -81,13 +81,38 @@
 | `DEFAULT_SECONDARY_LOCALE` | `DefaultLocales` |  | same |
 <!-- END GENERATED CONFIG TABLE -->
 
-## 还没做的：`settings` 覆盖表
+## `settings` 覆盖表（θ-F4b 落地）
 
-ROADMAP 的 F1 要求运行时那一层迁进一张 `settings` 表，环境变量降级为**种子**，DB 有值以 DB 为准。**有意还没建**，理由与本仓反复说的那条一样：它唯一的消费者是控制台端点（F4b），而这个仓库已经交付过六个「写完、测过、没人调用」的机制。
+运行时那一层的新值存在 `settings` 表里，环境变量降级为**种子**：没有行就用环境变量，有行就以行为准。域实体 [`internal/domain/setting.go`](../internal/domain/setting.go)，四个后端各一份实现，行为由 `storagetest` 的 `Setting/OverrideRoundTripAndReset` 守。
 
-**分类必须先存在** —— 表的形状设计不出来如果没有它，而上面那道闸门是在此期间维持它为真的东西。
+F1 当时**有意没建这张表** —— 它唯一的消费者是控制台端点，而本仓已经交付过六个「写完、测过、没人调用」的机制。F4b 是它第一次有消费者，两件事同批落地。
 
-⚠️ 表里两处诚实标注：`AI_RATE_LIMIT_PER_MIN` / `AUTH_RATE_LIMIT_PER_MIN` **按性质是运行时，但今天还不是热的**（限流器在 `New` 里就把值烘进去了）。没有标成启动期，因为控制台需要知道的是哪一种 —— 标错会让「将来要给它加 setter」这件事从待办变成一条错误的事实。
+### 快照，不是每次查库
+
+进程持有一份 `atomic.Pointer[config.Config]`：`Server.runtime()` 读它，`ReloadSettings` 在启动时和每次 PUT 之后原子换掉整份。
+
+- **取舍**：换掉的是整份配置而不是逐字段，所以一次请求里两次 `s.runtime()` 可能拿到不同的两份快照。接受这个 —— 替代方案是给每个读者传一份快照，那要改一百多个签名，换来的是一个没人会注意到的一致性。
+- **它防的是**：每次读一个阈值就查一次库。companion 组一次提示词读八次配置。
+- **边界**：`s.cfg` 是**启动期原件**，`Apply` 返回副本、绝不改它 —— 它是「重置」要还原到的东西，也是所有启动期构造物共享的那一份。运行时字段一律走 `s.runtime()`，由 [`config_snapshot_test.go`](../internal/server/config_snapshot_test.go) 的 AST 闸门守着；删掉一处 `runtime()` 改回 `s.cfg` 会红。
+
+### 端点：`GET·PUT /api/admin/config`
+
+- **密钥永不返回** —— 不是值、不是前缀、也不是长度。打码的密钥仍然告诉攻击者它有多长、两次读之间变没变，而这两样控制台都不需要。密钥只回 `set: true|false`。
+- **启动期项只读**：写它会被 400 `not_editable` 拒掉，而不是存下来。**一行控制台显示、进程忽略的配置是这里能出的最坏结果**（「我明明关掉了它还在跑」），所以宁可拒绝。
+- **整份请求先校验完再写**。控制台没有事务可用，写一半会让运维手里剩下一部分改动而无从分辨是哪部分。
+- **`null` 重置到环境种子，且与 `""` 是两个不同的请求** —— 对字符串型的旋钮，「恢复默认」和「设成空」不是一回事，只有其中一个的控制台撤销不了一次误操作。
+- **`requiresRestart` 按 key 报**，不是一个布尔。运维接下来要问的正是「我改的哪一条还在等」。
+- **降级模式下 GET 可用、PUT 返回 503**。存储没起来时控制台正是运维用来看哪里坏了的地方，配置页必须能读。
+
+### 按性质分类，不按今天的接线
+
+`notHotYet`（[handlers_admin_config.go](../internal/server/handlers_admin_config.go)）列出那些**按性质是运行时、但今天的值在构造时就被烘进去**的旋钮：两个限流器（`New` 里构造）、三个默认模型（`LoadCatalog` 解析一次）、`WEATHER_PROVIDER`（`weather.New` 建链一次）。
+
+它们没有被标成启动期，因为控制台需要知道的是哪一种；标错会让「将来给它加 setter」从待办变成一条错误的事实。存覆盖是接受的、也是对的，只是要重启才生效 —— 端点如实说出这件事，这是一个诚实的控制台和一个安静撒谎的控制台之间的差别。这张名单随每个 setter 落地而变短；它是写死的而不是推导的，因为「这个值有没有在启动时被复制走」从类型上看不出来。
+
+### 坏行不能连累其他行
+
+`Apply` 逐 key 收集问题而不是整体失败：一条读不动的行（旧版本留下的、或手写的 INSERT）不该让运维丢掉其余全部覆盖，启动时尤其不该。`Apply` 内部会**再查一次** `Overridable` —— 端点已经查过了，这里仍然查，因为一行可能早于一次重分类，也可能是绕过端点直接写进库的。
 
 ## 相关
 

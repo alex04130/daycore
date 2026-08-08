@@ -328,6 +328,11 @@ func (sqliteDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			setting_key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT '',
+			updated_at BIGINT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,

@@ -184,7 +184,7 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 		}
 		answer.WriteString(text)
 	}
-	for round := 0; round < s.cfg.AgentMaxRounds; round++ {
+	for round := 0; round < s.runtime().AgentMaxRounds; round++ {
 		// Every extra round is one more model call — charge it to the same
 		// per-IP budget as a fresh request so agent loops can't sidestep it.
 		if round > 0 && !s.limiter.Allow(s.clientIP(r)) {

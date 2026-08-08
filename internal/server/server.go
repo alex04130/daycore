@@ -81,6 +81,19 @@ type Server struct {
 	ticksDone chan struct{}
 	tickWG    sync.WaitGroup
 
+	// runtimeCfg is cfg with the stored runtime overrides applied (θ-F4b).
+	//
+	// A separate snapshot rather than mutating cfg: cfg is shared by everything
+	// constructed from it at boot, and rewriting its fields under a live server
+	// races with every reader. Published atomically, so a reload is one pointer
+	// swap and an in-flight request keeps the snapshot it started with.
+	//
+	// ⚠️ Read RUNTIME-classified fields through s.runtime(), never s.cfg —
+	// TestRuntimeFieldsAreReadThroughTheSnapshot fails the build otherwise,
+	// because a runtime knob read from the boot config is a console setting the
+	// process silently ignores.
+	runtimeCfg atomic.Pointer[config.Config]
+
 	// Degraded boot (see degraded.go): storage was unavailable at startup, so
 	// this process serves only what needs no database.
 	degraded degraded
@@ -117,6 +130,46 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// runtime is the current configuration: boot values with the stored runtime
+// overrides applied. Never nil — it falls back to the boot config, which is what
+// a degraded process and every test get.
+func (s *Server) runtime() *config.Config {
+	if c := s.runtimeCfg.Load(); c != nil {
+		return c
+	}
+	return s.cfg
+}
+
+// ReloadSettings rebuilds the runtime snapshot from the overrides table.
+//
+// Called at boot and after every console write. Best-effort by design: a
+// database that cannot be read is a deployment already in trouble, and refusing
+// to start over it would mean the console — the thing that could fix it — is
+// also gone. The seeds are still correct in that case; they are just not
+// overridden.
+func (s *Server) ReloadSettings(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	rows, err := s.store.Settings().All(ctx)
+	if err != nil {
+		return err
+	}
+	overrides := make(map[string]string, len(rows))
+	for _, r := range rows {
+		overrides[r.Key] = r.Value
+	}
+	next, problems := s.cfg.Apply(overrides)
+	for _, p := range problems {
+		// A stored row that no longer applies — left by an older build, or by a
+		// hand-written INSERT. Logged rather than fatal: one bad row must not
+		// cost the operator every other override they set.
+		s.log.Warn("ignoring a stored setting", "err", p)
+	}
+	s.runtimeCfg.Store(next)
+	return nil
 }
 
 // SetWorker attaches the background worker so handlers (e.g. channel verify) can

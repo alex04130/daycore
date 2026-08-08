@@ -127,6 +127,11 @@ func init() {
 		"zh-CN": "这份课表看起来属于 %s，而你现在的时区是 %s。按哪个导入？",
 		"en-US": "This timetable looks like it belongs to %s, and you are in %s. Which one should it be imported as?",
 	})
+	i18n.Register("err.adminConfig.unauthorized", i18n.Text{"zh-CN": "需要管理凭证"})
+	i18n.Register("err.adminConfig.bad_request", i18n.Text{"zh-CN": "请求格式错误：需要 settings 对象"})
+	i18n.Register("err.adminConfig.degraded", i18n.Text{"zh-CN": "存储不可用，改不了配置 —— 环境变量那一层仍然生效"})
+	i18n.Register("err.adminConfig.internal", i18n.Text{"zh-CN": "保存配置失败"})
+	i18n.Register("err.adminConfig.internal2", i18n.Text{"zh-CN": "配置已写入，但重新载入失败 —— 重启后生效"})
 	i18n.Register("err.adminLogin.internal", i18n.Text{"zh-CN": "签发管理会话失败"})
 	i18n.Register("err.fileList.internal", i18n.Text{"zh-CN": "读取待发送文件失败"})
 	i18n.Register("err.fileDownload.file_not_found", i18n.Text{"zh-CN": "文件不存在"})

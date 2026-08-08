@@ -153,7 +153,7 @@ func attachmentModality(a domain.Attachment) ai.Modality {
 // model request" limit, and it is a different question from "fits on the disk".
 // A 30 MiB PDF is a perfectly good upload and a terrible prompt.
 func (s *Server) readBlobBase64(ctx context.Context, a domain.Attachment) (string, error) {
-	if a.Size > s.cfg.MaxImageBytes {
+	if a.Size > s.runtime().MaxImageBytes {
 		return "", errors.New("attachment is too large to inline into a model request")
 	}
 	rc, _, err := s.blobs.Get(ctx, blob.Ref(a.Ref))
@@ -161,11 +161,11 @@ func (s *Server) readBlobBase64(ctx context.Context, a domain.Attachment) (strin
 		return "", err
 	}
 	defer rc.Close()
-	raw, err := io.ReadAll(io.LimitReader(rc, s.cfg.MaxImageBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(rc, s.runtime().MaxImageBytes+1))
 	if err != nil {
 		return "", err
 	}
-	if int64(len(raw)) > s.cfg.MaxImageBytes {
+	if int64(len(raw)) > s.runtime().MaxImageBytes {
 		return "", errors.New("attachment is too large to inline into a model request")
 	}
 	return base64.StdEncoding.EncodeToString(raw), nil

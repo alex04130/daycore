@@ -1,3 +1,97 @@
+/api/admin/config:
+  get:
+    operationId: adminConfigGet
+    tags: [admin]
+    summary: Every configuration knob, both layers, with where its value came from.
+    description: >-
+      Two layers, and the console may only write one. BOOT settings built
+      something at startup — a socket, a database handle, a signing key — so a
+      new value cannot change the thing already built; they are shown read-only.
+      RUNTIME settings are read fresh at each use, so an override takes effect on
+      the next read.
+
+      `source` says whether the active value came from the environment seed or
+      from a stored override, which is what makes a meaningful reset control
+      possible.
+
+      `requiresRestart` marks a knob that is runtime BY NATURE but whose value
+      was copied into something at construction (the rate limiters, the model
+      catalog, the weather chain). Storing the override is accepted and correct;
+      it simply will not take effect until a restart, and the console should say
+      so rather than imply the change is live.
+
+      SECRETS ARE NEVER RETURNED — not the value, not a prefix, not a length. A
+      masked secret still leaks how long it is and whether it changed between two
+      reads. `set` says whether it is configured, which is all the console needs.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                settings:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      env: { type: string, description: The environment variable name. }
+                      key: { type: string, description: "The Config field — this is what PUT takes." }
+                      layer: { type: string, enum: [boot, runtime] }
+                      value: { type: string, description: Absent for secrets. }
+                      set: { type: boolean, description: "Configured at all; the only answer given for a secret." }
+                      secret: { type: boolean }
+                      source: { type: string, enum: [env, override] }
+                      editable: { type: boolean, description: "layer==runtime and not a secret." }
+                      why: { type: string, description: Why a surprising classification is what it is. }
+                      requiresRestart: { type: boolean }
+      '401': { description: No admin credential. }
+  put:
+    operationId: adminConfigPut
+    tags: [admin]
+    summary: Set or reset runtime overrides.
+    description: >-
+      `{"settings": {"MaxUploadBytes": "8388608", "AgentMaxRounds": null}}` —
+      a string sets the override, NULL resets the key to its environment seed.
+      Those are deliberately different from `""`: for a string knob "back to the
+      default" and "set it to nothing" are different requests, and a console with
+      only one of them cannot undo a mistake.
+
+      The whole request is validated before any of it is written. A partial apply
+      would leave the operator with some edits in place and no way to tell which,
+      and there is no transaction to offer them.
+
+      Boot-layer and secret keys are refused with a reason rather than stored —
+      a row the console displays and the process ignores is the worst outcome
+      available here.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [settings]
+            properties:
+              settings:
+                type: object
+                additionalProperties: { type: string, nullable: true }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ok: { type: boolean }
+                requiresRestart:
+                  type: array
+                  items: { type: string }
+                  description: "Keys whose new value waits for a restart. Per key, not one boolean — the operator's next question is WHICH one."
+      '400': { description: "unknown_setting, not_editable, or bad_value." }
+      '401': { description: No admin credential. }
+      '503': { description: "degraded — storage is unavailable, so overrides cannot be written. The environment layer still applies." }
 /api/admin/session:
   post:
     operationId: adminLogin

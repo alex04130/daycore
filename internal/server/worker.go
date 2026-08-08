@@ -161,9 +161,9 @@ func (w *Worker) resolveTZ(sid, tz string) string {
 		}
 	}
 	fallback := "UTC"
-	if w.s != nil && w.s.cfg != nil && w.s.cfg.WorkerDefaultTZ != "" {
-		if _, err := time.LoadLocation(w.s.cfg.WorkerDefaultTZ); err == nil {
-			fallback = w.s.cfg.WorkerDefaultTZ
+	if w.s != nil && w.s.cfg != nil && w.s.runtime().WorkerDefaultTZ != "" {
+		if _, err := time.LoadLocation(w.s.runtime().WorkerDefaultTZ); err == nil {
+			fallback = w.s.runtime().WorkerDefaultTZ
 		}
 	}
 	if tz != "" {

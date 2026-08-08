@@ -123,6 +123,7 @@ var cases = []suiteCase{
 	{"Attachment/DeleteReturnsTheRowAndSparesBound", attachmentDeleteReturnsRows},
 	{"Attachment/DeleteByThreadTakesItsBytes", attachmentDeleteByThread},
 	{"Attachment/PruneReclaimsOnlyUnsentUploads", attachmentPruneUnbound},
+	{"Setting/OverrideRoundTripAndReset", settingRoundTrip},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1774,5 +1775,96 @@ func attachmentPruneUnbound(t *testing.T, h Harness) {
 	}
 	if _, err := s.Attachments().Get(bg(), "s1", sent.ID); err != nil {
 		t.Errorf("prune reclaimed an attachment that belongs to a message: %v", err)
+	}
+}
+
+// ── settings (θ-F4b) ────────────────────────────────────────────────────────
+
+// The runtime half of configuration layering. Small surface, and every part of
+// it is load-bearing for the console:
+//
+//   - Set is an upsert, because "change this again" is the normal case and the
+//     console has no idea whether a row exists.
+//   - Delete restores the environment seed, and MUST be distinguishable from
+//     setting the value to "": for a string knob those are different requests,
+//     and a backend that conflated them would make "reset to default" silently
+//     mean "set to empty".
+//   - Deleting what is not there is not an error. Two consoles clicking reset is
+//     ordinary, and so is clicking it on a knob that was never overridden.
+func settingRoundTrip(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+
+	if got, err := s.Settings().All(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a fresh store has %d overrides (err=%v); nil must come back as an empty slice", len(got), err)
+	}
+	if err := s.Settings().Set(ctx, "MaxUploadBytes", "1048576"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Settings().Set(ctx, "AgentMaxRounds", "3"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Settings().All(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("All returned %d, want 2: %+v", len(got), got)
+	}
+	byKey := map[string]domain.Setting{}
+	for _, x := range got {
+		byKey[x.Key] = x
+	}
+	if byKey["MaxUploadBytes"].Value != "1048576" {
+		t.Errorf("round trip lost the value: %+v", byKey["MaxUploadBytes"])
+	}
+	if byKey["AgentMaxRounds"].UpdatedAt.IsZero() {
+		t.Error("no updated_at; the console shows when a setting last changed")
+	}
+
+	// Upsert, not insert-or-fail.
+	if err := s.Settings().Set(ctx, "AgentMaxRounds", "6"); err != nil {
+		t.Fatalf("re-setting an existing key failed: %v", err)
+	}
+	got, _ = s.Settings().All(ctx)
+	if len(got) != 2 {
+		t.Errorf("re-setting created a second row: %+v", got)
+	}
+
+	// An empty value is a value.
+	if err := s.Settings().Set(ctx, "DefaultVisionModel", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Settings().All(ctx)
+	var sawEmpty bool
+	for _, x := range got {
+		if x.Key == "DefaultVisionModel" {
+			sawEmpty = true
+		}
+	}
+	if !sawEmpty {
+		t.Error("setting a knob to the empty string stored nothing — that is a different request from resetting it")
+	}
+
+	// Delete restores the seed, and is boring when repeated.
+	if err := s.Settings().Delete(ctx, "AgentMaxRounds"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Settings().Delete(ctx, "AgentMaxRounds"); err != nil {
+		t.Errorf("deleting an absent override errored: %v", err)
+	}
+	if err := s.Settings().Delete(ctx, "never-set"); err != nil {
+		t.Errorf("resetting a knob that was never overridden errored: %v", err)
+	}
+	got, _ = s.Settings().All(ctx)
+	for _, x := range got {
+		if x.Key == "AgentMaxRounds" {
+			t.Error("delete did not remove the override")
+		}
+	}
+
+	// An empty key is a row nothing can ever read back.
+	if err := s.Settings().Set(ctx, "", "x"); err == nil {
+		t.Error("an empty key was accepted")
 	}
 }

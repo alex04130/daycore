@@ -40,6 +40,11 @@ type Store interface {
 	Rhythm() RhythmRepository
 	Locales() LocaleRepository
 
+	// Settings is the runtime half of the configuration layering: the boot half
+	// stays in the environment because it built something already. See
+	// setting.go and internal/config/layer.go.
+	Settings() SettingRepository
+
 	// Attachments is the ownership half of the file bus: internal/blob maps refs
 	// to bytes and knows nothing about sessions, so these rows are what makes a
 	// ref safe to resolve. See attachment.go.

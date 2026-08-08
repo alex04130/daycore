@@ -123,14 +123,14 @@ var Settings = []Setting{
 
 	// ── genuinely runtime ──
 	{Env: "DEFAULT_CHAT_MODEL", Field: "DefaultChatModel", Layer: LayerRuntime,
-		Why: "selects among already-constructed catalog entries"},
+		Why: "⚠️ runtime by nature — it only selects among already-constructed catalog entries — but NOT hot yet: LoadCatalog bakes the choice in at startup. Making it hot means a setter on the Catalog. Classified by nature rather than by today's wiring, because the console needs to know which it is"},
 	{Env: "DEFAULT_VISION_MODEL", Field: "DefaultVisionModel", Layer: LayerRuntime, Why: "same"},
 	{Env: "DEFAULT_PLANNER_MODEL", Field: "DefaultPlannerModel", Layer: LayerRuntime, Why: "same"},
 	{Env: "WEATHER_PROVIDER", Field: "WeatherProvider", Layer: LayerRuntime,
-		Why: "the provider chain is rebuilt per lookup"},
+		Why: "⚠️ same shape: weather.New builds the chain once at startup, so a change needs a restart until that gains a setter"},
 	{Env: "AI_REQUEST_TIMEOUT", Field: "AIRequestTimeout", Layer: LayerRuntime},
 	{Env: "AI_RATE_LIMIT_PER_MIN", Field: "RateLimitPerMin", Layer: LayerRuntime,
-		Why: "⚠️ the limiter is constructed in New with this value baked in — it is runtime by nature and NOT yet hot. Making it so means giving rateLimiter a setter, which is F4b's job"},
+		Why: "⚠️ the limiter is constructed in New with this value baked in — runtime by nature, NOT hot yet. Making it so means a setter on rateLimiter"},
 	{Env: "AUTH_RATE_LIMIT_PER_MIN", Field: "AuthRateLimitPerMin", Layer: LayerRuntime, Why: "same"},
 	{Env: "AGENT_MAX_ROUNDS", Field: "AgentMaxRounds", Layer: LayerRuntime},
 	{Env: "MAX_IMAGE_BYTES", Field: "MaxImageBytes", Layer: LayerRuntime},

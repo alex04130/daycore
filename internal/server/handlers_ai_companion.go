@@ -66,7 +66,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	}
 	s.decisions.cancelForSession(sid) // a new message supersedes any pending card
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	locale := s.requestLocale(r)

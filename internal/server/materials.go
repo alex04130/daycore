@@ -18,7 +18,7 @@ func (s *Server) companionMaterials(ctx context.Context, sid string) (assignment
 	if sid == "" {
 		return
 	}
-	if items := s.upcomingAssignments(ctx, sid, s.cfg.AssignmentLookaheadDays); items != nil {
+	if items := s.upcomingAssignments(ctx, sid, s.runtime().AssignmentLookaheadDays); items != nil {
 		assignmentsCtx = marshalCompact(assignmentSummaries(items))
 	}
 	if rules, err := s.store.Rules().List(ctx, sid); err == nil {

@@ -24,6 +24,7 @@
 | lock.go | LockLevel 常量 + 派生规则 | 配 `api/lock-rules.json` 契约夹具 |
 | mood_kind.go | 心情注册表（12 种 + valence） | 存 id 不存标签 —— 多语言扩展的前提 |
 | attachment.go | Attachment + AttachmentRepository | 文件总线的**所有权那一半**，见下「附件与文件总线」 |
+| setting.go | Setting + SettingRepository | 运行时配置覆盖（θ-F4b）；**部署级不是会话级**，见下「运行时配置覆盖表」 |
 | tempcontext.go / channel.go / feedback.go / errors.go | TempContext / ChannelBinding / FeedbackLog / 哨兵错误 | |
 
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
@@ -48,7 +49,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 33 张表 DDL 全部合法（三方言表名集合完全一致）、42 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 34 张表 DDL 全部合法（三方言表名集合完全一致）、43 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件**，最近一次全量复跑 2026-08-08（θ-F4b 的 `settings`）。
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -298,6 +299,23 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 | 已绑定的附件不能单独删 | 它是那条消息的一部分了；出口是删消息 |
 
 ⚠️ **`Material.StorageRef` 仍然没有生产方**。ROADMAP「待拍板」第 1 条（签名 ref vs `blobs` 表）的**落地那一半就是这张表**：持久化的东西写行。瞬态签名 ref 那一半仍未做 —— 下载一律由 `GET /api/files/{id}` 代理，`blob.SignedURL` 至今零调用方。
+
+## 运行时配置覆盖表（`settings`，θ-F4b，2026-08-07）
+
+一张两列半的小表：`setting_key` / `value` / `updated_at`。分层规则、端点语义、`notHotYet` 名单在 [CONFIG.md](CONFIG.md)，这里只记数据层这一侧的四个决定。
+
+| 决定 | 为什么 |
+|---|---|
+| **列叫 `setting_key` 不叫 `key`** | `KEY` 是 MySQL 保留字。照 `rows_json` / `start_time` 的先例改名，不用反引号 —— 反引号只在 MySQL 里合法，三方言 DDL 是共用同一份 SQL 写出来的 |
+| **主键是 Config 的**字段名**，不是环境变量名** | 字段名才是代码读的、也是 `config.Apply` 反射匹配的东西。环境变量是运维对同一样东西的叫法，住在分类表里 |
+| **值一律存字符串** | 表因此不必建模类型系统。解析在 `config.Apply`，那是唯一知道某个字段是什么类型的地方，也是环境变量解析所在的同一处 |
+| **部署级，不带 session_id** | 这是运维的设置，运维视角只有一个。与本仓其余几乎所有表相反，所以值得写下来 —— 别照抄别的 repo 的会话收口 |
+
+**边界**：启动期旋钮与密钥**永不进这张表**（端点拒收，`Apply` 读到也再拒一次）。密钥不进的理由与端点那条不同：这张表凡有数据库访问权的东西都读得到，一把签名密钥躺在这里就是它躺在每一份备份里。
+
+**取舍**：`All` 没有过滤参数。表小、读得稀（启动一次 + 每次 PUT 后一次），加一个 `Get(key)` 只会多一条要在四个后端保持一致的行为。
+
+行为套件加了 1 例（`Setting/OverrideRoundTripAndReset`，第 43 例）：覆盖写入即读回、重复写是更新不是插入、`""` 与「删掉」是两回事、删不存在的 key 幂等、空 key 拒收。
 
 ## 心情注册表（`domain/mood_kind.go`）
 

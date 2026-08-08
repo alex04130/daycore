@@ -41,7 +41,7 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	data := ai.ThemeGenData{

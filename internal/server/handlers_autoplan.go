@@ -116,13 +116,13 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days := int(toT.Sub(fromT).Hours()/24) + 1
-	if days > s.cfg.AutoPlanMaxDays {
+	if days > s.runtime().AutoPlanMaxDays {
 		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "range_too_large",
-			"err.aIAutoPlan.range_too_large", s.cfg.AutoPlanMaxDays)
+			"err.aIAutoPlan.range_too_large", s.runtime().AutoPlanMaxDays)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	// ── gather materials ─────────────────────────────────────────────────
@@ -166,7 +166,7 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	horizon := toT.AddDate(0, 0, s.cfg.AssignmentLookaheadDays)
+	horizon := toT.AddDate(0, 0, s.runtime().AssignmentLookaheadDays)
 	dueFrom := now.Add(-24 * time.Hour)
 	assignments, _ := s.store.Assignments().List(ctx, sid, domain.AssignmentFilter{DueFrom: &dueFrom, DueTo: &horizon})
 	plannable := assignments[:0]

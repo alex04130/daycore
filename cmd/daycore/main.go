@@ -223,6 +223,14 @@ func run(logger *slog.Logger) error {
 		srv.EnterDegraded(degradedReason)
 	}
 
+	// Runtime configuration overrides (θ-F4b). Best-effort for the same reason
+	// the locale overrides are: a database that cannot be read is a deployment
+	// already in trouble, and refusing to start over it would take away the
+	// console that could fix it. The environment seeds are still correct.
+	if err := srv.ReloadSettings(context.Background()); err != nil {
+		logger.Warn("could not load runtime settings; using the environment seeds", "err", err)
+	}
+
 	// Pull the database layer of the message catalog. Best-effort: a translation
 	// override that cannot be read is a degraded language, not a reason to refuse
 	// to boot — the file and embedded layers still render every page.

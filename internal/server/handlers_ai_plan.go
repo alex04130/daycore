@@ -53,7 +53,7 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	dc := ai.BuildDateContext(body.Date, body.Weekday, body.Time, body.Timezone, s.requestLocale(r))
@@ -130,12 +130,12 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "no_image", "message": "请上传图片"})
 		return
 	}
-	if int64(len(body.ImageBase64))*3/4 > s.cfg.MaxImageBytes {
+	if int64(len(body.ImageBase64))*3/4 > s.runtime().MaxImageBytes {
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "image_too_large", "message": "图片太大了，换一张小一点的截图试试？"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	dc := ai.BuildDateContext(body.Date, body.Weekday, body.Time, body.Timezone, s.requestLocale(r))
@@ -210,12 +210,12 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "no_image", "message": "请上传图片"})
 		return
 	}
-	if int64(len(body.ImageBase64))*3/4 > s.cfg.MaxImageBytes {
+	if int64(len(body.ImageBase64))*3/4 > s.runtime().MaxImageBytes {
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "image_too_large", "message": "图片太大了，换一张小一点的截图试试？"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	dc := ai.BuildDateContext(body.Date, body.Weekday, body.Time, body.Timezone, s.requestLocale(r))

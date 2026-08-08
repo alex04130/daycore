@@ -165,7 +165,7 @@ func (s *Server) handleAICompanionAsync(w http.ResponseWriter, r *http.Request) 
 	tz := body.Timezone
 
 	s.GoTracked(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.AIRequestTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), s.runtime().AIRequestTimeout)
 		defer cancel()
 		finalize := func(content, toolEvents, status string) {
 			upd := domain.ChatMessageUpdate{Content: &content, Status: &status}

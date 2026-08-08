@@ -54,14 +54,14 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Exactly the limit is allowed; MaxBytesReader errors on the byte after.
-	body := http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
+	body := http.MaxBytesReader(w, r.Body, s.runtime().MaxUploadBytes)
 	defer body.Close()
 
 	ref, meta, err := s.blobs.Put(r.Context(), mimeType, body)
 	if err != nil {
 		if errors.Is(err, blob.ErrTooLarge) || isMaxBytesError(err) {
 			s.writeErrf(w, locale, http.StatusRequestEntityTooLarge, "too_large",
-				"err.fileUpload.too_large", s.cfg.MaxUploadBytes/(1<<20))
+				"err.fileUpload.too_large", s.runtime().MaxUploadBytes/(1<<20))
 			return
 		}
 		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.fileUpload.internal")

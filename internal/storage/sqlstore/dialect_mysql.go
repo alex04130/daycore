@@ -332,6 +332,11 @@ func (mysqlDialect) Migrations() []string {
 			created_at BIGINT NOT NULL,
 			KEY chat_messages_thread (thread_id, created_at)
 		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			setting_key VARCHAR(191) PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id VARCHAR(191) PRIMARY KEY,
 			session_id VARCHAR(191) NOT NULL,

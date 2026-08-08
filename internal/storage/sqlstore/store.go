@@ -169,6 +169,7 @@ func (s *Store) Rapport() domain.RapportRepository                { return rappo
 func (s *Store) Rhythm() domain.RhythmRepository                  { return rhythmRepo{s} }
 func (s *Store) Locales() domain.LocaleRepository                 { return localeRepo{s} }
 func (s *Store) Attachments() domain.AttachmentRepository         { return attachmentRepo{s} }
+func (s *Store) Settings() domain.SettingRepository               { return settingRepo{s} }
 func (s *Store) Wishes() domain.WishRepository                    { return wishRepo{s} }
 func (s *Store) Feedback() domain.FeedbackLogRepository           { return feedbackRepo{s} }
 func (s *Store) TempContexts() domain.TempContextRepository       { return tempContextRepo{s} }
