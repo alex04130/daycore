@@ -1,4 +1,4 @@
-.PHONY: help run build test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 
@@ -48,6 +48,9 @@ api-lock: ## Freeze the current contract surface at the current APIVersion.APIMi
 
 api-surface: ## Regenerate the route table in docs/API_SURFACE.md from the registry
 	go test ./internal/server/ -run TestRouteSurfaceDoc -update
+
+config-doc: ## Regenerate the layering tables in docs/CONFIG.md from internal/config
+	go test ./internal/config/ -run TestConfigDocIsCurrent -update
 
 vet: ## go vet
 	go vet ./...
