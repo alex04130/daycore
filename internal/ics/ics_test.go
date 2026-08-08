@@ -3,6 +3,7 @@ package ics
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 const sample = "BEGIN:VCALENDAR\r\n" +
@@ -33,16 +34,16 @@ const sample = "BEGIN:VCALENDAR\r\n" +
 	"END:VCALENDAR\r\n"
 
 func TestParse(t *testing.T) {
-	events, warnings, err := Parse(sample)
+	cal, warnings, err := Parse(sample, time.UTC)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 4 {
-		t.Fatalf("events = %d, want 4", len(events))
+	if len(cal.Events) != 4 {
+		t.Fatalf("events = %d, want 4", len(cal.Events))
 	}
 
 	// Weekly course with folded LOCATION and escaped comma.
-	c := events[0]
+	c := cal.Events[0]
 	if c.Summary != "CSCI 3081 Software Design, Sec 010" {
 		t.Fatalf("summary = %q", c.Summary)
 	}
@@ -66,17 +67,17 @@ func TestParse(t *testing.T) {
 	}
 
 	// One-off UTC event.
-	if events[1].RRule != nil || events[1].AllDay {
-		t.Fatalf("advisor meeting: %+v", events[1])
+	if cal.Events[1].RRule != nil || cal.Events[1].AllDay {
+		t.Fatalf("advisor meeting: %+v", cal.Events[1])
 	}
 
 	// All-day event.
-	if !events[2].AllDay {
+	if !cal.Events[2].AllDay {
 		t.Fatalf("career fair should be all-day")
 	}
 
 	// YEARLY downgrades to one-off with a warning.
-	if events[3].RRule != nil {
+	if cal.Events[3].RRule != nil {
 		t.Fatalf("yearly must downgrade to one-off")
 	}
 	found := false
@@ -91,15 +92,15 @@ func TestParse(t *testing.T) {
 }
 
 func TestParseRejectsNonICS(t *testing.T) {
-	if _, _, err := Parse("hello world"); err == nil {
+	if _, _, err := Parse("hello world", time.UTC); err == nil {
 		t.Fatal("expected error for non-ics payload")
 	}
 }
 
 func TestParseEventWithoutDTSTARTIsSkipped(t *testing.T) {
 	payload := "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:broken\nEND:VEVENT\nEND:VCALENDAR"
-	events, warnings, err := Parse(payload)
-	if err != nil || len(events) != 0 || len(warnings) != 1 {
-		t.Fatalf("events=%d warnings=%v err=%v", len(events), warnings, err)
+	cal, warnings, err := Parse(payload, time.UTC)
+	if err != nil || len(cal.Events) != 0 || len(warnings) != 1 {
+		t.Fatalf("events=%d warnings=%v err=%v", len(cal.Events), warnings, err)
 	}
 }

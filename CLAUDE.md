@@ -19,7 +19,7 @@
 前后端分离部署：Go 后端收敛为纯 API 服务，四个前端各自独立构建部署、做成 **git 子仓库**，与后端只靠 **API 契约 + 版本号**同步 —— 前端声明最低 API 支持，后端由 `GET /api/version` 报告。落地方案见 `docs/EXPERIENCE_CORE.md` 与计划文件。
 
 **版本号分三层，不要混**：
-1. 后端构建版本 — `internal/version/version.go` 的 `Version` + `Channel`（现 `2.2.0-beta`）
+1. 后端构建版本 — `internal/version/version.go` 的 `Version` + `Channel`（现 `2.2.0-beta`）。**它是「第几个修改批次」不是发布号**：`2.2 → 2.3` 的意思是**一整份规划实现完了**（vNext 路线图从头到尾），不是「加了些功能」。ζ 到 κ 全部挂在 2.2.0-beta 下，别提前升。
 2. **API 契约版本** — 同文件 `APIVersion` + `APIMinor`（现 `1` / `8`）。**四个前端子仓握手用的是这个**；breaking 改动升 `APIVersion`，additive 升 `APIMinor`
 3. 各前端自己的版本号 — 独立迭代，与上面两个解耦（`design-ui/API_CONTRACT.md` 抬头的「v4」就是这一层，不是 API 版本）
 
@@ -37,7 +37,7 @@
 
 ## 常用事实
 
-- 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta。
+- 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta，**minor 只在一整份规划完成时 +1**。发布节奏：v2 beta → 小范围内测 → v2 继续改 → 公测 → v3 正式版。
 - 构建验证：`go build ./... && go vet ./... && go test ./...`（或 `make test`，会先跑 i18n 校验）。
 - 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
 - **存储层改动的验收标准是 `internal/storage/storagetest` 的行为套件**（42 个用例，**四个后端跑同一份**）。它测的是四个后端必须一致的**行为**，`dialect_parity_test.go` 是三方言 DDL 的**静态**比对，两者互不替代。本机跑真机那几个：`make test-mongo`（Mongo）、`make test-sql`（PG + MySQL）。

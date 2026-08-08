@@ -32,35 +32,81 @@ type RRule struct {
 	Count    int // 0 = unset
 }
 
+// Calendar is one parsed .ics file: its events plus what the file itself says
+// about time.
+//
+// The two extra fields exist because "when is this class" has two different
+// answers and only one of them is in the events:
+//
+//	Timezone  what the FILE claims, from X-WR-TIMEZONE. Google Calendar and
+//	          most university exports write it; it is the closest thing an .ics
+//	          has to "these wall-clock times belong to this city".
+//	Floating  at least one event gave a time with no Z and no TZID. Those are
+//	          the ones whose meaning depends entirely on the answer above, and
+//	          they are the common case in university timetable exports.
+//
+// A file that is all-UTC or all-TZID needs no question asked; one with floating
+// times and no X-WR-TIMEZONE is one where somebody has to say.
+type Calendar struct {
+	Events   []Event
+	Timezone string
+	Floating bool
+}
+
 // Parse reads an .ics payload. Per-event problems become warnings; only a
 // payload with no VCALENDAR structure at all errors.
-func Parse(data string) ([]Event, []string, error) {
+//
+// defaultTZ is what floating times (no Z, no TZID) are interpreted in. It is a
+// REQUIRED argument rather than a fallback to time.Local, which is what this
+// used to do — and time.Local is the server's zone, which has nothing to do with
+// either the user or the timetable. A container in UTC and a laptop in Shanghai
+// parsed the same file into times eight hours apart, silently.
+//
+// X-WR-TIMEZONE, when present, overrides defaultTZ for floating times: the file
+// saying which city its wall clocks belong to is better evidence than anything
+// the caller can guess. The caller still gets Calendar.Timezone so it can ask.
+func Parse(data string, defaultTZ *time.Location) (Calendar, []string, error) {
+	if defaultTZ == nil {
+		defaultTZ = time.UTC
+	}
 	lines := unfold(data)
 	if len(lines) == 0 {
-		return nil, nil, fmt.Errorf("empty ics payload")
+		return Calendar{}, nil, fmt.Errorf("empty ics payload")
 	}
 
 	var (
-		events   []Event
+		cal      Calendar
 		warnings []string
 		cur      map[string]property
 		inEvent  bool
 		sawCal   bool
 	)
+	// Two passes over the header would be tidier; one pass is enough because
+	// X-WR-TIMEZONE is a VCALENDAR property and therefore always precedes the
+	// first VEVENT in any file that has it.
 	for _, line := range lines {
 		name, params, value := splitLine(line)
 		switch {
 		case name == "BEGIN" && strings.EqualFold(value, "VCALENDAR"):
 			sawCal = true
+		case !inEvent && strings.EqualFold(name, "X-WR-TIMEZONE"):
+			if tz := strings.TrimSpace(value); tz != "" {
+				if l, err := time.LoadLocation(tz); err == nil {
+					cal.Timezone, defaultTZ = tz, l
+				} else {
+					warnings = append(warnings, fmt.Sprintf("calendar timezone %q is not a zone this build knows; falling back", tz))
+				}
+			}
 		case name == "BEGIN" && strings.EqualFold(value, "VEVENT"):
 			inEvent = true
 			cur = map[string]property{}
 		case name == "END" && strings.EqualFold(value, "VEVENT"):
 			if inEvent {
-				ev, warns := buildEvent(cur)
+				ev, floating, warns := buildEvent(cur, defaultTZ)
 				warnings = append(warnings, warns...)
 				if ev != nil {
-					events = append(events, *ev)
+					cal.Events = append(cal.Events, *ev)
+					cal.Floating = cal.Floating || floating
 				}
 			}
 			inEvent = false
@@ -71,9 +117,9 @@ func Parse(data string) ([]Event, []string, error) {
 		}
 	}
 	if !sawCal {
-		return nil, nil, fmt.Errorf("not an iCalendar file (no BEGIN:VCALENDAR)")
+		return Calendar{}, nil, fmt.Errorf("not an iCalendar file (no BEGIN:VCALENDAR)")
 	}
-	return events, warnings, nil
+	return cal, warnings, nil
 }
 
 type property struct {
@@ -125,7 +171,7 @@ func unescape(s string) string {
 	return r.Replace(s)
 }
 
-func buildEvent(props map[string]property) (*Event, []string) {
+func buildEvent(props map[string]property, defaultTZ *time.Location) (*Event, bool, []string) {
 	var warnings []string
 	summaryProp, ok := props["SUMMARY"]
 	summary := ""
@@ -135,11 +181,11 @@ func buildEvent(props map[string]property) (*Event, []string) {
 
 	startProp, ok := props["DTSTART"]
 	if !ok {
-		return nil, []string{fmt.Sprintf("skipped event %q: no DTSTART", summary)}
+		return nil, false, []string{fmt.Sprintf("skipped event %q: no DTSTART", summary)}
 	}
-	start, allDay, err := parseDateTime(startProp)
+	start, allDay, floating, err := parseDateTime(startProp, defaultTZ)
 	if err != nil {
-		return nil, []string{fmt.Sprintf("skipped event %q: %v", summary, err)}
+		return nil, false, []string{fmt.Sprintf("skipped event %q: %v", summary, err)}
 	}
 
 	ev := &Event{Summary: summary, Start: start, AllDay: allDay}
@@ -147,7 +193,7 @@ func buildEvent(props map[string]property) (*Event, []string) {
 		ev.Location = unescape(loc.value)
 	}
 	if endProp, ok := props["DTEND"]; ok {
-		if end, _, err := parseDateTime(endProp); err == nil {
+		if end, _, _, err := parseDateTime(endProp, defaultTZ); err == nil {
 			ev.End = end
 		} else {
 			warnings = append(warnings, fmt.Sprintf("event %q: bad DTEND ignored (%v)", summary, err))
@@ -160,29 +206,36 @@ func buildEvent(props map[string]property) (*Event, []string) {
 		}
 		ev.RRule = rule // nil when the rule was unsupported → treated as one-off
 	}
-	return ev, warnings
+	return ev, floating, warnings
 }
 
 // parseDateTime handles the three shapes DTSTART/DTEND come in:
 // 20260907 (all-day), 20260907T101000Z (UTC), 20260907T101000 (+optional TZID).
-func parseDateTime(p property) (time.Time, bool, error) {
+// parseDateTime handles the three shapes DTSTART/DTEND come in and reports
+// whether the value was FLOATING — no Z, no TZID, so its meaning is entirely
+// decided by defaultTZ.
+//
+// Floating is the interesting case and the common one in university exports:
+// "09:00" with nothing else said. Which 09:00 depends on who is asking, and
+// getting it wrong shifts a whole timetable by the offset between two cities.
+func parseDateTime(p property, defaultTZ *time.Location) (t time.Time, allDay, floating bool, err error) {
 	v := strings.TrimSpace(p.value)
 	if p.params["VALUE"] == "DATE" || len(v) == 8 {
-		t, err := time.Parse("20060102", v)
-		return t, true, err
+		t, err = time.Parse("20060102", v)
+		return t, true, false, err
 	}
 	if strings.HasSuffix(v, "Z") {
-		t, err := time.Parse("20060102T150405Z", v)
-		return t, false, err
+		t, err = time.Parse("20060102T150405Z", v)
+		return t, false, false, err
 	}
-	loc := time.Local
+	loc, isFloating := defaultTZ, true
 	if tzid := p.params["TZID"]; tzid != "" {
-		if l, err := time.LoadLocation(tzid); err == nil {
-			loc = l
+		if l, lerr := time.LoadLocation(tzid); lerr == nil {
+			loc, isFloating = l, false
 		}
 	}
-	t, err := time.ParseInLocation("20060102T150405", v, loc)
-	return t, false, err
+	t, err = time.ParseInLocation("20060102T150405", v, loc)
+	return t, false, isFloating, err
 }
 
 var icsWeekdays = map[string]int{

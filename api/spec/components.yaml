@@ -27,7 +27,18 @@ components:
         type: { type: string, enum: [task, appointment, break, relax, meal] }
         duration_min: { type: integer, nullable: true }
         time_mode: { type: string, enum: [floating, fixed, local], description: "floating=wall clock (no utc_time); fixed=absolute instant; local=circadian, follows current tz. fixed/local carry utc_time." }
-        timezone: { type: string, example: "Asia/Shanghai" }
+        timezone:
+          type: string
+          example: "Asia/Shanghai"
+          description: >
+            The EVENT's zone — whose wall clocks this rule's time belongs to.
+            A different question from Preferences.timezone, which is where the
+            user is now: a lecture imported from a Shanghai timetable stays
+            09:00 中国时间 when the student is in London, and the two layers are
+            what make that expressible. Empty means floating (whatever the
+            reader's own zone says), which is right for "gym at 7" and wrong for
+            a class in another country. Set by ICS import from X-WR-TIMEZONE and
+            correctable here; a name this build cannot load is rejected.
         utc_time: { type: string, nullable: true, description: "RFC3339 UTC anchor for fixed/local blocks." }
         offset_min: { type: integer, nullable: true }
         offset_ref: { type: string }

@@ -65,7 +65,7 @@ go build ./... && go vet ./... && go test ./...
 - **路由注册模式**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){…})`，注册表在 `internal/server/routes.go`。**不要去 `server.go` 加路由** —— 那里只剩静态 `/` 一条。`RouteTable(*Server)` 用零值 Server 重放注册（读路由表不需要数据库）。当前 **109 条路由 / 24 个组**（`docs/API_SURFACE.md` 是生成物，`make api-surface` 重生成）。
 - **存储注册模式**：`internal/storage/registry.go` 的 `storage.Register(dbType, opener)`，sqlstore/mongostore 在 `init()` 自注册，main.go blank import。`domain.Store` 是组合接口（约 179 个方法），**业务代码只 import `domain`，绝不直接引用具体 store** —— 漏一个 accessor 是编译错误，这正是两个 store 同步的强制手段。
 - **版本三层，不要混**（唯一真源 `internal/version/version.go`，同步 `web/frontend/package.json`）：
-  1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`2.<minor>.<patch>-beta`；`GET /api/healthz`、设置页显示）。
+  1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`GET /api/healthz`、设置页显示）。**它是批次标记不是发布号** —— `2.2 → 2.3` 意味着**一整份规划实现完毕**，不是「加了些功能」；ζ 到 κ 全挂在 2.2.0-beta 下。发布节奏：v2 beta → 小范围内测 → v2 继续 → 公测 → v3 正式版。
   2. **API 契约版本** `APIVersion=1` / `APIMinor=8`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
   3. 各前端自己的版本号（在各自子仓库，与本仓解耦）。
 - **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。14 个 key。**唯一的例外是 L1 硬边界**（`boundaries.go` + `prompts/boundaries.json`）：只有磁盘与内嵌两层，**没有 DB 层、没有端点**——能被控制台改写的边界等于能被删除，见 AI.md。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。

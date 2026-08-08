@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 	"daycore/internal/ics"
 	"daycore/internal/schedule"
 )
@@ -89,9 +90,10 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		icsText   string
-		preview   bool
-		defaultTZ string
+		icsText     string
+		preview     bool
+		defaultTZ   string
+		tzConfirmed bool
 	)
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "text/calendar") {
 		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<20))
@@ -102,24 +104,70 @@ func (s *Server) handleImportICS(w http.ResponseWriter, r *http.Request) {
 		icsText = string(raw)
 		preview = r.URL.Query().Get("preview") == "1"
 		defaultTZ = r.URL.Query().Get("timezone")
+		tzConfirmed = r.URL.Query().Get("tzConfirmed") == "1"
 	} else {
 		var body struct {
 			ICSText  string `json:"icsText"`
 			Preview  bool   `json:"preview"`
 			Timezone string `json:"timezone"`
+			// TzConfirmed is the client saying "I saw the mismatch and this is
+			// the zone I want". Without it the import stops and asks; with it,
+			// `timezone` is taken as the answer.
+			TzConfirmed bool `json:"tzConfirmed"`
 		}
 		if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.ICSText) == "" {
 			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.importICS.bad_request2")
 			return
 		}
 		icsText, preview, defaultTZ = body.ICSText, body.Preview, body.Timezone
+		tzConfirmed = body.TzConfirmed
 	}
 
-	events, warnings, err := ics.Parse(icsText)
+	// Two timezones, and the whole of adjudication #10 is about not confusing
+	// them:
+	//
+	//	the session timezone   where the user is right now
+	//	the calendar timezone  whose wall clocks these times are
+	//
+	// A student in London importing a Shanghai timetable means "09:00 中国时间"
+	// — anchoring it to London shifts the entire term by eight hours. So a
+	// floating time (no Z, no TZID) is interpreted in the CALENDAR's zone, and
+	// the caller's `timezone` is only the fallback for a file that does not say.
+	sessionTZ := s.sessionTimezone(r.Context(), sid)
+	if defaultTZ == "" {
+		defaultTZ = sessionTZ
+	}
+	cal, warnings, err := ics.Parse(icsText, resolveLocation(defaultTZ))
 	if err != nil {
 		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "invalid_ics", "err.fmt.invalidICS", err.Error())
 		return
 	}
+
+	// Ask exactly once, and only when the answer could change something: the
+	// file says which city it belongs to, that city is not where the user is,
+	// and there are floating times whose meaning actually depends on it.
+	//
+	// Silent when they agree (nothing to decide) and silent when every time
+	// carries its own Z or TZID (nothing floating to reinterpret). Asking anyway
+	// would put a modal in front of the common case to protect the rare one,
+	// which is how a prompt becomes something people click through.
+	askTZ := cal.Timezone != "" && cal.Floating && !tzConfirmed &&
+		!strings.EqualFold(cal.Timezone, sessionTZ)
+	if askTZ && !preview {
+		s.writeJSON(w, http.StatusConflict, map[string]any{
+			"error":            "timezone_mismatch",
+			"message":          i18n.Tf("err.importICS.timezone_mismatch", s.requestLocale(r), cal.Timezone, sessionTZ),
+			"calendarTimezone": cal.Timezone,
+			"sessionTimezone":  sessionTZ,
+			"events":           len(cal.Events),
+		})
+		return
+	}
+	if cal.Timezone != "" {
+		defaultTZ = cal.Timezone
+	}
+
+	events := cal.Events
 	inputs := make([]ruleInput, 0, len(events))
 	for _, ev := range events {
 		in, warn := icsEventToRuleInput(ev, defaultTZ)

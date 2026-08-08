@@ -95,6 +95,18 @@ func validateRule(r *domain.ScheduleRule) error {
 	if !validSources[r.Source] {
 		return fmt.Errorf("invalid source %q", r.Source)
 	}
+	// The EVENT's timezone — whose wall clocks this rule's time belongs to,
+	// which is a different question from where the user is right now (that is
+	// SessionPrefs.Timezone). An ICS import fills it from the calendar; the
+	// user can correct it from the materials page, and this is what stops that
+	// edit from storing a zone nothing can load.
+	//
+	// Empty is legal and means "floating": the time is whatever the reader's own
+	// zone says, which is the right default for "gym at 7" and the wrong one for
+	// a lecture in another country.
+	if r.Timezone != "" && !validTimezone(r.Timezone) {
+		return fmt.Errorf("invalid timezone %q (want an IANA name like Asia/Shanghai)", r.Timezone)
+	}
 	switch r.Kind {
 	case domain.RuleOnce:
 		if r.Date == nil || !isDate(*r.Date) {
