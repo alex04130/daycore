@@ -14,6 +14,10 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	// 作业的写入方今天是 tool_capture.go，但这个实体的 REST 面归本文件。
+	registerRevert("assignment_upsert", (*Server).revertAssignmentUpsert)
+
 	registerRoutes("canvas materials", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/courses", s.handleCourseList)
 		mux.HandleFunc("GET /api/assignments", s.handleAssignmentList)
@@ -30,7 +34,7 @@ func (s *Server) handleCourseList(w http.ResponseWriter, r *http.Request) {
 	}
 	courses, err := s.store.Courses().List(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取课程失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.courseList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"courses": courses})
@@ -48,7 +52,7 @@ func (s *Server) handleAssignmentList(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse("2006-01-02", v)
 		if err != nil {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "from 格式应为 YYYY-MM-DD")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentList.bad_request")
 			return
 		}
 		f.DueFrom = &t
@@ -56,7 +60,7 @@ func (s *Server) handleAssignmentList(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("to"); v != "" {
 		t, err := time.Parse("2006-01-02", v)
 		if err != nil {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "to 格式应为 YYYY-MM-DD")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentList.bad_request2")
 			return
 		}
 		end := t.Add(24*time.Hour - time.Second) // inclusive end of day
@@ -64,14 +68,14 @@ func (s *Server) handleAssignmentList(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := q.Get("status"); v != "" {
 		if !validAssignmentStatuses[v] {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "无效的 status")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentList.bad_request3")
 			return
 		}
 		f.Status = v
 	}
 	items, err := s.store.Assignments().List(r.Context(), sid, f)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取作业失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"assignments": items})
@@ -95,21 +99,21 @@ func (s *Server) handleAssignmentCreate(w http.ResponseWriter, r *http.Request) 
 		CourseID string `json:"courseId"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Title) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 title")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentCreate.bad_request")
 		return
 	}
 	var dueAt *time.Time
 	if body.DueAt != "" {
 		t, err := parseFlexibleTime(body.DueAt)
 		if err != nil {
-			s.writeErr(w, http.StatusBadRequest, "bad_request", "dueAt 格式应为 RFC3339、YYYY-MM-DDTHH:MM 或 YYYY-MM-DD")
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentCreate.bad_request2")
 			return
 		}
 		dueAt = &t
 	}
 	a, err := s.createManualAssignment(r.Context(), sid, strings.TrimSpace(body.Title), body.CourseID, dueAt)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "作业创建失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentCreate.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, a)
@@ -153,21 +157,21 @@ func (s *Server) handleAssignmentPatch(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := s.readJSON(r, &body); err != nil || !validAssignmentStatuses[body.Status] {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "status 必须是 pending/planned/done/dismissed 之一")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentPatch.bad_request")
 		return
 	}
 	err := s.store.Assignments().SetStatus(r.Context(), sid, id, body.Status)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "assignment_not_found", "没有这条作业")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "assignment_not_found", "err.assignmentPatch.assignment_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "作业更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentPatch.internal")
 		return
 	}
 	a, err := s.store.Assignments().Get(r.Context(), sid, id)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "作业读取失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentPatch.internal2")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, a)

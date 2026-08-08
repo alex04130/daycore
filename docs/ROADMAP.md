@@ -50,36 +50,75 @@
 
 ### γ 计划语义 lane（最底层的写路径闸门）
 
-`LOCK-2 → LOCK-3 → PET-5` 同一人串行，**共用一个 guard 一个 409 信封**。它是所有写路径都要过的那道门，而且四端都要处理它的拒绝结构 —— 分成两套的代价在批次 ι 兑现。
+**闸门本体已落地**（2026-08-03）：`internal/server/plan_guard.go`，锁与石化共用一个 guard、一个 409 信封，**放在 `applyPlanPatch` 里而不是 handler 里** —— agent 工具直接调 `applyPlanPatch`，门开在 handler 只挡住了前门。
 
-### δ 提示词与 i18n 收口（**从原批次 5 提前到端点之前**）
+⚠️ 落地前的实测：`domain.Movable` / `TimeBlock.Frozen` / `PhaseIn` / `PetrifyLine` **四个全是零生产调用方**，所以用户能把硬锁的课从 09:00 拖到 15:00，也能改写和删除三天前的块，全程无错。**`DeriveLock` / `RederiveLock` 同样零调用方** —— 每个块的 `lockLevel` 都是空的，所以门就算装上也守着一个永远为空的字段。派生已一并接进 `normalizePlanBlocks`（写路径唯一收敛点），derived 理由在出站时按读者语言重新解析。
 
-端点会引入一批新的用户可见文案。先修机制（4 处 `HasPrefix(locale` → `i18n.Register`/`T`），后写文案，则后写的自动是可翻译的；反过来做就是先写一批不可翻译的字符串再回来改。
+**锁守的是时间，不是存在**：`remove` 放行（请假走的正是它，规则展开的块转墓碑），改标题、打勾放行，只有时间字段被拦。这条是写测试时发现的 —— 第一版把 remove 也拦了，等于把硬锁变成没有出口的死路。
 
-⚠️ 代价说清楚：提示词可能因此要过两遍，而原计划刻意合成一遍。**用一次额外的 pass 换不写出不可翻译的字符串** —— 前者一次性，后者长期累积。
+**本批已全部完成**，除了「标记冲突」那一条（它的依赖在 ζ½）：
 
-同期定下四端的 i18n 形态（现役 `i18n.js` 是硬编码双语字典，不能让四端各抄一遍）。
+- ✅ **`POST /api/plan/lock`**（2026-08-03）—— 「解锁后再挪」那条岔路。走 `applyPlanPatch` 而非自己写块，账本、撤销、闸门全部复用；置 `lockSource=user` 使派生不再覆盖。三条岔路现在有两条（请假一直能走 `remove`），**「标记冲突」仍无落点**。
+- ✅ **「重新安排」**（2026-08-03）—— `Refishable()` 谓词（预约不补、成就不补、到上限不补）+ 服务端算链与计数（不采信请求里的 count，否则上限形同虚设）+ 有界回看找原块 + 到上限返回 `refish_capped`。
+- ✅ **跨天块 spill-in**（2026-08-03）—— `schedule.SpillsInto` / `SpillIns` 读时派生，外溢块带自己的 `date`；「越过午夜」走 `StartOfNextDay` 而不是加 24 小时。
+- ✅ **时段重叠检测**（2026-08-03）—— `schedule.Overlaps` 报告争用时段，**只报不判**（EXPERIENCE_CORE：排程冲突 → 决策提案，不静默解决）。背靠背不算冲突，墓碑与无时段的事不占分钟。
+- ✅ **「标记冲突」本体**（2026-08-03，连带做掉了 ζ½ 的核心）—— `POST /api/plan/conflict` 建一张真提案卡；同时**`propose_decision` 开始落表**，内存注册表退化成纯唤醒机制。`proposals` 从「全仓第二张死表」变成有真写入方与真读者的表。三条岔路至此齐全。
+- ⚠️ **每会话时区**：石化线现在画在部署默认时区（`planLocation()`），用户真实时区不同就整体偏移。与 ζ 的同一项是同一个修法。
 
-### ε 端点齐活
+### δ 提示词与 i18n 收口 ✅（2026-08-03）
 
-五块 REST 面一次做完，让契约能在 η 一次冻结。此时 `ProposalFilter` 已经对了、409 信封已统一、i18n 机制已对。
+原计划写的是「修 4 处 `HasPrefix(locale` → `i18n.Register`/`T`」。**那个处方对其中一半是错的** —— 那几处不是 UI 文案而是**给模型的提示词**，它们该走的是提示词模板体系（`prompts/<locale>/<key>.tmpl`，双 locale 启动硬校验、控制台可改），不是消息目录。分开落地：
 
-⚠️ 两件必须挤进本批或之前的事：
+| 东西 | 去了哪 | 为什么 |
+|---|---|---|
+| L2 人格、早报、重排三段提示词 | 模板体系（`persona` / `brief` / `replan`） | 读者是模型；要能在控制台改、要受双 locale 校验 |
+| 星期名、planner 开场白 | 消息目录 | 是数据，第三门语言不该要求发版 |
+| **279 处 `writeErr` 的中文字面量** | 消息目录（234 + 7 带参 key） | 用户可见，此前**完全不可翻译** |
+| L1 硬边界重申 | ~~有意留在 Go 里~~ → **`prompts/boundaries.json`**（2026-08-06 修正） | 当时的理由只对了一半：不可改写是对的，但代价里有两条白付的 —— 不可翻译、加减一条规则要发版。改成只有**磁盘 + 内嵌**两层、**没有 DB 层也没有端点**：控制台改不到，运维改文件重启生效。见 [AI.md](AI.md) |
 
-- **`ChatMessage` 挂附件引用**（domain → repository → 三方言 DDL → mongostore → 行为套件）——模态地基剩下的那一件。消息表持续增长，按曲线判据它在 ε 前落。
-- **提案 REST 面**是五块里最重的一块，且现状比想象更空：`proposals` 表与 repo 有行为测试守着，但 server **零读零写**（`propose_decision` 走内存决策卡，不落表），API_SURFACE 零条 proposal 路由——它是全仓第二张死表。契约形状先行是对的，但形状之后必须紧跟闭环，见 ζ 后新增批。
+**闸门**：`TestNoHardcodedUserFacingText` 让新的硬编码文案当场变红并报出文件行号与原文。这才是 δ 真正的产出 —— 迁移一次只修今天，闸门修的是以后。
+
+**债变成了数字**：`TestReportCatalogCoverage` 打印 en-US 97/338。那 241 条是刚搬进来的错误文案，写它们的英文属于文案定稿（项目规则冻结），而机制不是。今天 en-US 读者看到的中文与此前完全一样，零回归；区别是丢一个 JSON 文件就能翻掉。
+
+四端 i18n 形态写进 [`specs/frontend-manifest.md`](specs/frontend-manifest.md)：四条要求 + 「现役 `i18n.js` 是不要抄的那一份」。
+
+### ε 端点齐活 —— 附件与文件总线 ✅（2026-08-06）
+
+> 「五块 REST 面」这个说法是按**旧的块清单**写的（含已取消的胆量、以及 ROADMAP 自己把接线排到 ζ 的 rapport/rhythm）。按今天的实际缺口重新定义：**ε = 把文件总线接通**。提案 REST 面已随 γ 做掉（`4ee274d`），rapport/rhythm 的读面仍按原计划留在 ζ。
+
+- ✅ **`ChatMessage` 挂附件引用**（本批的硬性前置）—— `attachments` 表：domain → repository → 三方言 DDL → mongostore → **行为套件 6 例**，四个后端真机各 42/42。
+- ✅ **文件总线第一次有生产调用方**。此前 `internal/blob` 是写完、跑过 11 例行为套件、接进 `Server` 却零调用方的一层 —— **本仓第四次出现「写完、测过、没人调用」**（前三次：`Movable/Frozen/PhaseIn/PetrifyLine`、`DeriveLock/RederiveLock`、`AICallLog`）。
+- ✅ **REST 面**：`POST /api/files`（请求体即原始字节，不是 multipart 也不是 base64 JSON）、`GET /api/files`（待发送列表）、`GET /api/files/{id}`（一律代理，不给签名 URL）、`DELETE /api/files/{id}`。
+- ✅ **`Ref` 永不出服务端**。`blob.Store` 故意不管鉴权，所有权全在 `attachments` 行上；客户端只拿 id。一条服务层测试查三种响应形状。
+- ✅ **附件进模型**：`attachmentIds` → 内联 `ContentPart` 挂到最后一条 user 消息（从后往前找，不能挂到压缩器补的摘要上）。**模型读不了的不静默丢**，把文件名念给它听。
+- ✅ **孤儿清扫**：没发出去的上传 24h 回收，行与字节一起删 —— 不做的话每个被放弃的上传都是永久的（它的行让那个 blob 保持被引用）。
+- ✅ 契约：`files` tag 分片 + `Attachment` schema + `ChatMessage.attachments` + `features.files` 能力位，`APIMinor` 5→6。
+
+**顺手修掉的一处四后端分歧**：sync companion 原本打算从 `AppendMessages` 回读消息 id 来绑附件 —— 而 **mongostore 的 `AppendMessages` 不把生成的 id 写回调用方的切片**，那样只会在四个后端里的一个上、且只在用户发了文件时静默绑不上。改成调用方预生成 id（async 路径早就是这么做的，注释里写着原因）。
+
+⚠️ **本批没做、明确留着的**：通道入站附件（OneBot 图片/语音）仍然只有文字；`Material.StorageRef` 依然零生产方；签名 ref 那一半（「待拍板」第 1 条的另一半）仍未做 —— `blob.SignedURL` 至今零调用方。
 
 ### ζ worker / 多实例
 
-Lease 选主 → 节律学习作业 → Protector → **每会话时区** → 撤销闭合（`registerRevert` 12 条搬到各自文件）。
+- ✅ **Lease 选主 + 场次占有**（2026-08-06）—— `internal/server/leader.go`；`claim`/`finish` 装进四个作业体，位置是**抑制门之后、干活之前**。设计与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。顺带修掉两个既有缺陷：`ScheduleUser` 的死守卫（**单实例上就在重复发**）、坏时区的部分失败伪装成成功。
+- ✅ **每会话时区**（2026-08-06）—— `SessionPrefs.Timezone` + `TimezoneSource`；石化线、节律 day key、cron 排程、通道回复全部改读会话自己的。设备提示可以填也可以更新一个 `detected` 值，但**绝不覆盖用户自己在设置页选的**。`APIMinor` 6→7。设计见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+- ✅ **撤销闭合**（2026-08-06）—— 18 条注册散到 8 个 handler 文件；**真正的产出是闸门** `TestEveryLoggedActionIsDeclared`：AST 扫出每一处被记账的 action，逼它要么可撤、要么写明为什么不可撤。第一次跑就抓到 8 条未声明，其中 `wish_update` / `wish_delete` 是**真缺口**（账本里根本没存可还原的东西）。见 [DATA.md](DATA.md)。
+- ✅ **节律学习作业**（2026-08-07）—— `internal/rhythm` 此前是第六次「写完、测过、没人调用」（515 行纯函数、两个调用方、都只算 day key）。跑在日切；**窗口过滤必须在作业里做**（`LearnDays` 不做，`Days(limit)` 是行数上限不是日期过滤）；**证据变薄不遗忘**（保留学到的时刻，只降天数）。三个定时时刻此前「由节律派生」只在数值上成立。
+- ✅ **Protector 20h 关怀**（2026-08-07）—— 先修致命断点：`run_since`/`last_signal_at` 零生产写者，谓词恒假。场次 key 是**这段清醒的起点**（dayKey 会响两次、slotKey 每半小时一次）。TTL 取 ask-first 而非设计稿的 act-first —— 凌晨四点的沉默不是同意。推送预算 ≤3/天，从已有的行数出来。
 
 ⚠️ 时区一项的紧迫性已重估（2026-08-05）：`awake.go` 的 TODO 注释写明 day key 可由 (day, minute) + 已知录制时区重算——**节律信号是可追认的**，STRATEGY §五.3 的「不可追认」论证已化解，本批位置维持。Lease 是存储层就绪、server 零引用的纯接线活，工作量比表观小。
 
 ### ζ½ 提案闭环（新增批，ζ 之后、η 之前）
 
-提案是本产品的理论高峰（EXPERIENCE_CORE §六：统一资源、TTL 不对称、待发池、背压限投递不限生成），但它的实现链目前是断的。本批把它一次接通，出口标准 = §六 描述的生命周期全链可跑：
+提案是本产品的理论高峰（EXPERIENCE_CORE §六：统一资源、TTL 不对称、待发池、背压限投递不限生成）。**核心已于 2026-08-03 随 γ 做掉**（做「标记冲突」时顺手，因为不做它就会长出第二套提案表示）：
 
-- `propose_decision` 落 `proposals` 表（内存决策卡变成表上状态的投影）+ 重启一致性（重启后卡片消失、提案仍在的语义定死）。
+- ✅ `propose_decision` 落 `proposals` 表，内存注册表退化成纯唤醒机制；三个出口（回答 / 超时 / 取消）都结算行，超时与取消记 `silence` 而非拒绝。
+- ✅ REST 面：`GET /api/proposals`（默认堆叠合取，`?all=1` 全量）、`POST /api/proposals/{id}/respond`。
+- ✅ 第一个非 agent 的提案产出方：`POST /api/plan/conflict`。
+
+本批余下：
+
+- **重启一致性**语义定死（重启后卡片消失、提案仍在 —— 现在行落了表但没有启动清扫把孤儿 pending 决策卡标掉）。
 - **投递调度**：谁在什么时机把 pending 提案变成卡片/消息（重排 + 合并 + 急事推闲事拉，共识 15）。
 - **Daemon 产出链**（EXPERIENCE_CORE §12.2）：习惯扫描 → Rule 提案、排程冲突 → 决策提案、愿望池填缝。
 - 撤销闭合顺带完成（revert 12 条搬文件若在 ζ 未做完）。
@@ -155,23 +194,27 @@ F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** �
 
 ## 待拍板
 
-1. **文件总线的 ref 鉴权形状**：签名 ref（自证所有权、零 DDL、无法按 owner 枚举或配额）vs `blobs` 表（能 GC 能配额、四后端各加一遍）。倾向混合：瞬态用签名 ref，落地为 `Material.StorageRef` 时才写行。**这个决定会定死 `StorageRef` 的语义。**
+1. **文件总线的 ref 鉴权形状** —— **落地那一半已在 ε 按原倾向做掉**：持久化的东西写行（`attachments` 表，能 GC 能按 owner 枚举）。**剩下的是瞬态那一半**：签名 ref 至今零调用方，下载一律由 `GET /api/files/{id}` 代理。真正要拍的收窄成两条 —— ① 对象存储后端要不要直接给前端签名 URL（省一次代理，但客户端要处理两种形状）；② `Material.StorageRef` 是复用 `attachments` 行、还是自己存 ref。②仍会定死 `StorageRef` 的语义。
 2. **外部 MCP 的批准粒度**：方向已定（逐服务器批准 + 逐工具改提示词/开关，做成提示词导入功能，落在 `prompt_overrides` 范式上）——**剩下的不是拍板是排期**：前置是 θ 新增的工具注册表化，本条目随它一并落地，不再算「待拍板」。
 3. **框架图渲染器**：通用渲染器（mermaid/graphviz 类，但纯 Go 无 cgo 的方案质量存疑）vs 为 Daycore 真正需要的几种图**专门写**（日/周时间线、依赖箭头链）。后者输出质量更高且是纯 Go，但不通用。
 
-## 部署约束：**目前只支持单实例**
+## 部署约束：多实例已可用（2026-08-06，ζ-1 落地）
 
-Lease 选主排在 ζ，而 α 之后排程改成了**首次请求时懒排**（`Server.scheduleOnUse`）。两个实例各自看到同一个用户的请求，就各排一份 cron —— **早报会发两遍**。
+Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主与场次占有」](ARCHITECTURE.md)。两个机制各背一半承诺：`job_runs` 的唯一索引背**正确性**，`leases` 背**节流**。
 
-这不是「将来横向扩展时的性能问题」，是**今天起跑第二个实例就立刻错**。在 ζ 的 Lease 落地之前，`deploy/`、README 与任何部署文档都不得出现暗示可以多副本的说法。
+⚠️ **部署要求**：主机之间的时钟必须同步在 `JobStaleAfter`（10 分钟）之内。`started_at` 由占有方的时钟写、超时判定由读方的时钟做 —— 跑得快的那台能偷走一个刚刚才建立的占有，把同一场次跑两遍。这是部署要求，不是代码能修的。
+
+⚠️ **仍然没有的**：失败场次的重驱。`JobMaxAttempts` 描述的是 `Claim` 允许什么，但没有任何东西会重试 —— 一次失败的早报就是一个没有早报的早上。
+
+**在此之前**（记着，因为它同时是一个单实例 bug）：`ScheduleUser` 的幂等守卫读的键从没被写过，`markAwake` 每 5 分钟调它一次，于是**单实例上**连续活跃一小时就攒下 12 套 cron 条目。多实例只是把这件事又乘以实例数。
 
 ## 已知缺口（不在批次里，但要记着）
 
 - ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。**但同类的另一半还在**：`POST /api/assignments`、`PATCH /api/assignments/{id}`、`POST /api/mood`、`POST /api/materials` 这几条 HTTP 直写路径**不调 logOp**（工具路径已入账，HTTP 路径没有）——前端手建作业/打卡/归档不可撤销，与「所有写路径必须 logOp」铁律相悖，补法是每处一行 + 复用 β0+ 注册的四个 revert。
-- `POST /api/tempcontext` 的 TTL **完全由客户端给**（`handlers_tempcontext.go` 读 `body.TTLSeconds`），没有服务端默认也没有上限 —— 端一改就能把「临时上下文」变成永久上下文。inbox 那条用的是固定 1 小时，形状是对的。
+- ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
-- 早晚简报的天气地点**写死北京**（`worker.go:401` 自己写着 "future: session setting"）。
+- 早晚简报的天气地点**写死北京**（`worker.go` 自己写着 "future: session setting"）。⚠️ ζ-4 只解决了时区，**地点是另一件事** —— 时区不能反推经纬度。
 - 一致性套件 32 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
 - 前端 `i18n.js` 是硬编码双语字典。

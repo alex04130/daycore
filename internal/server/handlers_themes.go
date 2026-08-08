@@ -125,7 +125,7 @@ func (s *Server) handleThemeList(w http.ResponseWriter, r *http.Request) {
 	}
 	themes, err := s.store.Themes().List(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取主题失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
@@ -141,7 +141,7 @@ func (s *Server) handleThemeCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in themeInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.themeCreate.bad_request")
 		return
 	}
 	in.Name = strings.TrimSpace(in.Name)
@@ -167,7 +167,7 @@ func (s *Server) handleThemeCreate(w http.ResponseWriter, r *http.Request) {
 		SessionID: sid, Name: in.Name, Base: in.Base, Dark: dark, Variables: in.Variables,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "主题保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeCreate.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, created)
@@ -182,7 +182,7 @@ func (s *Server) handleThemePatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var in themeInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.themePatch.bad_request")
 		return
 	}
 	var upd domain.CustomThemeUpdate
@@ -199,11 +199,11 @@ func (s *Server) handleThemePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.store.Themes().Update(r.Context(), sid, id, upd)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "theme_not_found", "没有这个主题")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "theme_not_found", "err.themePatch.theme_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "主题更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themePatch.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, updated)
@@ -220,11 +220,11 @@ func (s *Server) handleThemeDelete(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	err := s.store.Themes().Delete(ctx, sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "theme_not_found", "没有这个主题")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "theme_not_found", "err.themeDelete.theme_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "主题删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeDelete.internal")
 		return
 	}
 	reset := false

@@ -14,7 +14,8 @@ internal/
   i18n/                     locale 协商 + 三层消息目录（DB → LOCALES_DIR → 内嵌）+ 用户级一主一副 Pair
   ai/                       AIProvider 接口 + catalog + 视觉编排 + 提示词
     formats/{openai,anthropic,ollama}/   wire-format（自注册）
-    prompts/<locale>/*.tmpl 提示词（11 key × 2 locale；PROMPTS_DIR 可逐文件覆盖）
+    prompts/<locale>/*.tmpl 提示词（14 key × 2 locale；PROMPTS_DIR 可逐文件覆盖）
+    prompts/boundaries.json L1 硬边界（只有磁盘+内嵌两层，控制台改不到，见 AI.md）
   schedule/                 重复规则展开引擎（纯函数）
   ics/                      最小 iCalendar + RRULE 子集解析器（零依赖）
   timeutil/                 石化线与墙钟换算（纯函数）
@@ -23,7 +24,7 @@ internal/
   search/                   web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS + 子串兜底）
   weather/                  WeatherProvider registry + 四个 provider 子包（自注册）
   storage/{sqlstore,mongostore}/  SQLite+PG+MySQL（Dialect 抽象）/ MongoDB
-  storage/storagetest/      行为一致性套件（36 例，四个后端跑同一份）
+  storage/storagetest/      行为一致性套件（42 例，四个后端跑同一份）
   server/                   路由（分散注册，见 routes.go）+ 中间件 + handlers + agent loop + cron Worker
 api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
 web/frontend/               React 前端（Vite；npm run dev / build）

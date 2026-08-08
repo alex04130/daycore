@@ -60,7 +60,7 @@ func (s *Server) handleChannelBind(w http.ResponseWriter, r *http.Request) {
 	channel := r.PathValue("channel")
 	token, err := generateBindingToken()
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "生成绑定令牌失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.channelBind.internal")
 		return
 	}
 	// Store an unverified binding with the token as external_id.
@@ -71,7 +71,7 @@ func (s *Server) handleChannelBind(w http.ResponseWriter, r *http.Request) {
 		Metadata:   `{"expires_at":"` + time.Now().Add(10*time.Minute).UTC().Format(time.RFC3339) + `"}`,
 	}
 	if _, err := s.store.ChannelBindings().Create(r.Context(), b); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "生成绑定令牌失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.channelBind.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
@@ -93,28 +93,28 @@ func (s *Server) handleChannelVerify(w http.ResponseWriter, r *http.Request) {
 		ExternalID string `json:"externalId"`
 	}
 	if err := s.readJSON(r, &body); err != nil || body.Token == "" || body.ExternalID == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 token 或 externalId")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.channelVerify.bad_request")
 		return
 	}
 	// Find the still-unverified binding by channel + token.
 	pending, err := s.store.ChannelBindings().GetPendingByToken(r.Context(), channel, body.Token)
 	if err != nil {
-		s.writeErr(w, http.StatusNotFound, "invalid_token", "绑定令牌已过期或不存在")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "invalid_token", "err.channelVerify.invalid_token")
 		return
 	}
 	// Enforce the 10-minute TTL (belt-and-suspenders with the background sweep).
 	if time.Since(pending.CreatedAt) > 10*time.Minute {
-		s.writeErr(w, http.StatusGone, "token_expired", "绑定令牌已过期，请重新获取")
+		s.writeErrL(w, s.requestLocale(r), http.StatusGone, "token_expired", "err.channelVerify.token_expired")
 		return
 	}
 	// Promote the token row into the real, verified binding.
 	if err := s.store.ChannelBindings().Promote(r.Context(), pending.ID, body.ExternalID, ""); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "绑定验证失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.channelVerify.internal")
 		return
 	}
 	// Now that the session has a channel, schedule its proactive jobs.
 	if s.worker != nil {
-		s.worker.ScheduleUser(pending.SessionID, s.cfg.WorkerDefaultTZ)
+		s.worker.ScheduleUser(pending.SessionID, s.sessionTimezone(r.Context(), pending.SessionID))
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "channel": channel, "externalId": body.ExternalID})
 }
@@ -127,7 +127,7 @@ func (s *Server) handleChannelUnbind(w http.ResponseWriter, r *http.Request) {
 	}
 	channel := r.PathValue("channel")
 	if err := s.store.ChannelBindings().Delete(r.Context(), sid, channel); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "解绑失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.channelUnbind.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

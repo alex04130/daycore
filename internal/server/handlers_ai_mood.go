@@ -33,7 +33,7 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 		Mood string `json:"mood"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Mood) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 mood")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIMood.bad_request")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
@@ -44,7 +44,7 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 		MemoryFacts: s.memoryFactsContext(ctx, sessionIDFrom(r.Context())),
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIMood.internal")
 		return
 	}
 	provider := s.catalog.DefaultChat()

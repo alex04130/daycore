@@ -11,6 +11,9 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("material_create", (*Server).revertMaterialCreate_delete)
+
 	registerRoutes("materials", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/materials", s.handleMaterialList)
 		mux.HandleFunc("POST /api/materials", s.handleMaterialCreate)
@@ -44,7 +47,7 @@ func (s *Server) handleMaterialList(w http.ResponseWriter, r *http.Request) {
 	}
 	materials, err := s.store.Materials().List(r.Context(), sid, category, query, limit, offset)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取素材失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialList.internal")
 		return
 	}
 	if materials == nil {
@@ -70,16 +73,16 @@ func (s *Server) handleMaterialCreate(w http.ResponseWriter, r *http.Request) {
 		Tags       []string `json:"tags"`
 	}
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.materialCreate.bad_request")
 		return
 	}
 	if strings.TrimSpace(in.Title) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "标题不能为空")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.materialCreate.bad_request2")
 		return
 	}
 	category, ok2 := normalizeCategory(in.Category)
 	if !ok2 {
-		s.writeErr(w, http.StatusBadRequest, "bad_category", "未知的资料类别: "+in.Category)
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.fmt.badCategory", in.Category)
 		return
 	}
 	m := &domain.Material{
@@ -95,7 +98,7 @@ func (s *Server) handleMaterialCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.store.Materials().Create(r.Context(), m)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "素材创建失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialCreate.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, created)
@@ -110,11 +113,11 @@ func (s *Server) handleMaterialGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	mat, err := s.store.Materials().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "material_not_found", "没有这个素材")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "material_not_found", "err.materialGet.material_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取素材失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, mat)
@@ -130,11 +133,11 @@ func (s *Server) handleMaterialUpdate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	existing, err := s.store.Materials().Get(ctx, sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "material_not_found", "没有这个素材")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "material_not_found", "err.materialUpdate.material_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取素材失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialUpdate.internal")
 		return
 	}
 	var in struct {
@@ -148,13 +151,13 @@ func (s *Server) handleMaterialUpdate(w http.ResponseWriter, r *http.Request) {
 		Tags       *[]string `json:"tags"`
 	}
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.materialUpdate.bad_request")
 		return
 	}
 	if in.Category != nil {
 		category, ok2 := normalizeCategory(*in.Category)
 		if !ok2 {
-			s.writeErr(w, http.StatusBadRequest, "bad_category", "未知的资料类别: "+*in.Category)
+			s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.fmt.badCategory", *in.Category)
 			return
 		}
 		existing.Category = category
@@ -182,7 +185,7 @@ func (s *Server) handleMaterialUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.store.Materials().Update(ctx, sid, id, existing)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "素材更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialUpdate.internal2")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, updated)
@@ -197,11 +200,11 @@ func (s *Server) handleMaterialDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	err := s.store.Materials().Delete(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "material_not_found", "没有这个素材")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "material_not_found", "err.materialDelete.material_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "素材删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialDelete.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -265,13 +268,13 @@ func (s *Server) handleMaterialSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.searcher == nil {
-		s.writeErr(w, http.StatusNotImplemented, "search_not_available", "搜索服务未配置")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotImplemented, "search_not_available", "err.materialSearch.search_not_available")
 		return
 	}
 	q := r.URL.Query()
 	term := q.Get("q")
 	if strings.TrimSpace(term) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "搜索关键词不能为空")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.materialSearch.bad_request")
 		return
 	}
 	sq := domain.SearchQuery{
@@ -300,7 +303,7 @@ func (s *Server) handleMaterialSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := s.searcher.Search(r.Context(), sid, sq)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "搜索失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialSearch.internal")
 		return
 	}
 	if results == nil {

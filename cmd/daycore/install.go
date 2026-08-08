@@ -95,7 +95,11 @@ func runInstall(dir string, force bool) error {
 	fmt.Println()
 	count := 0
 	ai.WalkPromptFS(func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".tmpl") {
+		// boundaries.json rides along with the templates: same directory, same
+		// PROMPTS_DIR override rule. Extracting it is what makes the L1 block
+		// discoverable and editable at all — it has no console surface.
+		if err != nil || d.IsDir() ||
+			(!strings.HasSuffix(path, ".tmpl") && filepath.Base(path) != ai.BoundaryFile) {
 			return nil
 		}
 		dest := filepath.Join(dir, path)

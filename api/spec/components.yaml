@@ -74,6 +74,95 @@ components:
         action: { type: string, enum: [add, update, remove] }
         match: { type: object, additionalProperties: true, description: "e.g. {id}" }
         changes: { type: object, additionalProperties: true }
+        confirm:
+          type: boolean
+          description: >-
+            The way through a soft lock: the user was told this one was agreed
+            with someone else and said go ahead. Does nothing for a hard lock or
+            a petrified block — those have no way through, and a flag that
+            opened them would make the gate advisory. See docs/specs/plan-semantics.md.
+    Proposal:
+      type: object
+      description: >-
+        Everything the agent wants to do but has not done — or has done and is
+        still offering to undo. Ghosts, cards, decision cards and channel
+        approvals are all this, seen from different ends. Semantics in
+        docs/specs/plan-semantics.md §three.
+      properties:
+        id: { type: string }
+        state:
+          type: string
+          enum: [pending, accepted, rejected, expired]
+          description: >-
+            Four, not three. A silent expiry must stay distinguishable from a
+            deliberate no — the ledger keeps everything, and an expired offer
+            was never seen.
+        level: { type: string, enum: [L1, L2, L3], description: The attention ladder. L0 never becomes a proposal. }
+        kind: { type: string, enum: [timed, card, decision] }
+        title: { type: string }
+        summary: { type: string }
+        reason: { type: string }
+        evidence: { type: string }
+        date: { type: string }
+        start: { type: string, description: "HH:MM" }
+        dur: { type: integer, nullable: true }
+        btype: { type: string }
+        lockLevel: { type: string }
+        lockReason: { type: string }
+        rows:
+          type: array
+          description: A compound card, each line accepted or rejected on its own.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              state: { type: string, enum: [pending, accepted, rejected, expired] }
+        sessionId: { type: string }
+        mergeKey: { type: string, description: Same key → only the newest undelivered survives. }
+        deliverAfter: { type: string, format: date-time }
+        deliveredAt:
+          type: string
+          format: date-time
+          description: >-
+            A PERMANENT stamp; nothing clears it. "How many cards are in the
+            stack" is a conjunction (pending + delivered + still deliverable),
+            not a question about this field.
+        pushedAt: { type: string, format: date-time, description: What the ≤3/day push budget counts. }
+        ttlPolicy:
+          type: string
+          enum: [silence_accepts, silence_rejects]
+          description: >-
+            Acted first → silence confirms; asked first → silence voids.
+            Backwards, one of these executes unattended work and the other
+            discards an undo window.
+        expiresAt: { type: string, format: date-time }
+        resolution: { type: string, enum: [user, silence, superseded] }
+        origin: { type: string, enum: [agent, daemon, upload, protector, user] }
+        threadId: { type: string }
+        rev: { type: integer, description: Optimistic concurrency — row-level accepts race otherwise. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanBlocked:
+      type: object
+      description: >-
+        409 body when the plan gate refuses a write. 409 rather than 403 because
+        nothing about the caller is wrong — the request conflicts with the state
+        of the block it names, and that state can change.
+      required: [error, code, message, blockId, confirmable]
+      properties:
+        error: { type: string, enum: [blocked] }
+        code:
+          type: string
+          enum: [locked, petrified]
+          description: Which rule refused. `petrified` means the day has turned; `locked` means the slot is not the user's to move.
+        message: { type: string, description: Localized, ready to show. }
+        blockId: { type: string }
+        confirmable:
+          type: boolean
+          description: Re-sending with `action.confirm` would succeed. True only for soft locks.
+        lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
+        lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
     Session:
       type: object
@@ -101,6 +190,24 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        timezone:
+          type: string
+          description: >
+            The IANA zone this user's own day is measured in — it decides when
+            the petrify line falls, where their rhythm day boundary sits, and
+            what time the morning brief arrives. Empty means "follow the device,
+            and until it reports, the deployment default" (WORKER_DEFAULT_TZ).
+            Setting it here is the USER choosing, which outranks whatever their
+            device reports from then on; send "" to go back to following the
+            device. A client also reports its zone implicitly via the timezone
+            field on POST /api/ai/companion, which fills in or updates a
+            device-detected value but never overwrites this one. 400
+            bad_timezone if it is not a zone this build can load.
+        timezoneSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
         primaryLocale:
           type: string
           description: >
@@ -213,6 +320,25 @@ components:
         content: { type: string }
         toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
         status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: "Files sent with this message. Hydrated on read from their own table — not a column." }
+        createdAt: { type: string, format: date-time }
+    Attachment:
+      type: object
+      description: >-
+        A file on the bus, addressed by id. The storage ref is deliberately
+        absent from this schema and from every response: it is a bearer handle
+        minted by a store that has no notion of who is asking, so the server
+        resolves id → ref itself after checking the session.
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        threadId: { type: string, description: "Set once bound to a message." }
+        messageId: { type: string, description: "Empty while the upload has not been sent." }
+        kind: { type: string, enum: [image, audio, video, document, file], description: "What to render. A closed set so a client never has to know that image/avif is an image." }
+        mime: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string, description: "Of the stored bytes; also the ETag on download." }
+        filename: { type: string }
         createdAt: { type: string, format: date-time }
     CustomTheme:
       type: object

@@ -73,6 +73,20 @@ type Server struct {
 	// asyncWG tracks detached background goroutines (async companion turns,
 	// inbound channel handling) so graceful shutdown can wait for them.
 	asyncWG sync.WaitGroup
+
+	// Background tick loops (see ticker.go). tickOnce lazily creates ticksDone so
+	// the zero value of Server stays usable — RouteTable(&Server{}) builds one.
+	tickOnce  sync.Once
+	tickStop  sync.Once
+	ticksDone chan struct{}
+	tickWG    sync.WaitGroup
+
+	// Leader election for the background worker (see leader.go). instanceID is
+	// generated on first use rather than in New so that the zero value keeps
+	// working and so that it can never come from configuration.
+	instanceOnce sync.Once
+	instanceID   string
+	lease        workerLease
 }
 
 // GoTracked runs fn on a goroutine tracked by the background WaitGroup so
@@ -197,7 +211,7 @@ func requestIDFrom(ctx context.Context) string {
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string, bool) {
 	sid := sessionIDFrom(r.Context())
 	if sid == "" {
-		s.writeErr(w, http.StatusUnauthorized, "no_session", "缺少会话，请先初始化会话")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "no_session", "err.requireSession.no_session")
 		return "", false
 	}
 	s.markAwake(sid)
@@ -233,6 +247,21 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (s *Server) writeErr(w http.ResponseWriter, status int, code, message string) {
 	s.writeJSON(w, status, map[string]string{"error": code, "message": message})
+}
+
+// writeErrL is writeErr with a translatable message.
+//
+// Every user-visible error in this package goes through it. The plain writeErr
+// above stays for the two cases where the text is genuinely not a message to a
+// person — and messages_test.go fails the build if a new caller passes a
+// literal containing Chinese, because "remember to use the catalog" is not a
+// mechanism and this repo has been bitten by exactly that kind of rule before.
+//
+// The locale is passed rather than derived from a request: the revert handlers
+// have no *http.Request, and threading one into them purely to look up a
+// language would put HTTP in a layer that had managed to stay out of it.
+func (s *Server) writeErrL(w http.ResponseWriter, locale string, status int, code, key string) {
+	s.writeJSON(w, status, map[string]string{"error": code, "message": i18n.T(key, locale)})
 }
 
 func (s *Server) readJSON(r *http.Request, dst any) error {
@@ -304,4 +333,13 @@ func (s *Server) clearAuthCookie(w http.ResponseWriter) {
 		Name: authCookie, Value: "", Path: "/", HttpOnly: true,
 		Secure: s.cfg.SecureCookies, SameSite: s.sameSiteMode(), MaxAge: -1,
 	})
+}
+
+// writeErrf is writeErrL for a message that carries a value.
+//
+// A format string rather than concatenation at the call site: a translator has
+// to be able to move the placeholder, and "prefix" + value cannot express a
+// language that puts the noun first.
+func (s *Server) writeErrf(w http.ResponseWriter, locale string, status int, code, key string, args ...any) {
+	s.writeJSON(w, status, map[string]string{"error": code, "message": i18n.Tf(key, locale, args...)})
 }

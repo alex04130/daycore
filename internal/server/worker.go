@@ -21,12 +21,22 @@ import (
 
 // Worker runs background scheduled tasks on a per-user-timezone cadence.
 type Worker struct {
-	cron     *cron.Cron
-	s        *Server
-	log      *slog.Logger
-	mu       sync.Mutex
-	jobs     map[string]cron.EntryID // session_id:timezone_hash → entry
-	channels *channels.Registry      // nil when channels are not wired
+	cron *cron.Cron
+	s    *Server
+	log  *slog.Logger
+	mu   sync.Mutex
+	// jobs holds every cron entry a session owns, and sched remembers which
+	// timezone they were built for.
+	//
+	// Keyed by session id alone, NOT by "sid:tz". The previous shape kept one
+	// EntryID per (sid, tz, job) and looked up "sid:tz" to decide whether the
+	// session was already scheduled — a key nothing ever wrote, so the guard was
+	// dead and every admission through markAwake added four more entries. Keying
+	// by session is also what makes a timezone change removable: the old
+	// entries are found by the same key that replaces them.
+	jobs     map[string][]cron.EntryID
+	sched    map[string]string  // session_id → timezone its entries were built for
+	channels *channels.Registry // nil when channels are not wired
 }
 
 // NewWorker creates a background worker. Call Start() to begin.
@@ -36,7 +46,8 @@ func NewWorker(s *Server, chReg *channels.Registry) *Worker {
 		cron:     cron.New(cron.WithLocation(time.UTC)),
 		s:        s,
 		log:      s.log,
-		jobs:     make(map[string]cron.EntryID),
+		jobs:     make(map[string][]cron.EntryID),
+		sched:    make(map[string]string),
 		channels: chReg,
 	}
 }
@@ -54,47 +65,112 @@ func (w *Worker) Stop() {
 
 // ScheduleUser runs the standard proactive jobs for a session at its timezone.
 func (w *Worker) ScheduleUser(sid, tz string) {
+	if sid == "" {
+		return
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	key := sid + ":" + tz
-	if _, ok := w.jobs[key]; ok {
-		return // already scheduled
+	if prev, ok := w.sched[sid]; ok {
+		if prev == tz {
+			return // already scheduled, at this timezone
+		}
+		// The timezone moved. Take the old entries out before adding new ones —
+		// leaving them would fire the same brief twice, once per zone.
+		w.unscheduleLocked(sid)
 	}
-	// Morning brief: 07:30 in the user's own timezone (CRON_TZ prefix).
-	morningSpec := cronScheduleAt(7, 30, tz)
-	id, err := w.cron.AddFunc(morningSpec, func() {
-		w.runBrief(sid, tz, "morning")
-	})
-	if err != nil {
-		w.log.Error("schedule morning brief", "sid", sid, "spec", morningSpec, "err", err)
-	} else {
-		w.jobs[key+":morning"] = id
+
+	tz = w.resolveTZ(sid, tz)
+	var ids []cron.EntryID
+	add := func(name, spec string, fn func()) {
+		id, err := w.cron.AddFunc(spec, fn)
+		if err != nil {
+			w.log.Error("schedule proactive job", "job", name, "sid", sid, "spec", spec, "err", err)
+			return
+		}
+		ids = append(ids, id)
 	}
-	// Evening review: 21:00 in the user's own timezone.
-	eveningSpec := cronScheduleAt(21, 0, tz)
-	id, err = w.cron.AddFunc(eveningSpec, func() {
-		w.runBrief(sid, tz, "evening")
-	})
-	if err != nil {
-		w.log.Error("schedule evening review", "sid", sid, "spec", eveningSpec, "err", err)
-	} else {
-		w.jobs[key+":evening"] = id
-	}
+	// The two daily times come from the learned rhythm (ζ-2). They used to be
+	// the literals 07:30 and 21:00, which happen to be exactly what
+	// Schedule(Cold()) produces — so "derived from the rhythm" was true of the
+	// numbers and false of the mechanism: learning something else changed
+	// nothing. This is where that stopped being true.
+	//
+	// Read under w.mu via a background context: ScheduleUser is called from a
+	// request path and from the learn job, and neither should be able to make
+	// this block on a caller's cancelled context.
+	jobs := w.jobsFor(context.Background(), sid)
+	// Morning brief: at the learned wake time, in the user's own timezone.
+	add("morning", cronScheduleAtHM(jobs.BriefAt, tz), func() { w.runBrief(sid, tz, "morning") })
+	// Evening review: 90 minutes before the learned bedtime.
+	add("evening", cronScheduleAtHM(jobs.ReviewAt, tz), func() { w.runBrief(sid, tz, "evening") })
+	// Rhythm learning: at the day cut, when yesterday's row is final.
+	add("rhythm", cronScheduleAt(rhythmConfig().DayCutHour, 0, tz), func() { w.runRhythmLearn(sid, tz) })
+	// The Protector. Half-hourly because the predicate is a threshold on a
+	// continuously growing number: the interval only bounds how late the nudge
+	// can be, half an hour against a twenty-hour stretch.
+	add("protector", protectorEvery, func() { w.checkProtector(sid, tz) })
 	// Deadline check: every 2 hours.
-	id, err = w.cron.AddFunc("0 */2 * * *", func() {
-		w.checkDeadlines(sid, tz)
-	})
-	if err == nil {
-		w.jobs[key+":deadline"] = id
-	}
+	add("deadline", "0 */2 * * *", func() { w.checkDeadlines(sid, tz) })
 	// Rolling replan: every 30 minutes.
-	id, err = w.cron.AddFunc("*/30 * * * *", func() {
-		w.checkRollingReplan(sid, tz)
-	})
-	if err == nil {
-		w.jobs[key+":replan"] = id
+	add("replan", "*/30 * * * *", func() { w.checkRollingReplan(sid, tz) })
+
+	if len(ids) == 0 {
+		// Nothing was scheduled — recording the session as scheduled here would
+		// make the failure permanent for the life of the process.
+		return
 	}
-	w.log.Info("scheduled proactive jobs", "sid", sid, "tz", tz)
+	w.jobs[sid] = ids
+	w.sched[sid] = tz
+	w.log.Info("scheduled proactive jobs", "sid", sid, "tz", tz, "entries", len(ids))
+}
+
+// UnscheduleUser removes a session's proactive jobs.
+func (w *Worker) UnscheduleUser(sid string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.unscheduleLocked(sid)
+}
+
+func (w *Worker) unscheduleLocked(sid string) {
+	for _, id := range w.jobs[sid] {
+		w.cron.Remove(id)
+	}
+	delete(w.jobs, sid)
+	delete(w.sched, sid)
+}
+
+// EntryCount reports how many cron entries are registered. Exported for the
+// test that keeps ScheduleUser idempotent — the property is invisible from
+// outside otherwise, which is exactly how it broke.
+func (w *Worker) EntryCount() int { return len(w.cron.Entries()) }
+
+// resolveTZ maps a timezone onto one cron can actually parse.
+//
+// An unloadable zone used to be a partial failure that looked like a success:
+// the two CRON_TZ-prefixed jobs (morning brief, evening review) failed to
+// register while the two plain ones did, the session was recorded as scheduled,
+// and no later call retried — so that user silently never got a brief again.
+//
+// Falling back is the same trade markAwake already makes for rhythm signals: a
+// brief at a possibly-wrong hour beats no brief, and the wrong hour is visible
+// while the absence is not.
+func (w *Worker) resolveTZ(sid, tz string) string {
+	if tz != "" {
+		if _, err := time.LoadLocation(tz); err == nil {
+			return tz
+		}
+	}
+	fallback := "UTC"
+	if w.s != nil && w.s.cfg != nil && w.s.cfg.WorkerDefaultTZ != "" {
+		if _, err := time.LoadLocation(w.s.cfg.WorkerDefaultTZ); err == nil {
+			fallback = w.s.cfg.WorkerDefaultTZ
+		}
+	}
+	if tz != "" {
+		w.log.Warn("unknown timezone; scheduling proactive jobs in the fallback zone",
+			"sid", sid, "tz", tz, "fallback", fallback)
+	}
+	return fallback
 }
 
 // cronScheduleAt builds a 5-field cron spec that fires at hour:min in the given
@@ -109,6 +185,113 @@ func cronScheduleAt(hour, min int, tz string) string {
 		tz = "UTC"
 	}
 	return fmt.Sprintf("CRON_TZ=%s %d %d * * *", tz, min, hour)
+}
+
+// cronScheduleAtHM is cronScheduleAt for an "HH:MM" the rhythm produced. An
+// unparseable value falls back to the cold-start time for that job rather than
+// dropping the entry — a brief at the default hour beats no brief, the same
+// trade resolveTZ makes.
+func cronScheduleAtHM(hm, tz string) string {
+	var h, m int
+	if n, err := fmt.Sscanf(hm, "%d:%d", &h, &m); n != 2 || err != nil ||
+		h < 0 || h > 23 || m < 0 || m > 59 {
+		return cronScheduleAt(7, 30, tz)
+	}
+	return cronScheduleAt(h, m, tz)
+}
+
+// ─── leadership and occurrence ownership ─────────────────────────────────────
+
+// claim takes ownership of one occurrence of one job for one session, and
+// reports whether this instance should do the work.
+//
+// # Where this call belongs
+//
+// AFTER the suppression gates (the user's toggles, Do Not Disturb) and after
+// deciding there is actually something to do — never at the top of the job.
+// domain.JobRunRepository.Claim says why: "Writing a row every half hour to
+// record that nothing happened would bury the rows that mean something." The
+// rolling replan fires 48 times a day per session and almost always decides to
+// do nothing; claiming first would put 48 rows a day per session into the table
+// whose only reader is a human asking "did my brief go out".
+//
+// # What it guarantees, and what it does not
+//
+// Guarantees: two instances that both reach here for the same occurrence — which
+// the lease is supposed to prevent but clocks make possible — will not both come
+// back true. That is a unique index doing the work, which is the only mutual
+// exclusion all four backends share.
+//
+// Does not guarantee: that a failed occurrence is ever retried. Nothing
+// re-drives it. See leader.go.
+//
+// A storage error returns false. Running unguarded when the guard is broken is
+// exactly the duplicate this whole mechanism exists to prevent, and a proactive
+// message that does not go out is cheaper than one that goes out twice.
+func (w *Worker) claim(ctx context.Context, sid, job, runKey string) (*domain.JobRun, bool) {
+	if !w.s.LeadsWorker() {
+		return nil, false
+	}
+	run := &domain.JobRun{
+		SessionID: sid, Job: job, RunKey: runKey, Instance: w.s.InstanceID(),
+	}
+	ok, err := w.s.store.JobRuns().Claim(ctx, run)
+	if err != nil {
+		w.log.Warn("could not claim a job occurrence; skipping it rather than risking a duplicate",
+			"sid", sid, "job", job, "runKey", runKey, "err", err)
+		return nil, false
+	}
+	if !ok {
+		w.log.Debug("job occurrence already claimed", "sid", sid, "job", job, "runKey", runKey)
+		return nil, false
+	}
+	return run, true
+}
+
+// finish closes an occurrence.
+//
+// context.WithoutCancel plus a fresh timeout: the job's own context is 15–30
+// seconds and is very often the thing that just expired. Closing the row on a
+// dead context would leave it "running" forever, which reads as a crash and
+// blocks the occurrence for JobStaleAfter. Same reasoning as settleDecision in
+// agent.go.
+func (w *Worker) finish(ctx context.Context, run *domain.JobRun, jobErr error) {
+	if run == nil {
+		return
+	}
+	status, msg := domain.JobDone, ""
+	if jobErr != nil {
+		status, msg = domain.JobFailed, jobErr.Error()
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := w.s.store.JobRuns().Finish(fctx, run.ID, status, msg, time.Now()); err != nil {
+		w.log.Warn("could not close a job occurrence; it will read as a crash",
+			"sid", run.SessionID, "job", run.Job, "err", err)
+	}
+}
+
+// dayKey names a once-a-day occurrence: the local date.
+//
+// Local, not UTC. A daily job is daily in the user's own day — an occurrence key
+// in UTC would let a user near the date line get two morning briefs on one of
+// their days and none on another.
+func dayKey(now time.Time, loc *time.Location) string {
+	return now.In(loc).Format("2006-01-02")
+}
+
+// slotKey names an occurrence of a job that repeats within a day: the local date
+// plus the slot the firing falls in.
+//
+// Truncation is on the wall clock in the user's zone, and it is plain truncation
+// with no grace window. robfig/cron fires from a timer that Go guarantees not to
+// run early, so the body's own time.Now() is always at or after the slot
+// boundary; a grace window would only serve to push a delayed tick into the NEXT
+// slot, stealing an occurrence that has not happened yet and making the real
+// firing find it taken.
+func slotKey(now time.Time, loc *time.Location, slot time.Duration) string {
+	t := now.In(loc)
+	return t.Format("2006-01-02") + "T" + t.Truncate(slot).Format("1504")
 }
 
 // ─── Brief generation ────────────────────────────────────────────────────────
@@ -131,29 +314,48 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 		name = "Daycore"
 	}
 
+	job := domain.JobMorningBrief
 	switch kind {
 	case "morning":
 		if !prefs.MorningBrief || prefs.DoNotDisturb {
 			return
 		}
-		w.log.Info("running morning brief", "sid", sid)
 	case "evening":
+		job = domain.JobEveningReview
 		if !prefs.EveningReview || prefs.DoNotDisturb {
 			return
 		}
-		w.log.Info("running evening review", "sid", sid)
 	}
 
 	loc := resolveLocation(tz)
 	now := time.Now().In(loc)
 	today := now.Format("2006-01-02")
 
+	// Claim after the toggles, before the work. One occurrence per session per
+	// local day per kind — so a second instance, or this instance after a
+	// restart that re-fires the same cron minute, does not send it twice.
+	run, ok := w.claim(ctx, sid, job, dayKey(now, loc))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
+	w.log.Info("running brief", "sid", sid, "kind", kind)
+
 	// Gather context: weather, today's plan, upcoming deadlines.
 	weatherSummary := w.lookupWeather(ctx, locale)
 	planSummary := w.loadPlanSummary(ctx, sid, today)
 
 	// Build the prompt and call the agent.
-	sysPrompt := buildBriefSystemPrompt(locale, name, today, now.Format("15:04"), tz, weatherSummary, planSummary)
+	sysPrompt, err := w.s.prompts.Render(ctx, ai.PromptBrief, locale, map[string]any{
+		"Name": name, "Date": today, "Clock": now.Format("15:04"), "TZ": tz,
+		"Weather": weatherSummary, "PlanJSON": planSummary,
+	})
+	if err != nil {
+		w.log.Error("worker: brief prompt", "err", err)
+		jobErr = err
+		return
+	}
 	if kind == "morning" && prefs.GapSuggestions {
 		sysPrompt += gapSuggestionHint(locale)
 	}
@@ -178,11 +380,15 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	w.s.logAICall(ctx, sid, epBrief, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker runBrief: agent call", "sid", sid, "kind", kind, "err", err)
+		jobErr = err
 		return
 	}
 
 	text := strings.TrimSpace(resp.Content)
 	if text == "" {
+		// An empty answer is a done occurrence, not a failed one: the model was
+		// asked and had nothing to say. Marking it failed would make the row read
+		// like an outage.
 		return
 	}
 
@@ -229,14 +435,27 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 	}
 
 	if len(urgent) == 0 {
+		// Nothing to say. Claiming here would write a row every two hours per
+		// session to record that nothing happened, burying the rows that mean
+		// something — which is exactly what JobRunRepository.Claim warns against.
 		return
 	}
+
+	// Two-hour slots, so two instances firing the same 0-mod-2 hour agree on the
+	// occurrence, and so a restart inside the same slot does not re-warn.
+	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, slotKey(now, loc, 2*time.Hour))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
 
 	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent))
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
 		w.log.Warn("worker checkDeadlines: get session", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
@@ -286,21 +505,39 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	}
 
 	if len(overdue) == 0 {
+		// The common case, 48 times a day per session. Claiming before this check
+		// would make job_runs almost entirely rows that say "nothing happened".
 		return
 	}
+
+	// Half-hour slots, matching the cron cadence.
+	run, ok := w.claim(ctx, sid, domain.JobRollingReplan, slotKey(now, loc, 30*time.Minute))
+	if !ok {
+		return
+	}
+	var jobErr error
+	defer func() { w.finish(ctx, run, jobErr) }()
 
 	w.log.Info("rolling replan", "sid", sid, "overdue", len(overdue))
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
 		w.log.Warn("worker checkRollingReplan: get session", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 	locale := w.s.localePair(ctx, sid).Resolve(sess.Language, "")
 
 	// Call the agent to evaluate and suggest a replan.
 	overdueJSON, _ := json.Marshal(overdue)
-	sysPrompt := buildReplanSystemPrompt(locale, today, now.Format("15:04"), tz)
+	sysPrompt, err := w.s.prompts.Render(ctx, ai.PromptReplan, locale, map[string]any{
+		"Date": today, "Clock": now.Format("15:04"), "TZ": tz,
+	})
+	if err != nil {
+		w.log.Error("worker: replan prompt", "err", err)
+		jobErr = err
+		return
+	}
 	userMsg := buildReplanUserPrompt(locale, string(overdueJSON))
 
 	provider := w.s.catalog.DefaultChat()
@@ -316,6 +553,7 @@ func (w *Worker) checkRollingReplan(sid, tz string) {
 	w.s.logAICall(ctx, sid, epReplan, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		w.log.Error("worker checkRollingReplan: agent call", "sid", sid, "err", err)
+		jobErr = err
 		return
 	}
 
@@ -398,10 +636,15 @@ func parseBlockTime(dateStr, timeStr string, loc *time.Location) (time.Time, err
 	if _, err := fmt.Sscanf(timeStr, "%d:%d", &h, &m); err != nil {
 		return time.Time{}, err
 	}
-	return time.Date(
-		time.Now().In(loc).Year(), time.Now().In(loc).Month(), time.Now().In(loc).Day(),
-		h, m, 0, 0, loc,
-	), nil
+	// dateStr used to be accepted and then ignored — the date came from
+	// time.Now() regardless. Both existing callers happened to pass today, so
+	// the parameter was a lie nothing could catch; the first caller to pass any
+	// other date would silently get a time on the wrong day.
+	y, mo, d := time.Now().In(loc).Date()
+	if t, err := time.ParseInLocation("2006-01-02", dateStr, loc); err == nil {
+		y, mo, d = t.Date()
+	}
+	return time.Date(y, mo, d, h, m, 0, 0, loc), nil
 }
 
 // lookupWeather tries to get a 2-day forecast for Beijing (future: session setting).
@@ -435,37 +678,6 @@ func (w *Worker) loadPlanSummary(ctx context.Context, sid, date string) string {
 
 // ─── Prompt builders ─────────────────────────────────────────────────────────
 
-// buildBriefSystemPrompt constructs a system prompt for the brief agent.
-func buildBriefSystemPrompt(locale, name, date, clock, tz, weather, planJSON string) string {
-	var b strings.Builder
-
-	if strings.HasPrefix(locale, "zh") {
-		b.WriteString(fmt.Sprintf("你是 %s，一个亲切的日程助手。现在是 %s %s（时区 %s）。\n", name, date, clock, tz))
-		if weather != "" {
-			b.WriteString(fmt.Sprintf("天气：%s\n", weather))
-		}
-		if planJSON != "" {
-			b.WriteString(fmt.Sprintf("今天的计划：%s\n", planJSON))
-		}
-		b.WriteString("你需要为用户生成一段简短的简报，然后直接发送即可，不需要追问用户任何问题。\n")
-		b.WriteString("语气：温暖友好但简洁，像朋友发消息。不要说\"作为 AI\"或\"我理解你的感受\"这类套话。\n")
-		b.WriteString("格式：纯文本，2-4 句话即可，不要太长。直接开始，不要用\"早上好\"之类的标题。\n")
-	} else {
-		b.WriteString(fmt.Sprintf("You are %s, a warm schedule assistant. The time is %s %s (timezone %s).\n", name, date, clock, tz))
-		if weather != "" {
-			b.WriteString(fmt.Sprintf("Weather: %s\n", weather))
-		}
-		if planJSON != "" {
-			b.WriteString(fmt.Sprintf("Today's plan: %s\n", planJSON))
-		}
-		b.WriteString("Generate a brief summary for the user. Be direct, no follow-up questions.\n")
-		b.WriteString("Tone: warm and friendly but concise, like texting a friend. Skip robotic filler.\n")
-		b.WriteString("Format: plain text, 2-4 sentences max. No greeting header like \"Good morning\".\n")
-	}
-
-	return b.String()
-}
-
 // gapSuggestionHint appends the GapSuggestions behavior to the morning brief so
 // the toggle actually does something (a full standalone gap-scan job is a later
 // optimization).
@@ -492,24 +704,6 @@ var (
 func gapSuggestionHint(locale string) string { return i18n.T(gapSuggestionText, locale) }
 func morningUserPrompt(locale string) string { return i18n.T(morningUserText, locale) }
 func eveningUserPrompt(locale string) string { return i18n.T(eveningUserText, locale) }
-
-// buildReplanSystemPrompt constructs a system prompt for the rolling replan agent.
-func buildReplanSystemPrompt(locale, date, clock, tz string) string {
-	if strings.HasPrefix(locale, "zh") {
-		return fmt.Sprintf(
-			"你是 Daycore 日程助手。现在是 %s %s（时区 %s）。用户今天有几个时间块已经超时但没有标记完成。\n"+
-				"请分析这些超时块，提出一个简短的重排建议。比如：把某件事推迟到下午、删掉、或是放到明天。\n"+
-				"语气：像一个朋友在帮你理顺日程，而不是出报告。1-3 句就够了，不需要长篇大论。\n"+
-				"直接说你的建议，不要问用户问题，不要说\"你好\"之类的开场白。",
-			date, clock, tz)
-	}
-	return fmt.Sprintf(
-		"You are the Daycore scheduling assistant. The time is %s %s (timezone %s). The user has overdue time blocks that weren't marked completed.\n"+
-			"Analyze them and suggest a brief replan: reschedule, drop, or move to tomorrow.\n"+
-			"Tone: like a friend helping sort things out, not a report. 2-4 sentences max.\n"+
-			"Give your suggestion directly. No greetings, no questions back to the user.",
-		date, clock, tz)
-}
 
 func buildReplanUserPrompt(locale, overdueJSON string) string {
 	return i18n.Tf(replanUserText, locale, overdueJSON)
@@ -628,6 +822,19 @@ type SessionPrefs struct {
 	// page switch. A pair is a preference; the current one is state.
 	PrimaryLocale   string `json:"primaryLocale,omitempty"`
 	SecondaryLocale string `json:"secondaryLocale,omitempty"`
+
+	// Timezone is the IANA zone this user's own day is measured in — the
+	// petrify line, the rhythm day key, and when the morning brief fires.
+	// Empty means "use the deployment default" (WORKER_DEFAULT_TZ).
+	//
+	// TimezoneSource says who decided it: TZSourceUser (settings page) or
+	// TZSourceDetected (a client hint). The distinction is load-bearing — a
+	// device hint may fill in or update a detected value but must never
+	// overwrite a user's own choice, or somebody who deliberately keeps their
+	// schedule on home time has it moved the first time they open the app from
+	// an airport. See timezone.go.
+	Timezone       string `json:"timezone,omitempty"`
+	TimezoneSource string `json:"timezoneSource,omitempty"`
 }
 
 // DefaultPrefs returns the default (all-on) preferences.

@@ -140,6 +140,13 @@ const (
 	OriginDaemon    ProposalOrigin = "daemon"    // self-initiated
 	OriginUpload    ProposalOrigin = "upload"    // batch/cross-domain/low-confidence import
 	OriginProtector ProposalOrigin = "protector" // the 20h care nudge
+	// OriginUser is a proposal the user asked for: marking a conflict on a
+	// block they cannot move themselves. The other four say which part of the
+	// system generated it; this one says the system generated it because
+	// somebody asked. It matters for the ledger — a card the user summoned
+	// should not count against the agent's rapport the way an unsolicited one
+	// does.
+	OriginUser ProposalOrigin = "user"
 )
 
 // ── TTL defaults ────────────────────────────────────────────────────────────
@@ -357,6 +364,18 @@ type ProposalFilter struct {
 	OwnerInstance string
 	Limit         int
 }
+
+// PushBudgetPerDay is how many pushes one session may receive in a day.
+//
+// EXPERIENCE_CORE consensus 24: 「推送预算 ≤3 条/天」. It is a hard ceiling on
+// interruption, not a target — the Protector's care nudge is explicitly said to
+// be worth spending one of them (§5), which only means something if the number
+// is small enough that spending one is a decision.
+//
+// Counted from rows that exist for other reasons (proposals carrying a pushedAt
+// inside the window) rather than from a counter: a counter would be a second
+// source of truth, and the two would drift the first time a push failed halfway.
+const PushBudgetPerDay = 3
 
 // PushBudgetWindow is the half-open span [start, end) that one day's push
 // budget is counted over, for the day containing now in loc.

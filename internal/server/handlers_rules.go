@@ -10,6 +10,12 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("rule_create", (*Server).revertRuleCreate_delete)
+	registerRevert("rule_update", (*Server).revertRuleUpdate)
+	registerRevert("rule_delete", (*Server).revertRuleCreate)
+	registerRevert("rule_batch", (*Server).revertRuleBatch)
+
 	registerRoutes("schedule rules", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/rules", s.handleRuleList)
 		mux.HandleFunc("POST /api/rules", s.handleRuleCreate)
@@ -27,7 +33,7 @@ func (s *Server) handleRuleList(w http.ResponseWriter, r *http.Request) {
 	}
 	rules, err := s.store.Rules().List(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取规则失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.ruleList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"rules": rules})
@@ -41,7 +47,7 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in ruleInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.ruleCreate.bad_request")
 		return
 	}
 	rule, err := in.toRule(sid)
@@ -51,7 +57,7 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := s.store.Rules().Create(r.Context(), rule)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "规则保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.ruleCreate.internal2")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -72,7 +78,7 @@ func (s *Server) handleRuleBatchCreate(w http.ResponseWriter, r *http.Request) {
 		Rules []ruleInput `json:"rules"`
 	}
 	if err := s.readJSON(r, &body); err != nil || len(body.Rules) == 0 {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 rules")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.ruleBatchCreate.bad_request")
 		return
 	}
 	rules := make([]*domain.ScheduleRule, 0, len(body.Rules))
@@ -88,7 +94,7 @@ func (s *Server) handleRuleBatchCreate(w http.ResponseWriter, r *http.Request) {
 	for _, rule := range rules {
 		c, err := s.store.Rules().Create(r.Context(), rule)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "规则保存失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.ruleBatchCreate.internal")
 			return
 		}
 		created = append(created, *c)
@@ -117,7 +123,7 @@ func (s *Server) handleRulePatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var raw map[string]json.RawMessage
 	if err := s.readJSON(r, &raw); err != nil || len(raw) == 0 {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.rulePatch.bad_request")
 		return
 	}
 	upd, err := ruleUpdateFromRaw(raw)
@@ -127,11 +133,11 @@ func (s *Server) handleRulePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	prev, err := s.store.Rules().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "rule_not_found", "没有这条规则")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "rule_not_found", "err.rulePatch.rule_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取规则失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.rulePatch.internal")
 		return
 	}
 	// Validate the merged result BEFORE persisting: the combined state (e.g. kind
@@ -143,7 +149,7 @@ func (s *Server) handleRulePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.store.Rules().Update(r.Context(), sid, id, upd)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "规则更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.rulePatch.internal2")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -164,11 +170,11 @@ func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
 	prev, _ := s.store.Rules().Get(r.Context(), sid, id) // recovery snapshot for the audit log
 	err := s.store.Rules().Delete(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "rule_not_found", "没有这条规则")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "rule_not_found", "err.ruleDelete.rule_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "规则删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.ruleDelete.internal")
 		return
 	}
 	summary := id

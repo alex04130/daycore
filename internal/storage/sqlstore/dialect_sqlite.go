@@ -327,6 +327,22 @@ func (sqliteDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS attachments (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			thread_id TEXT NOT NULL DEFAULT '',
+			message_id TEXT NOT NULL DEFAULT '',
+			ref TEXT NOT NULL,
+			kind TEXT NOT NULL DEFAULT 'file',
+			mime TEXT NOT NULL DEFAULT '',
+			size BIGINT NOT NULL DEFAULT 0,
+			sha256 TEXT NOT NULL DEFAULT '',
+			filename TEXT NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS attachments_message ON attachments(session_id, message_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS attachments_thread ON attachments(session_id, thread_id)`,
+		`CREATE INDEX IF NOT EXISTS attachments_sweep ON attachments(message_id, created_at)`,
 		`CREATE TABLE IF NOT EXISTS ai_call_logs (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,

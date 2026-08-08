@@ -48,20 +48,20 @@
 
 ### 行为一致性套件（`internal/storage/storagetest`，已落地）
 
-一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。36 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
+一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。42 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
 
 lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回别人的行 / 空 holder 被拒 / 场次占有互斥 / 完成的场次不再被占 / 失败重试到上限 / 崩溃接管有界且回报真实 attempts / **接管轮换占有令牌使僵尸的 `Finish` 落空** / `Prune` 保留 running / nil 切片回来是空切片而非 nil / 指向零值时间的指针算「不存在」 / **`ProposalOp.Args` 的数字在每个后端都回来是 `float64`** / `Validate` 在 `Create` 与 `Update` 两侧都生效 / `rev` CAS 拒绝陈旧写 / TTL 不对称 / **同毫秒并列时 Supersede 恰好留一张** / 已投递的卡不被退休 / keeper 缺失是非事件 / 可投递集合排除过期与压后 / 序列化失败拒绝写入 / rapport 游标往返 / **学习作业不擦掉活的清醒标记** / `Touch` 只向前 / 分钟 0 是有意义的值 / 并发首写不丢信号 / 语言包往返与整语言卸载 / `RevertedBy` 精确且不跨会话 / `Scan` 最旧优先且游标续读无重无漏 / **空 canvas id 的 upsert 被拒而不是覆盖上一条无键行** / **每个 List 的默认页大小与天花板四后端一致** / **`Delete` 限定在本会话内、删不存在的行报 `ErrNotFound`** / 提案的 level 谓词与三态戳谓词 / **`Count` 忽略 `Limit`**（否则预算数到一页就饱和）/ **「堆叠里几张卡」是合取不是问戳**（`delivered_at` 永不清除）/ **`Prune` 放过 pending**（老的 pending 是 `Expire` 还没扫到，删它是抹掉用户还欠着的卡）/ `OwnerInstance` 可查。
 
 **加后端的验收标准就是这套套件通过**，包括计划中的 HTTP 转换层。这也是让第五个后端负担得起的唯一办法：两两分歧数随后端数平方增长，共享套件把它压平。
 
-✅ **四个后端全部真机验证完毕**（首次 2026-07-29，最近一次 2026-08-02）：
+✅ **四个后端全部真机验证完毕**（首次 2026-07-29，最近一次 2026-08-06 —— ε 的 `attachments` 六例在四个后端上逐条跑过）：
 
 | 后端 | 行为套件 | 建表 | 原生全文索引 |
 |---|---|---|---|
-| SQLite | 36/36 | ✅ | ✅ FTS5 external-content + 三触发器 |
-| PostgreSQL 16.14 | **36/36** | ✅ 32 张表 | ✅ tsvector 生成列 + GIN |
-| MySQL 8 | **36/36** | ✅ 32 张表 | ✅ FULLTEXT ngram |
-| MongoDB 8 | 36/36 | ✅ | ✅ text index |
+| SQLite | 42/42 | ✅ | ✅ FTS5 external-content + 三触发器 |
+| PostgreSQL 16 | **42/42** | ✅ 33 张表 | ✅ tsvector 生成列 + GIN |
+| MySQL 8 | **42/42** | ✅ 33 张表 | ✅ FULLTEXT ngram |
+| MongoDB 8 | 42/42 | ✅ | ✅ text index |
 
 **pg 与 MySQL 是第一次真机执行**（此前只有 `dialect_parity_test.go` 的静态比对，而静态比对只能看出三份 DDL 互相不一致、看不出其中任何一份是否合法 —— 这个洞放跑过三次真事故）。原生索引那一列也是第一次验：不只断言 `condApplied` 为真，还真发一次查询，因为索引建起来不等于查询语法对，而查询语法错只在有人搜索时才报。
 
@@ -98,6 +98,229 @@ CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，并有�
 
 **主题变量是侧表更合适的那一类**：F7 的补算要问「哪些主题缺 token X」，侧表是一个 `WHERE`，blob 是全表扫加逐个解析；「给所有主题加一个 token」也变成每主题一次 INSERT 而不是整体重写。
 
+## 节律学习与 Protector（ζ-2 / ζ-3，2026-08-07）
+
+### 在此之前，`internal/rhythm` 是本仓第六次「写完、测过、没人调用」
+
+515 行纯函数，**两个生产调用方**，都在 `awake.go`、都只是算一个 day key。`Learn` / `LearnDays` / `Schedule` / `Cold` / `Pin` 与整个 `schedule.go` 一个都没有。仓储侧同样：`Get`/`Save`/`Touch`/`Days`/`PruneDays` 全部零调用方，只有 `Observe` 是活的。
+
+顺带戳破一句文档谎言：ARCHITECTURE 说三个定时时刻「由节律派生」—— 那**只在数值上成立**。`Schedule(Cold())` 恰好产出 04:00 / 07:30 / 21:00，正是 cron 里写死的那三个数，所以「学到别的东西会改变什么」这件事根本无法被观察到。
+
+### 学习作业（`rhythm_job.go`）
+
+跑在 `DayCutHour`（默认 04:00），因为那一刻节律日刚闭合、昨天那行才是终值。**代价说清楚**：对 04:00 前起床的人，新画像落在今天的 PlanAt 之后，改动晚一天生效。备选是「PlanAt 前 15 分钟」，代价是作业的触发时刻由它自己算出来的东西决定 —— 自举，对「其它一切都由它排程」的那一块是个坏性质。
+
+**两道过滤都是必须的，不是保险**：
+
+| 过滤 | 不做会怎样 |
+|---|---|
+| `>= windowStart` | `rhythm.LearnDays` **不做窗口过滤**（窗口活在 `DaysFrom`，那是信号列表那条路）。而 `Days(ctx, sid, 21)` 是**行数上限不是日期过滤** —— 间歇性用户最近 21 行可能横跨半年，直接喂进去就是拿去年冬天的作息学今天的节律。静默、无报错。 |
+| `< todayKey` | 当天那行还在长（`LastMin` 一直涨到人睡觉），纳入会把 Sleep 越学越早。04:00 跑时当天几乎没有行，看起来无害 —— 直到有人手动触发。 |
+
+**证据变薄不遗忘**（`mergeLearned`）。`LearnDays` 回答的是「**这些天**说了什么」，天数不够时答 `Cold()`，对那个问题是正确的。把它直接写回去不是：休假三周会把三个月的学习成果扔掉，一个人的早报一夜之间退回 07:30，没有解释、也不是他做了什么。
+
+所以策略放在**调用方**而不是改纯函数：保留学到的时刻，如实汇报（更低的）天数。画像停止增长信心，但不丢失已有的。代价是真的换了作息的人会在攒够 `MinDays` 新证据前继续用旧时刻 —— 几天的轻微偏差，换的是不被重置成一个从来不适合他的默认值。
+
+**按「不分工作日/周末」实现**（EXPERIENCE_CORE §5 留的口子，ROADMAP 仍挂着）—— 分开学要改 `Day`、`Profile` 与三方言 DDL + mongostore + 行为套件。
+
+### Protector（`protector.go`）
+
+EXPERIENCE_CORE §5 + 共识 28：**只看连续清醒时长，与任何日界线机制无关**。不看午夜、不看 04:00 日切、不看石化线。
+
+**致命断点先修**：`rhythm_profiles.run_since` / `last_signal_at` **没有任何生产写者** —— 日行在写、两个活标记没在写，于是 `Live.Run` 读到零 `RunSince`（它正确地理解为「睡了」），`NeedsProtector` **恒为假**。不先接 `foldAwakeMark`（`awake.go`）就接 worker，得到的是「编译过、用伪造数据测试全绿、线上永不响且一行日志都没有」。
+
+**场次 key 必须是「这段清醒的起点」**，别的都错：
+
+| key | 后果 |
+|---|---|
+| `dayKey` | 跨本地午夜的 30 小时清醒**响两次** |
+| `slotKey` | **每半小时响一次** |
+| `run:<RunSince>` ✅ | 一段清醒恰好一次 —— 这才是「同一个长夜」的意思 |
+
+按 **UTC** 格式化：`RunSince` 是绝对时刻，按会话时区格式化会让一段跨 DST 的清醒凭空换个 key 再响一次。
+
+**TTL 取的是 ask-first（`silence_rejects`），与设计稿相反**。`design-ui` 的 mock 写的是过去时（「我先帮你顺延**了**」）= act-first。这里选了反的：第 20 个小时的人同样可能正在赶 deadline、马上要用到上午那些块。**凌晨四点的沉默不是同意**，是有人在专注或者已经睡了，而在他底下挪他的早上，代价比问一句更大。要翻的话改的是一个常量。
+
+**Do Not Disturb 抑制的是整条关怀，不只是推送**：一张凌晨四点静静出现、中午才被读到的关怀卡，说的是关于昨天的一个事实。
+
+**推送预算 ≤3/天**（共识 24），从**已有的行**数出来（带 `pushedAt` 且落在窗口内的提案），不另设计数器 —— 计数器是第二个真源，第一次推送半途失败两者就分叉。读不到预算时**不推**：关怀卡在 app 里仍然在，而挤在一个本来就吵的日子上正是预算要防的事。
+
+### 顺带修掉的既有 bug：`parseBlockTime` 忽略它自己的日期参数
+
+签名收 `dateStr`，函数体里用的却是 `time.Now()`。两个既有调用方碰巧都传今天，所以这个参数是**一个没有任何东西能抓到的谎**。Protector 是第一个需要对另一个日期讲道理的调用方，于是「昨天的块」被当成「今天还没到」。
+
+## 每会话时区（ζ-4，2026-08-06）
+
+在这之前，服务端**每一个钟表**都读同一个部署级 `WORKER_DEFAULT_TZ`。对不在那个时区的用户，这不是个装饰性的偏移，它挪的是本该锚在「他自己那一天」上的东西：
+
+| 被挪的 | 症状 |
+|---|---|
+| 石化线（`plan_guard.go`） | 他的傍晚提前或推迟冻结 |
+| 节律 day key（`awake.go`） | 他的「一天」从别人的午夜开始，而 day 正是学习器的工作单位 |
+| 早报时刻 | 07:30 到达，但是在一个他不住的城市的 07:30 |
+| 每日场次 key | 他的某一天收到两次早报、另一天一次都没有 |
+
+### 为什么值放在 preferences 而不是列
+
+仓库规则是「出现在 `WHERE` 里、或被算术更新的字段必须是列」。时区按会话读、从不跨会话查询，所以 blob 是对的位置 —— 与 `PrimaryLocale` 同一个地方，同一个理由。
+
+### 为什么允许客户端告诉我们（这不是「永不信任客户端上下文」的漏洞）
+
+那条规则挡的是**服务端本来就能自己算出来的数据**（`todayPlan`、`moodHistory`、`date`）—— 接受它意味着客户端可以在用户自己的历史上撒谎。**时区服务端根本算不出来**：只有设备知道它在哪个时区。拒绝这个提示不会更安全，只会更错。
+
+提示**不能**做的是覆盖用户自己的选择。所以是两个字段而不是一个：
+
+```
+Timezone        值
+TimezoneSource  "user"（设置页）或 "detected"（客户端提示）
+```
+
+| 场景 | 结果 |
+|---|---|
+| 没有值 + 收到提示 | 采纳，标 `detected` |
+| `detected` + 收到新提示 | 更新 —— 它本来就只是个猜测 |
+| `user` + 收到提示 | **忽略**。否则一个特意把日程留在家乡时间的人，第一次在机场打开 app 就被悄悄挪走 |
+| `user` + PATCH `""` | 清空，回到跟随设备 |
+
+这套「谁决定的」与「是什么」分开记的做法，`MoodCheckin.Source` 与 `TimeBlock.LockSource` 已经在用，理由相同。
+
+### 改了时区必须当场重排 cron
+
+cron 条目里编着**旧时区**的 `CRON_TZ`。一个存了但 cron 不反映的时区是个没人读的值。所以 `PATCH /api/session/preferences` 与 `noteClientTimezone` 都会调 `ScheduleUser` —— 而它先摘旧条目再挂新的（ζ-1 那一批教会它的），否则同一份早报会按两个时区各发一次。
+
+### `validTimezone` 的定位（别误解它）
+
+`time.LoadLocation` 才是真正拒绝非法名字的那个。`validTimezone` 里的预筛是**一道上界**：不让一个来自请求体的无界字符串走到 tzdata 查找那一步。它是廉价保险，不是安全保证 —— 测试断言的是**结果**（这些都被拒），不是机制。
+
+## 多实例：选主与场次占有（ζ-1，2026-08-06）
+
+### 两个机制，各背一半承诺 —— 不要合并
+
+| | 承诺什么 | 靠什么 |
+|---|---|---|
+| **`job_runs` 行** | **正确性**：「早报只发一次」 | `(session_id, job_name, run_key)` 唯一索引 —— 四个后端唯一共有的互斥手段（sqlstore 全包无事务） |
+| **`leases` 行** | **节流**：N 个实例不必各自醒来、建上下文、调模型，然后 N−1 个发现自己白干 | 一条带条件的 UPDATE + TTL |
+
+**正确性绝不能压在 lease 上**，因为 lease 压在时钟上，而不同机器的时钟不一致。凡是「两个实例都以为自己是 leader 就会出错」的事，必须由行来守。有一条测试专门制造这个分裂（`TestOccurrenceIsClaimedOnceEvenIfBothLead`：强行让 b 相信自己 lead，断言它仍然抢不到那个场次）。
+
+### `Claim` 的位置是这套东西最容易写错的地方
+
+**在抑制门之后、在真正干活之前。** 不是作业开头。
+
+`JobRunRepository.Claim` 的注释自己写着理由：「Writing a row every half hour to record that nothing happened would bury the rows that mean something.」rolling replan 每天每会话触发 48 次、绝大多数次决定什么都不做；在开头 claim 会让这张表每天每会话多出 48 行「无事发生」，而它唯一的读者是一个人在问「我的早报到底发了没有」。
+
+于是三处的落点各不相同：
+
+| 作业 | claim 在哪一步之后 | run key |
+|---|---|---|
+| 早报 / 晚复盘 | 用户开关 + 免打扰之后 | `dayKey` = **用户本地日期** |
+| deadline 提醒 | 算完发现 `len(urgent) > 0` 之后 | `slotKey(2h)` |
+| rolling replan | 算完发现 `len(overdue) > 0` 之后 | `slotKey(30min)` |
+
+**`dayKey` 必须是本地日期**：用 UTC 的话，靠近日界线的用户会在自己的某一天收到两次早报、另一天一次都收不到。
+
+**`slotKey` 是纯截断，不留 grace 窗口。** robfig/cron 从 `time.Timer` 触发，Go 保证定时器不会提前，所以作业体里的 `time.Now()` 永远 ≥ 槽边界。加一个 grace 只会把被延迟的一跳推进**下一个槽**，抢走一个还没发生的场次，让真正的下一跳发现已占而跳过 —— 方向正好是反的。
+
+### 三个分支必须保持三个
+
+`renewWorkerLease` 的 `Acquire` 有三种结果，**合并后两种就是两个 leader 的做法**：
+
+| 结果 | 动作 | 为什么 |
+|---|---|---|
+| `ok=true` | 延长持有；fence 变了就记一条交接日志 | — |
+| `ok=false, err=nil` | **立刻**放弃 | 我们确知输了。这是 N−1 个实例的常态，所以是 Debug 不是 Warn |
+| `err != nil` | **保持不动** | `LeaseRenewIn = LeaseTTL/3` 存在的全部理由。一次慢查询就交出租约，会把一个抖动的数据库变成 leader 来回跳，那比多当一个周期的陈旧 leader 更糟 |
+
+### fence 用来做什么、不用来做什么
+
+`Lease.Fence` 只在**交接**时 +1，续期不动 —— 于是一个停顿过久的持有者能分辨「还是我的」与「别人拿过之后又回到我这」。我们**记录它并在交接时打日志**。
+
+**我们有意不拿它给写操作盖章**：场次行在接管时已经轮换了 claim id，僵尸迟到的 `Finish` 自然落空。在一个已经生效的守卫上再叠一个更弱的守卫，那是抄仪式不是防御。
+
+### 这套东西不提供什么（说清楚，免得有人以为它提供）
+
+**重试。** `JobMaxAttempts` / `JobMaxCrashAttempts` 描述的是 `Claim` **允许**什么，但**没有任何东西会去重驱一个失败的场次**：每个作业由恰好一次 cron 触发，到下一次触发时 run key 已经变了。一次失败的早报就是一个没有早报的早上 —— `domain/coordination.go` 的注释早就警告过这一点。补它需要一个扫描失败行并重驱的 sweeper，那是另一件事，且有它自己的失败模式（07:31 失败、09:00 重试，用户收到的是一个他没要过的时刻的早报）。
+
+### 启动与关停的顺序（改之前先读这里）
+
+**启动**：`StartWorkerLease()` 必须在 `worker.Start()` **之前** —— `LeadsWorker()` 在第一次续租落地前是 false，反过来会让第一分钟无保护地跑。`StartWorkerLease` 用的是 `everyTickNow`（先跑一次再进循环），否则每次重启后有 `LeaseRenewIn` = 20 秒没有 leader。
+
+**关停**：`httpSrv.Shutdown` → **`StopTicks()`** → **`ReleaseWorkerLease()`** → `WaitBackground` → `worker.Stop()`。
+
+⚠️ **`StopTicks` 必须在 `Release` 之前。** 反过来的话，还在跑的续租循环会把本进程刚释放的租约重新抢回来（`Release` 把 `expires_at` 置 0，正好命中 `Acquire` 的接管分支），fence+1、再持有一整个 TTL —— 下一个实例等的是一个已经退出的 leader。这个顺序错了不会有任何报错。
+
+### 丢主时不做的两件事
+
+- **不杀在途作业**：场次归属靠 `Claim` 不靠 lease，接管会轮换 claim 令牌，迟到的 `Finish` 自动落空。
+- **不 `cron.Stop()`**：cron 是进程级的，Stop 之后条目全丢，而 `ScheduleUser` 只由 `markAwake` 与通道验证懒触发 —— 新 leader 要等每个用户各自再发一次请求才重新排上。作业体各自查 `LeadsWorker()` 就够了。
+
+### 实例身份
+
+`InstanceID()` = 主机名 + 进程内生成的 UUID，**绝不来自配置**。同名重启的 pod 否则会继承自己上一次的租约与占有，整套机制跨重启静默失效。
+
+## 文件总线的 HTTP 面：取舍与边界（ε，2026-08-06）
+
+存储侧在 [DATA.md「附件与文件总线」](DATA.md)。这里是端点这一层为什么长这样。
+
+### 上传体是原始字节，不是 multipart，也不是 base64 JSON
+
+| 方案 | 为什么不 |
+|---|---|
+| **base64 进 JSON** | 每个字节涨三分之一，两端都要把整份文件拿在内存里。文件总线的存在理由第一句就是「装不进 JSON 体的字节」，用 JSON 送它是自相矛盾 |
+| **multipart/form-data** | 单文件场景下什么都没买到：这边多一个解析器，四个前端各多一段 FormData 代码 |
+| **原始字节 + `Content-Type`**（选中） | `fetch(url, {method:'POST', headers:{'Content-Type': file.type}, body: file})` 就说完了；`blob.Store.Put` 本来就收 `io.Reader`，可以直接流进去不落内存 |
+
+**文件名走 query 而不是 header**：非 ASCII 文件名放 header 需要客户端做 RFC 5987 编码，放 query 只需要 `encodeURIComponent`。
+
+### 下载一律代理，永远不给签名 URL
+
+`blob.Store` 有可选的 `URLSigner`（S3 这类能签，本机目录不能）。**端点仍然只代理**：让客户端处理两种形状，实际结果是它只会被测到作者部署的那一种，另一种在别人的部署上第一天就坏。签名是以后的优化，`GET /api/files/{id}` 是契约。
+
+### 三个必须存在的响应头
+
+| 头 | 少了它会怎样 |
+|---|---|
+| `X-Content-Type-Options: nosniff` | 浏览器嗅探内容类型，一个上传的 `.html` 变成同源页面 |
+| `Content-Security-Policy: default-src 'none'; sandbox` | 上传的 `.svg` 打开就是**同源脚本**，能读走本站 cookie |
+| `Content-Disposition`（经 `domain.SafeFilename` + `mime.FormatMediaType`） | 客户端送的文件名是唯一能从请求走进**响应头**的自由文本 —— CRLF 就是响应头注入 |
+
+`ETag` 用内容 SHA-256，所以 `If-None-Match` 是精确的，可以配 `immutable` 长缓存。
+
+### 状态码分工（客户端据此决定要不要重试）
+
+| 码 | 含义 |
+|---|---|
+| `400` | 没有 `Content-Type`，或**零字节** —— 零字节永远是客户端 bug（空 File、读了一半），不是谁想留的文件。这时已落盘的字节会被删掉，不留一条解析成空洞的行 |
+| `404` | 这个会话没有这个附件（含「是别人的」） |
+| `409` | 它已经跟着消息发出去了 —— 删消息才能删它 |
+| `410` | 行还在、字节没了（清扫做了一半、或者目录被还原时漏了文件）。与 404 分开是因为**客户端该不该继续问**不一样 |
+| `413` | 超过 `MAX_UPLOAD_BYTES` |
+| `503` | 这个部署没有 `BLOB_STORE`。**是受支持的配置，不是故障** |
+
+### 两个上限是两个问题，不要合并
+
+- `MAX_UPLOAD_BYTES`（默认 32 MiB）—— **放得下吗**。
+- `MAX_IMAGE_BYTES`（默认 8 MiB）—— **塞得进一次模型请求吗**。
+
+一份 30 MiB 的 PDF 是个正常上传、是个糟糕的提示词。合并成一个数，就只能取两者里小的那个，于是「能存但当前模型读不了」这个完全正常的状态变成了「传不上去」。超过内联上限的附件走「模型读不了」那条路：把文件名念给模型听。
+
+### `features.files`
+
+`GET /api/version` 的 `features` 里多一位，由**有没有配 `BLOB_STORE`** 决定（其余四位由模型目录派生）。前端据此决定画不画回形针 —— 否则用户点了得到 503，读起来像 bug。
+
+## 四个后端的已知行为差异（调用方必须绕开的）
+
+行为一致性套件把绝大多数差异变成了「不许不一样」。下面这些是**留在调用方这一侧**的，套件管不到，每一条都真的咬过人：
+
+| 差异 | 后果 | 绕法 |
+|---|---|---|
+| **`ChatRepository.AppendMessages` 不把生成的 id 写回调用方切片**（mongostore 侧） | 依赖回读 id 的代码只在四个后端里的一个上失败，而且只在特定路径（ε：只在用户发了附件时绑不上） | 调用方**预生成 id**（`uuid.NewString()` 后放进 `ChatMessage.ID`）。async companion 早就这么做，注释里写着原因 |
+| **空字符串 vs 字段缺失**（BSON `omitempty`） | `{"field": ""}` 在 Mongo 上匹配不到省略了该字段的文档，同一个谓词在 SQL 上匹配所有默认行 —— 清扫/筛选静默变成空操作 | 参与查询的字段**不加 `omitempty`**，显式存 `""`。见 `mongostore/attachment_repo.go` 的 doc |
+| **JSON 数字回来的 Go 类型**（BSON int32 vs encoding/json float64） | `args["minutes"].(float64)` 在一个后端上断言失败 | proposals 的 rows/ops 两边都过 `encoding/json`，代价是两边同样有精度上限（>2^53 的整数不能进工具参数） |
+| **nil 切片 vs 空切片** | 一边回 `nil` 一边回 `[]`，JSON 序列化出 `null` 与 `[]` 两种 | 套件已断言统一（`RoundTrip` 类用例），新 repository 照做 |
+
+**加一条差异时**：先问它能不能变成套件里的一条用例（那样它就消失了）；只有在 `domain.Store` 接口表达不了的时候，才记到这张表上。
+
 ## 中间件链（server.go 底部，全局单链，无分组）
 
 ```
@@ -108,7 +331,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 ## 路由注册模式
 
-**分散注册**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){ … })`，`Handler()` 遍历注册表。注册表在 `internal/server/routes.go`。当前 **101 条路由 / 22 个组**，`server.go` 只剩静态 `/` 那一条（它有条件，只在 `STATIC_DIR` 存在时挂）。
+**分散注册**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){ … })`，`Handler()` 遍历注册表。注册表在 `internal/server/routes.go`。当前 **109 条路由 / 24 个组**，`server.go` 只剩静态 `/` 那一条（它有条件，只在 `STATIC_DIR` 存在时挂）。
 
 原先是 `Handler()` 里 100 行集中注册，让 `server.go` 成了全仓最抢手的文件（12 个工作项都要改同一份清单）。**顺序无关紧要** —— Go 1.22 的 ServeMux 按 pattern 具体度而非注册顺序裁决，所以打散不会改变谁胜出，`/` 兜底也永远输给任何真路由。
 
@@ -121,6 +344,10 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 ## main.go 启动/关停
 
 - 启动顺序：config.Load → store.Open+Migrate → catalog/prompts → server.New → locale 覆盖层 → 两个 cleanup ticker → **Worker（无条件启动）** → channels（仅当配了通道）→ inbound 消费循环。
+- **后台 tick 循环现在停得下来**（`everyTick` / `everyTickNow` / `StopTicks`，2026-08-06）。原先它们连个停止信号都没有 —— 没有 ctx、没有 channel、没有返回值。**只做无状态清理时这是站得住的**（「进程退出即弃，无碍」），一旦某个 tick **持有**东西就不成立：ζ 要加的续租循环若在关停后继续跑，会把本进程刚释放的租约重新抢回来，下一个实例得等满一个 TTL 才等到一个已经退出的 leader。`StopTicks` 在 `httpSrv.Shutdown` 之后、`WaitBackground` 之前调用，等在途的那一跳跑完。`everyTickNow` 是「先跑一次再进循环」的变体：ticker 的第一跳在一整个 interval 之后，这对清理是对的（新进程没有陈旧数据），对**建立状态**的循环是错的。
+- 每个会话现在挂 **6 条** cron：早报（学到的起床时刻）/ 晚复盘（睡前 90 分钟）/ 节律学习（日切）/ Protector（半小时）/ deadline（2 小时）/ rolling replan（半小时）。
+- **`ScheduleUser` 是幂等的**（2026-08-06 修好；此前不是）。守卫读 `w.jobs[sid+":"+tz]`，而四处写的是带 `:morning`/`:evening`/`:deadline`/`:replan` 后缀的键 —— **那个键从来没被写过，守卫恒假**。`markAwake` 每会话每 5 分钟放行一次并调它，于是连续活跃一小时就攒下 12 套 cron 条目：下一个半点 `checkRollingReplan` 跑 12 遍，12 次模型调用、12 次推送。这不是多实例问题，是**单实例今天就在犯**的。改成按 sid 存一组 EntryID + 记住排给它的时区；换时区先摘旧条目（否则同一份早报按两个时区各发一次）。
+- **未知时区回退而不是部分失败**（同批）。`CRON_TZ=<bad>` 会让早报与晚复盘两条 `AddFunc` 报错，而 deadline / replan 两条没有 CRON_TZ 前缀、照样注册成功 —— 于是会话被记成「已排程」，那个用户**从此再也收不到简报，也没有任何东西会重试**。现在先 `resolveTZ`：坏时区退到 `WORKER_DEFAULT_TZ` 再退到 UTC，记一条 warn。与 `markAwake` 记节律信号是同一个取舍 —— 时刻错了看得见，压根不发看不见。
 - **Worker 不再绑在 OneBot 上**（2026-07-29）。它曾经只在 `ONEBOT_WS_URL` 非空时启动，于是没绑 QQ 的用户拿不到早报、晚复盘、定时 auto-plan、deadline 巡检 —— 产品「主动」那一半被一个无关设置整体关掉。Worker 做的事没有一件需要通道：产出全部落库、由 App 读，推到通道只是可选的最后一步（`sendToChannels` 在 registry 为 nil 时只记日志，那个分支本来就有）。
 - **按用户排程改成首次请求时懒排**（`Server.SetScheduleOnUse`，由 `markAwake` 在节流放行时调一次，`ScheduleUser` 本身幂等）。原来的种子是「每个已验证的通道绑定」——同一个耦合的第二处。改用枚举会话则需要给 `SessionRepository` 加方法、四个后端各实现一遍，而且会给每个曾经调过一次 API 的人都挂上 cron 项。⚠️ 代价是**重启当天早上有个缺口**：那天还没发过请求的人没有 cron 项，07:00 重启后 07:30 的早报对他不触发。补它需要正是这里在回避的会话枚举，且必须与 Lease 选主同批（否则每个实例都会给每个用户排程）—— 批次 ζ。
 - inbound 消费：每消息经 `srv.GoTracked` 起 goroutine（背景 ctx，不绑请求），纳入 `Server.asyncWG`。
@@ -139,6 +366,8 @@ Daycore 此前**没有地方放一个字节**：上传 ≤1 MiB 的被 base64 �
 `URLSigner` 是**可选**接口：对象存储都能签，而签不了的两个（本地目录、数据库列）恰好是代理转发很便宜的那两个。所以调用方永远要有代理路径，把签名当优化。
 
 **`DATA_DIR` 是仓库的第一个可写路径。** 此前每个目录配置（`STATIC_DIR`/`LOCALES_DIR`/`PROMPTS_DIR`/`MODELS_CONFIG`）都是只读输入，`internal/` 里没有一处 `os.WriteFile`。`BLOB_STORE` 为空 = 没有文件总线，这是**受支持的配置**：需要它的功能各自检查并说明，而不是让进程为一个多数部署第一天用不到的能力拒绝启动。
+
+**ε 批次给了它第一个真正的使用者**：`POST /api/files` 存字节、`attachments` 表存所有权、`GET /api/files/{id}` 按会话解析。在那之前 `blob.Store` 是写完、跑过 11 例行为套件、接进 `Server` 却零调用方的一层。分工没变 —— 总线仍然只认 ref 不认会话，鉴权全在 `attachments` 行上，见 DATA.md。
 
 本机驱动的三个要点：**先写临时文件再 rename**（同目录内 rename 是原子的，读者永不会看到半个 blob，崩溃留下的是游离临时文件而不是看起来像数据的截断文件）；**rename 前 sync**（否则崩溃可能留下一个名字对、内容空的文件，而那正是这套动作要防的）；**ref 必须是本 store 铸的 64 位十六进制**，因为 ref 来自外部（数据库列、工具参数），把攻击者选的字符串拼到根目录上正是文件总线变成任意文件读的方式。
 
@@ -207,7 +436,7 @@ Daycore 此前**没有地方放一个字节**：上传 ≤1 MiB 的被 base64 �
 
 ## 配置（internal/config/config.go，环境变量）
 
-关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`TRUST_PROXY_HEADERS`（只在可信反代后设 true，否则 XFF 可伪造绕过按 IP 限流）；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；**`BLOB_STORE`**（文件总线驱动名，空=没有）/**`DATA_DIR`**（唯一的可写路径，`local` 驱动用）；**`PROMPTS_DIR`**（空=只用内嵌；设了则 `<dir>/<locale>/<key>.tmpl` 逐文件覆盖内嵌模板，见 AI.md）；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
+关键项：`APP_ENV`/`HOST`/`PORT`；`STATIC_DIR`；`ALLOWED_ORIGINS`（CSV，空=同源）；`DB_TYPE`(sqlite)/`DB_DSN`；`JWT_SECRET`/`COOKIE_SECRET`（prod 缺失报错，dev 回退不安全默认）；`JWT_TTL`(168h)；`SECURE_COOKIES`（prod 自动 true）；`AI_REQUEST_TIMEOUT`(120s)；`AI_RATE_LIMIT_PER_MIN`(30)/`AUTH_RATE_LIMIT_PER_MIN`(10)；`TRUST_PROXY_HEADERS`（只在可信反代后设 true，否则 XFF 可伪造绕过按 IP 限流）；`AGENT_MAX_ROUNDS`(6)；`MAX_IMAGE_BYTES`(8MiB，模型请求里内联附件的上限)/**`MAX_UPLOAD_BYTES`**(32MiB，`POST /api/files` 的上限 —— 与前者是两个问题：一个是「塞得进一次模型请求吗」，一个是「放得下吗」)；`ADMIN_TOKEN`；`ONEBOT_WS_URL`/`ONEBOT_TOKEN`；`MODELS_CONFIG`/`OAUTH_CONFIG`；**`BLOB_STORE`**（文件总线驱动名，空=没有）/**`DATA_DIR`**（唯一的可写路径，`local` 驱动用）；**`PROMPTS_DIR`**（空=只用内嵌；设了则 `<dir>/<locale>/<key>.tmpl` 逐文件覆盖内嵌模板，**且 `<dir>/boundaries.json` 覆盖 L1 硬边界 —— 那一份没有 DB 层，是控制台唯一够不着的提示词**，见 AI.md）；天气三项；`COOKIE_SAMESITE`（lax|strict|none，none 需 Secure）；**`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`/`LOCALES_DIR`**（前两个是**新用户的默认**一主一副，不限制用户能选什么，`Load()` 里 `i18n.NewPair` 校验、值不对启动失败；`LOCALES_DIR` 放 `<locale>.json` 语言包 —— 加语言不用重新编译，见 DATA.md「多语言机制」）。
 
 ## 仓库级布局
 

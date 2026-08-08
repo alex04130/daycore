@@ -64,10 +64,15 @@ func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // capabilityFeatures derives the /api/version features block from the model
-// catalog. All four are false when no catalog is wired (tests, pure-API
-// deployments) — clients must treat false as "not here", not "broken".
+// catalog and the wired-up services. Everything is false when nothing is wired
+// (tests, pure-API deployments) — clients must treat false as "not here", not
+// "broken".
 func (s *Server) capabilityFeatures() map[string]bool {
-	f := map[string]bool{"vision": false, "transcribe": false, "tts": false, "imagegen": false}
+	f := map[string]bool{"vision": false, "transcribe": false, "tts": false, "imagegen": false, "files": false}
+	// Whether uploads work at all is a deployment question, not a model one: no
+	// BLOB_STORE means no file bus, and a client that shows a paperclip anyway
+	// gets a 503 the user reads as a bug.
+	f["files"] = s.blobs != nil
 	if s.catalog == nil {
 		return f
 	}

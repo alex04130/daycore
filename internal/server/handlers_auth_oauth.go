@@ -27,12 +27,12 @@ func (s *Server) handleOAuthProviders(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	provider := r.PathValue("provider")
 	if !s.oauth.Enabled(provider) {
-		s.writeErr(w, http.StatusNotFound, "unknown_provider", "未配置该登录方式")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "unknown_provider", "err.oAuthStart.unknown_provider")
 		return
 	}
 	state, err := auth.NewState()
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "无法发起登录")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.oAuthStart.internal")
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -46,7 +46,7 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 	})
 	url, err := s.oauth.AuthCodeURL(provider, state)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "无法发起登录")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.oAuthStart.internal")
 		return
 	}
 	http.Redirect(w, r, url, http.StatusFound)
@@ -58,17 +58,17 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	code, state := q.Get("code"), q.Get("state")
 	if code == "" || state == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "登录回调参数缺失")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.oAuthCallback.bad_request")
 		return
 	}
 	c, err := r.Cookie("dc_oauth_state")
 	if err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_state", "登录状态失效，请重试")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_state", "err.oAuthCallback.bad_state")
 		return
 	}
 	val, ok := s.cookies.Verify(c.Value)
 	if !ok || val != provider+"|"+state {
-		s.writeErr(w, http.StatusBadRequest, "bad_state", "登录状态校验失败，请重试")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_state", "err.oAuthCallback.bad_state2")
 		return
 	}
 	// consume the state cookie
@@ -78,16 +78,16 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	ou, err := s.oauth.Exchange(ctx, provider, code)
 	if err != nil {
 		s.log.Error("oauth exchange", "provider", provider, "err", err)
-		s.writeErr(w, http.StatusBadGateway, "oauth_failed", "第三方登录失败，请重试")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadGateway, "oauth_failed", "err.oAuthCallback.oauth_failed")
 		return
 	}
 	user, err := s.upsertOAuthUser(ctx, provider, ou)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "登录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.oAuthCallback.internal")
 		return
 	}
 	if _, err := s.issueAndLink(w, r, user); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "登录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.oAuthCallback.internal")
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusFound) // back to the frontend

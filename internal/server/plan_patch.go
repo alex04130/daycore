@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"time"
 
 	"daycore/internal/domain"
 	"daycore/internal/schedule"
@@ -13,11 +14,24 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	// plan_patch.go 是 plan_add / plan_update / plan_remove 三条的唯一生产者。
+	registerRevert("plan_add", (*Server).revertPlanAdd)
+	registerRevert("plan_update", (*Server).revertPlanUpdate)
+	registerRevert("plan_remove", (*Server).revertPlanRemove)
+}
+
 type planAction struct {
 	Action  string         `json:"action"` // "update" | "remove" | "add"
 	Match   map[string]any `json:"match"`
 	Changes map[string]any `json:"changes"`
 	Block   map[string]any `json:"block"`
+	// Confirm is the way through a soft lock: the user was told this one was
+	// agreed with someone else and said go ahead anyway. It does nothing for a
+	// hard lock or a petrified block — those have no way through, and letting a
+	// flag open them would make the gate advisory.
+	Confirm bool `json:"confirm"`
 }
 
 // applyPlanPatch materializes the date's rule occurrences into the stored
@@ -25,7 +39,7 @@ type planAction struct {
 // It is shared by the HTTP PATCH handler and the companion agent tools.
 // matched counts blocks hit by update/remove so tool callers can surface
 // no-op matches instead of silently succeeding.
-func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action planAction, actor string) (updated *domain.DayPlan, opID string, matched int, err error) {
+func (s *Server) applyPlanPatch(ctx context.Context, sid, date, locale string, action planAction, actor string) (updated *domain.DayPlan, opID string, matched int, err error) {
 	plan, err := s.store.DayPlans().Get(ctx, sid, date)
 	if errors.Is(err, domain.ErrNotFound) {
 		plan = &domain.DayPlan{SessionID: sid, Date: date, SourceType: "rules"}
@@ -64,6 +78,19 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action pl
 		matched = len(affected)
 	}
 
+	// A retry names what it is retrying; the server works out the rest. Done
+	// here rather than in applyPlanAction because it needs the ORIGINAL block,
+	// which only exists before the action runs.
+	if err := s.resolveReschedule(ctx, sid, blocks, &action); err != nil {
+		return nil, "", 0, err
+	}
+
+	// The gate, before any mutation and before the keep_manual flip: a refused
+	// write must leave the plan exactly as it found it, including origin.
+	if err := s.guardPlanWrite(blocks, date, action, actor, time.Now(), s.planLocation(ctx, sid)); err != nil {
+		return nil, "", 0, err
+	}
+
 	// keep_manual is a server-side promise, not a client convention: any edit a
 	// user or the agent makes to an auto block turns it manual, so the next
 	// regeneration keeps it. Until this lived here, the flip existed only as a
@@ -90,7 +117,7 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date string, action pl
 
 	plan.Blocks = newBlocks
 	// Anchor fixed/local blocks to a UTC instant before persisting.
-	s.normalizePlanBlocks(plan.Blocks, date, "")
+	s.normalizePlanBlocks(plan.Blocks, date, "", locale)
 	updated, err = s.store.DayPlans().Upsert(ctx, plan)
 	if err != nil {
 		return nil, "", matched, err

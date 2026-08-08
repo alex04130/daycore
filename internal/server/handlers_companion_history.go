@@ -26,7 +26,7 @@ func (s *Server) handleCompanionHistoryGet(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取对话历史失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.companionHistoryGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
@@ -46,11 +46,11 @@ func (s *Server) handleCompanionHistorySet(w http.ResponseWriter, r *http.Reques
 		KeyFacts []string         `json:"keyFacts"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.companionHistorySet.bad_request")
 		return
 	}
 	if err := s.store.Companion().Upsert(r.Context(), sid, body.History, body.KeyFacts); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "保存对话历史失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.companionHistorySet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

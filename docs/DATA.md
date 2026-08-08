@@ -6,7 +6,7 @@
 
 | 文件 | 实体 | 备注 |
 |---|---|---|
-| chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, 阶段2 加 Status} | |
+| chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, Status, **Attachments**} | `Attachments` **不是列**，读时从 `attachments` 表批量水合 |
 | companion.go | Message, Role 常量(user/assistant/system/tool), CompanionMemory | |
 | courses.go | Course, Assignment{Source: canvas/manual; Status: pending/planned/done/dismissed} | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文 |
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
@@ -23,6 +23,7 @@
 | phase.go | Phase（future/now/recon/stone） | 读时石化，无表 |
 | lock.go | LockLevel 常量 + 派生规则 | 配 `api/lock-rules.json` 契约夹具 |
 | mood_kind.go | 心情注册表（12 种 + valence） | 存 id 不存标签 —— 多语言扩展的前提 |
+| attachment.go | Attachment + AttachmentRepository | 文件总线的**所有权那一半**，见下「附件与文件总线」 |
 | tempcontext.go / channel.go / feedback.go / errors.go | TempContext / ChannelBinding / FeedbackLog / 哨兵错误 | |
 
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
@@ -47,7 +48,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 32 张表 DDL 全部合法（三方言表名集合完全一致）、36 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 33 张表 DDL 全部合法（三方言表名集合完全一致）、42 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -201,6 +202,57 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 **工作日/周末是否分开学**：设计里明写的口子，暂不做。
 
+## 附件与文件总线（`attachments` 表，ε 批次，2026-08-06）
+
+`internal/blob` 是文件总线，它**故意不管鉴权**：ref → 字节，不知道会话是谁。这个分工只有在别的地方记得「谁放的」时才安全 —— `attachments` 就是那个地方。
+
+在此之前**文件总线零生产调用方**：驱动写完了、行为套件 11 例过了、`Server.blobs` 也接上了，但没有任何一处往里放过一个字节。这是本仓第四次出现「写完、测过、没人调用」，前三次是 `Movable/Frozen/PhaseIn/PetrifyLine`、`DeriveLock/RederiveLock`、`AICallLog`。
+
+**`Ref` 永不出服务端**（`json:"-"`）。客户端只拿到 `id`，服务端查了会话再解析成 ref。一个出现在响应里的 ref 就是一张不记名的字节提货单，而签发它的 store 根本不知道谁在问。有一条服务层测试专门守这条（响应、待发列表、水合过的消息三种形状全查）。
+
+| 列 | 为什么是列 |
+|---|---|
+| `session_id` | 每个方法都按会话收口 —— id 是客户端唯一会送的东西，信它就等于任何登录用户猜一个 UUID 就能读别人的上传 |
+| `message_id` | 水合一页消息按它查（`IN (...)`）；空串 = 还没发出去 |
+| `thread_id` | 删会话要按它一句话删干净 |
+| `ref` / `mime` / `size` / `sha256` / `filename` / `kind` | `sha256` 同时是下载的 ETag |
+
+**绑定是排他的**：一个附件只能属于一条消息，重复绑同一条消息是幂等的（客户端重发），绑到第二条消息报 `ErrAttachmentBound`。允许一对多的话，「删消息就删字节」会变成歧义，而歧义的兑现形式要么是漏字节要么是消息里一张裂图。
+
+**删行的方法一律把删掉的行返回给调用方**（`Delete`/`DeleteByThread`/`PruneUnbound`）—— 只有调用方手里有 `blob.Store`。一个只删行就说 ok 的 repository 会一次一个上传地漏磁盘，且数据库里再没有任何东西能找到它们。
+
+**没发出去的上传 24 小时后回收**（`AttachmentUnboundTTL`，`StartAttachmentCleanup` 每小时一跑）。不做的话每个被放弃的上传都是永久的：它的行让那个 blob 保持被引用，于是没有任何别的清扫能碰它。
+
+行为套件加了 6 例（往返与会话隔离 / 绑定排他与幂等 / 水合有序且不跨会话 / 删除返回行且放过已发送 / 删会话带走字节 / 清扫只回收没发出去的）。四个后端跑同一份。
+
+### 无事务下的取舍（这一节是这张表最容易被改坏的地方）
+
+**`Bind` 是「全有或全无」，而实现是一条一条的条件 UPDATE。** sqlstore 没有事务（全包 `BeginTx` 零命中），所以做法是每个 id 一条带前置条件的 UPDATE（`id = ? AND session_id = ? AND message_id = ''`），影响行数为 0 才回头查它是「不存在/别人的」还是「已经绑了」。
+
+- **为什么不先查再改**：查完到改之间那一段没有任何保护，两个标签页同时发同一条消息就会双双通过检查。前置条件写在 UPDATE 的 `WHERE` 里才是原子的。
+- **进程死在循环中间会怎样**：前几个已绑到一条**从未写成的消息**上。后果有界 —— 那条消息不存在，composer 再也不会显示它们，而清扫按「没绑到消息」回收不到它们，所以它们会一直留着。这是已知的、可接受的残留；真要收干净需要一次「message_id 指向不存在的消息」的巡检，**故意没做**：它在 Mongo 上表达不了（跨集合 join），而四个后端行为必须一致。
+- **同一个 (id, message) 重绑是 no-op 不是冲突**：客户端重发消息是正常路径，报错会让它以为附件丢了。
+- **`AttachmentsPerMessage` 的上限在 repository 里，不只在 handler 里**：agent 管线也会写消息，只守一道门等于没守。
+
+**`PruneUnbound` 与 `Delete` 都重述谓词，而不是按刚读到的 id 删。** 读出来到删除之间可能有附件被绑上，按 id 删会把它连同它的消息一起弄坏；重述 `message_id = ''` 让「期间被绑走的放过」这件事由一条语句自己保证。`Delete` 的 `DELETE ... AND message_id = ''` 影响行数为 0 时返回 `ErrAttachmentBound` —— 与读到的状态一致，而不是「删了个寂寞还回 ok」。
+
+**Mongo 侧 `message_id`/`thread_id` 存 `""` 而不是 `omitempty` 省略。** 加了 `omitempty`，`{"message_id": ""}` 在 Mongo 上匹配不到任何文档，而同一个谓词在 SQL 上匹配每一条未绑定的行 —— 清扫会在四个后端里的**一个**上静默变成空操作。这正是行为一致性套件存在的理由，`Attachment/PruneReclaimsOnlyUnsentUploads` 会红。
+
+**字节与行的删除顺序：先行、后字节，且字节是 best-effort。** 反过来（先删字节）会留下一条指向空洞的行，用户看到的是一张裂图；这个顺序留下的是一个没有行指向的 blob，那是可以靠枚举存储再回收的垃圾。**上传路径正好相反**：字节先落、行写失败就把字节删掉（补偿删除），因为这时候「行」才是那份字节唯一的线索，丢了行就再也找不到它。
+
+### 边界（不要在不知道理由的情况下改动）
+
+| 约束 | 它防的是什么 |
+|---|---|
+| `Attachment.Ref` 必须保持 `json:"-"` | 一个出现在响应里的 ref 就是不记名的字节提货单，而签发它的 store 不知道谁在问 |
+| 每个 repository 方法都带 `sessionID`，包括按 id 取的 | id 是客户端唯一会送的东西；信它等于任何登录用户猜一个 UUID 就能读别人的上传 |
+| `Get` 对「不存在」与「别人的」返回同一个 `ErrNotFound` | 区分开就成了「哪些 id 存在」的探测口 |
+| 删行的方法必须返回删掉的行 | 只有调用方手里有 `blob.Store`。只删行就说 ok 的 repository 会一次一个上传地漏磁盘，且数据库里再没有东西能找到它们 |
+| 一个附件只能属于一条消息 | 允许一对多，「删消息就删字节」变成歧义，兑现形式是漏字节或裂图 |
+| 已绑定的附件不能单独删 | 它是那条消息的一部分了；出口是删消息 |
+
+⚠️ **`Material.StorageRef` 仍然没有生产方**。ROADMAP「待拍板」第 1 条（签名 ref vs `blobs` 表）的**落地那一半就是这张表**：持久化的东西写行。瞬态签名 ref 那一半仍未做 —— 下载一律由 `GET /api/files/{id}` 代理，`blob.SignedURL` 至今零调用方。
+
 ## 心情注册表（`domain/mood_kind.go`）
 
 12 种，集合/顺序/emoji 抄自设计原型（四端画的就是这张表）。**存 id 不存标签** —— 中文标签是给人看的，存它会让改名变成数据迁移，也会让英文界面为同一种感受存出不同的行。`Valence`（−2..+2）只为算趋势存在，从不展示，且刻意粗糙：疲惫与压力大是种类之差，细分是假精度。
@@ -286,6 +338,20 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 **外部 provider 的语言参数是另一回事**（`internal/weather/lang.go` 的 `Lang(locale, codes, fallback)`）：每个上游有自己的代码空间（QWeather `zh`/`zh-hant`、OWM `zh_cn`/`zh_tw`、wttr.in 只有一种中文），表跟着 provider 走，只共享查表逻辑。上游没有的语言退回它自己的默认值 —— 语言不对的天气预报仍然告诉你会下雨。
 
+### 闸门（`TestNoHardcodedUserFacingText`）与它的盲区
+
+迁移一次只修今天，闸门修的是以后 —— 这个仓库被「靠自觉遵守的规则」坑过太多次。闸门找每一处 `writeErr` 调用，**walk 它整棵参数子树**，任何含汉字的字符串字面量当场变红并报文件行号与原文。
+
+⚠️ **它的第一版是 regex，漏了四条**（`fmt.Sprintf("一次最多规划 %d 天", …)` 这类包裹的三条，加一条消息写在下一行的）。**有盲区的闸门比没有闸门更糟** —— 它报绿，于是这条规则就不再由任何东西保证了。改成 AST 之后，`fmt.Sprintf` 包裹、字符串拼接、跨行调用、以及下一次出现的新形状都盖得住。
+
+**它明确看不见的**（写出来是为了不让人以为它什么都管）：
+
+- 不经 `writeErr` 出去的文案（`writeJSON` 的响应体、SSE 帧、提示词）。放宽成「包里任何汉字字面量」做不到：`messages.go` 本身通篇是汉字字面量，测试夹具也是。
+- 由非字面量拼出来的消息（一个装着中文的变量）。
+- `internal/server` 以外的地方。
+
+这几条是**已知缺口，不是疏漏**。哪天其中一条开始付代价，修法是再加一次定向 walk，而不是把正则放松。
+
 ### 还没做的
 
 - ~~**DB 覆盖层的表**~~ **已完成**：`locale_overrides` 与批次 C 的五张表同批建好，接线（`server.ReloadLocaleOverrides`，启动时调一次）也在 2026-07-29 补上了。**三层今天是真的三层。**
@@ -297,9 +363,9 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 | 表 | 作用 | 现在接了吗 |
 |---|---|---|
-| `proposals` | 提案统一资源持久化 —— 取代 `agent.go` 的进程内 `map`，那是水平扩展的直接阻碍 | **未接线**，批次 D |
-| `leases` | 选主，只让一个实例跑后台任务 | **未接线**，批次 5 |
-| `job_runs` | 每个任务「场次」的占有与审计 | **未接线**，批次 5 |
+| `proposals` | 提案统一资源持久化 —— 取代 `agent.go` 的进程内 `map`，那是水平扩展的直接阻碍 | ✅ 已接线（γ，2026-08-03）|
+| `leases` | 选主，只让一个实例跑后台任务 | ✅ 已接线（ζ-1，2026-08-06）—— `internal/server/leader.go` |
+| `job_runs` | 每个任务「场次」的占有与审计 | ✅ 已接线（ζ-1）—— `Claim` 的**位置**是设计的一半，见 ARCHITECTURE.md |
 | `rapport_states` | 默契评分缓存 + 账本游标 | **未接线**，批次 D |
 | `rhythm_profiles` / `rhythm_days` | 节律画像 + 每日首尾 | **未接线**，批次 5 |
 | `locale_overrides` | 消息目录的 DB 层 | **已接线**（`server.ReloadLocaleOverrides`，2026-07-29）；控制台的编辑端点还没有 → 批次 F |
@@ -308,7 +374,7 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 
 ### 两条贯穿性设计
 
-**`job_runs` 是正确性机制，`leases` 只是节流。** 唯一索引 `(session_id, job_name, run_key)` 是四个后端唯一共有的互斥手段（sqlstore 全包无事务），所以**先写行再干活**：INSERT 成功即占有，撞唯一键即别人已占。反过来「干完再记」会留下这张表本来要关掉的窗口。lease 只是省掉「N 个实例各自醒来、建上下文、然后 N−1 个白干」。**正确性不能压在 lease 上，因为 lease 压在时钟上，而不同机器的时钟不一致。**
+**`job_runs` 是正确性机制，`leases` 只是节流。**（落地形状与 `Claim` 的位置规则见 [ARCHITECTURE.md「多实例：选主与场次占有」](ARCHITECTURE.md)。） 唯一索引 `(session_id, job_name, run_key)` 是四个后端唯一共有的互斥手段（sqlstore 全包无事务），所以**先写行再干活**：INSERT 成功即占有，撞唯一键即别人已占。反过来「干完再记」会留下这张表本来要关掉的窗口。lease 只是省掉「N 个实例各自醒来、建上下文、然后 N−1 个白干」。**正确性不能压在 lease 上，因为 lease 压在时钟上，而不同机器的时钟不一致。**
 
 - lease 的 `fence` 只在**交接**时 +1，续期不动。停顿过久的持有者靠比对 fence 就能发现自己已经不是 leader —— 这是时间戳给不了的，因为它自己的时钟正是不能信的那个东西。
 - **接管时轮换行的 id**。原持有者要是终于醒过来调 `Finish`，它手上的 id 已经匹配不到任何行，那次迟到的写入变成无害空操作，而不是对新持有者那次运行的判决。Mongo 侧因为 `_id` 不可变，用「删旧 + 插新」复现同一语义。
@@ -316,7 +382,9 @@ func (c *Catalog) Export(locale) map[string]string // 翻译起点：导出→�
 - **被抑制的任务（关了开关 / 免打扰）不写行** —— 每半小时记一条「什么都没做」会把真正有信息的行埋掉。
 - **停滞接管也有上限**（`JobMaxCrashAttempts=6`，比 `JobMaxAttempts=3` 大）：返回错误的任务走前者，**杀死自己实例的任务**（大上下文 OOM）什么都不返回、行停在 running、十分钟后被下一个实例接管、再 OOM 一次 —— 没有上限这个循环永不终止，而 attempts 列就在那里记着它已经发生七次了却没人读。
 - **接管成功后要把行里的 attempts 读回调用方的结构体**。留在 1 会让「这是不是最后一次尝试」永远答错，而 Mongo 侧返回的是真值 —— 两个后端对同一次调用给出不同答案比任何一个答案都糟。
-- ⚠️ **`started_at` 由占有方自己的时钟写，超时判定由读方的时钟做。** 跨机时钟偏差必须小于 `JobStaleAfter`（10 分钟），否则慢钟实例能偷走一个几毫秒前的占有、把同一场次跑两遍。**`Claim` 只应由 lease 持有者调用** —— lease 是「两个实例不会同时走到这里」的保证，但主机之间仍必须 NTP 同步在 `JobStaleAfter` 之内。这是部署要求，不是代码能修的。
+- ⚠️ **`started_at` 由占有方自己的时钟写，超时判定由读方的时钟做。** 跨机时钟偏差必须小于 `JobStaleAfter`（10 分钟），否则**跑快的**那台机器能偷走一个几毫秒前的占有、把同一场次跑两遍（接管条件是 `started_at < now − JobStaleAfter`，`now` 大的那台才判得出「过期」—— 2026-08-06 修正，这里原来写的是「慢钟」，与 `domain/coordination.go` 的注释正好相反）。**`Claim` 只应由 lease 持有者调用** —— lease 是「两个实例不会同时走到这里」的保证，但主机之间仍必须 NTP 同步在 `JobStaleAfter` 之内。这是部署要求，不是代码能修的。
+- ⚠️ **`Claim` 分不清「别人占了」与「写失败」的那个洞已补上**（2026-08-06，Mongo 侧）。SQL 侧一直是「拿不到 → 回查一行 → 没行说明 insert 的错是真的」；Mongo 侧原本无条件 `return false, nil`，于是**只在 Mongo 上**，一次写关注不达标或文档被拒会被报成「别人占了」，这个场次静默跳过且再无人重驱。**这条路径没有行为套件用例** —— 要触发它得注入一次传输层故障，而套件是按 `domain.Store` 写的、没有故障注入。记在这里就是为了它别再被忘掉。
+
 - **`Acquire` 的后像不能无条件返回。** 它用第二条语句读回行，而在这个间隙里，一个跑快的时钟能把 lease 抢走 —— 不加校验就会把「写着别人是持有者、带着别人 fence」的那一行交给我们，于是我们把别人的 fence 记成自己的、断定什么都没变。**那正是 fence 存在要抓的唯一那种失败**，不能在这里被打败。`confirm()` 校验行是否仍然指着我们。
 - **`Acquire` 的首次 INSERT 失败不能一律吞掉。** 「别人先插进去了」与「数据库连不上」在这里长得一样，全吞成落选会让一次故障看起来像一次普通交接：worker 静默变闲，任何地方都没有一句话说明原因。改成失败后读回行 —— 行在了就是真落选，读也失败就把错误抛出去。
 - **Mongo 侧 `_id` 是「场次」而不是「占有」**（`session:job:runKey`），另有一个轮换的 `claim_id`，`Finish` 匹配后者。SQL 在一条 UPDATE 里轮换主键，Mongo 的 `_id` 不可变 —— 而「删了再插」不是同一回事：两条语句之间那个场次**根本不存在**，此时 ctx 被取消就永久毁掉了此前的尝试记录，包括 `Prune` 特意保留的那条「崩溃后再没回来」的 running 行。现在是一条原子 `FindOneAndUpdate`。
@@ -511,14 +579,41 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 
-`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。⚠️ **机制在，搬迁没做**：12 条 `registerRevert` 目前全挤在 `handlers_ops.go` 自己的一个 `init()` 里，没有任何别的文件调用它 —— 照下面那句「住在写这条 op 的代码旁边」去 `handlers_plan.go` / `handlers_rules.go` / `handlers_memory.go` 找逆操作会一无所获。搬迁是批次 D 的事。
+`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。✅ **搬迁已完成（ζ-5，2026-08-06）**：18 条注册散在 8 个 handler 文件里，逆操作住在写这条 op 的代码旁边。
 
 **为什么**：switch 是错的形状 —— 每加一个写操作都要回到同一个文件改同一个函数，于是一批本来不相干的并行工作全撞在这里（计划里 `handlers_ops.go` 被 8 个工作项争）。映射表让逆操作住在**写这条 op 的代码旁边**，那也是别人会去找它的地方。
 
 - 注册同一个 action 两次 **panic** —— 两个逆操作意味着有一个是死代码，而谁赢取决于链接顺序。
 - 没注册不是静默的缺口：`handleOpRevert` 明确返回 `irreversible` 并说出是哪个 action。铁律 3 说一切可撤，这里就是这句话被守住或被打破的地方。
 - `revert` 自己永不可注册为可撤销：撤销一次撤销是一笔新的正向操作，不是回滚（共识 23，账本 append-only，后悔是新的一笔而不是橡皮擦）。
-- 测试 `handlers_ops_test.go`：注册表非空、12 个已知写操作都有逆、重复注册 panic。
+### 闸门：`TestEveryLoggedActionIsDeclared`（ζ-5 的真正产出）
+
+搬迁本身是整理，**闸门才是关掉那个洞的东西**。它防的具体失败：
+
+> 删掉 `registerRevert("wish_create", …)` 那一行 —— 编译过（Go 不管没人调用的方法）、`go vet` 过、**全部测试过、CI 全绿**。唯一的症状是用户点撤销时拿到 400。
+
+注册表是个 map，缺一项不是编译错误，而在此之前**没有任何东西比对过「我们写了哪些 action」与「我们能撤哪些」**。
+
+闸门用 AST 扫出包里每一处 `domain.OperationLog{…}` 的 `Action:` 字面量，逐个要求它**要么可撤、要么被 `registerIrreversible(action, reason)` 明确声明**。两个方向都查：声明了却没人写的 action 也红（那就是本仓第六次「写完没人调」）。
+
+**为什么要有 `registerIrreversible` 而不是「没注册就是不可撤」**：两者从外面看完全一样 —— 都是用户按下按钮那一刻的一个 400，而只有一种是 bug。写下来的**理由**是唯一能把「没人来得及做」和「本来就没什么可撤」区分开的东西。另有一条测试要求理由不能短于 20 字，否则字段会退化成装饰。
+
+**它看不见的**：`Action` 不是字面量而是运行时拼出来的地方（`plan_patch.go` 的三元映射、`proposals.go` 的裁决）。这些手工列在 `dynamicActionSites` 里，而那张表**两个方向都被核对** —— 没申报的动态站点要红，表里留着已经消失的站点也要红。手写清单只有这样才不会烂。
+
+⚠️ **被它取代的旧测试**：`TestKnownWritesAreReversible` 手抄了 12 个 action 名。轮到它退休时实际已有 16 条 —— β0+ 加的四个捕捉工具没人往清单里补，于是**一个只检查自己子集的测试报了几个月的绿**。留着它比删掉更糟：多一张会忘记更新的清单，还带着测试通过的可信度。
+
+### 闸门第一次跑就抓到的
+
+八条未声明。六条是设计上不可撤（两条只读工具、提案裁决两条、标记冲突、revert 自身），已就地写明理由。**另外两条是真缺口**：
+
+| | 原来存的 | 后果 |
+|---|---|---|
+| `wish_update` | `Detail: marshalCompact(updated)` —— 只有 after | 账本行看起来是完整的、撤销按钮也在，**里面没有任何可以还原的东西** |
+| `wish_delete` | `Detail: marshalCompact(id)` —— 只有一个 id 字符串 | 同上，且行已经不在了，没有第二处记得它是什么 |
+
+修法：`wish_update` 在 merge **之前**拷一份 before（merge 是就地改 `prev` 的，不拷就会把 after 当成 before）；`wish_delete` 删之前先 `Get` 一次 —— 多一次读，换的是撤销按钮从「一定 400」变成「能用」。
+
+- 测试：闸门（上）+ 重复注册 panic（现在会报出**两个**来源文件名，因为 panic 发生在包 init 阶段、早于任何测试名被打印）。
 
 **同批修掉一个真 bug**：防重复撤销原来是扫最近 200 条 op —— 会话忙到把 revert 挤出第 200 行之后，同一操作可以被撤销两次，而**补偿不是幂等的**（「把块加回去」执行两次就加了两个块）。改成 `OperationLogRepository.RevertedBy(sid, targetID)` 精确查询。
 

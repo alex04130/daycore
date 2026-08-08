@@ -51,12 +51,12 @@ func (s *Server) handleImportCanvas(w http.ResponseWriter, r *http.Request) {
 		Assignments []canvasExportAssignment `json:"assignments"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.importCanvas.bad_request")
 		return
 	}
 	if body.Version != canvasExportVersion {
-		s.writeErr(w, http.StatusBadRequest, "unsupported_export_version",
-			fmt.Sprintf("导出文件版本不支持（%q，期望 %q）", body.Version, canvasExportVersion))
+		s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_export_version",
+			"err.importCanvas.unsupported_export_version", body.Version, canvasExportVersion)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (s *Server) handleImportCanvas(w http.ResponseWriter, r *http.Request) {
 			CurrentScore: c.CurrentScore, CurrentGrade: c.CurrentGrade,
 		})
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "课程保存失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importCanvas.internal")
 			return
 		}
 		courseIDByCanvas[c.CanvasID] = saved.ID
@@ -101,7 +101,7 @@ func (s *Server) handleImportCanvas(w http.ResponseWriter, r *http.Request) {
 			HTMLURL: a.HTMLURL, Source: "canvas",
 		})
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "作业保存失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importCanvas.internal2")
 			return
 		}
 		imported++

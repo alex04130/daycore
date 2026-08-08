@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -9,6 +10,12 @@ import (
 )
 
 func init() {
+	// The inverses live next to the writes, which is where somebody looks for
+	// them. Registration from init() means "linked in" == "undoable".
+	registerRevert("wish_create", (*Server).revertWishCreate_delete)
+	registerRevert("wish_update", (*Server).revertWishUpdate)
+	registerRevert("wish_delete", (*Server).revertWishDelete)
+
 	registerRoutes("wishes", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/wishes", s.handleWishList)
 		mux.HandleFunc("POST /api/wishes", s.handleWishCreate)
@@ -35,7 +42,7 @@ func (s *Server) handleWishList(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	wishes, err := s.store.Wishes().List(r.Context(), sid, status)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿列表失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"wishes": wishes})
@@ -49,7 +56,7 @@ func (s *Server) handleWishCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	var in wishInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.wishCreate.bad_request")
 		return
 	}
 	in.Title = strings.TrimSpace(in.Title)
@@ -70,7 +77,7 @@ func (s *Server) handleWishCreate(w http.ResponseWriter, r *http.Request) {
 		Status:    status,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿创建失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishCreate.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -89,11 +96,11 @@ func (s *Server) handleWishGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	wish, err := s.store.Wishes().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishGet.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishGet.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, wish)
@@ -110,17 +117,21 @@ func (s *Server) handleWishUpdate(w http.ResponseWriter, r *http.Request) {
 	// Read the existing wish so we can merge the patch over it.
 	prev, err := s.store.Wishes().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishUpdate.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取心愿失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishUpdate.internal")
 		return
 	}
 
+	// Copy before merging: the merge below writes through `prev`, so without
+	// this the "before" snapshot would be the after.
+	before := *prev
+
 	var in wishInput
 	if err := s.readJSON(r, &in); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.wishUpdate.bad_request")
 		return
 	}
 
@@ -140,16 +151,21 @@ func (s *Server) handleWishUpdate(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := s.store.Wishes().Update(r.Context(), sid, id, prev)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishUpdate.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿更新失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishUpdate.internal2")
 		return
 	}
+	// before/after, not a bare snapshot of the result. `Detail: updated` was
+	// what this used to store, which made the operation un-undoable in the one
+	// way that is invisible: the ledger row looked complete, the undo button was
+	// there, and there was simply nothing in it to restore from.
 	s.logOp(r.Context(), &domain.OperationLog{
 		SessionID: sid, Action: "wish_update", TargetID: updated.ID,
-		Summary: updated.Title, Detail: marshalCompact(updated),
+		Summary: updated.Title,
+		Detail:  marshalCompact(revertDetail{Before: before, After: updated}),
 	})
 	s.writeJSON(w, http.StatusOK, updated)
 }
@@ -161,18 +177,62 @@ func (s *Server) handleWishDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	err := s.store.Wishes().Delete(r.Context(), sid, id)
+	// One extra read, and it is the whole difference between an undo button that
+	// works and one that returns 400. The row is gone after the next statement
+	// and nothing else anywhere remembers what was in it — `Detail` used to hold
+	// the id string and nothing more.
+	before, err := s.store.Wishes().Get(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "wish_not_found", "没有这条心愿")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishDelete.wish_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "心愿删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishDelete.internal")
+		return
+	}
+	if err := s.store.Wishes().Delete(r.Context(), sid, id); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "wish_not_found", "err.wishDelete.wish_not_found")
+			return
+		}
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.wishDelete.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
 		SessionID: sid, Action: "wish_delete", TargetID: id,
-		Summary: id, Detail: marshalCompact(id),
+		Summary: before.Title,
+		Detail:  marshalCompact(revertDetail{Before: before}),
 	})
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// revertWishUpdate restores the wish as it was before the patch.
+func (s *Server) revertWishUpdate(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
+	var before domain.Wish
+	if !decodeInto(detail.Before, &before) {
+		s.writeErrL(w, locale, http.StatusUnprocessableEntity, "no_snapshot", "err.opRevert.no_snapshot")
+		return
+	}
+	if _, err := s.store.Wishes().Update(ctx, sid, orig.TargetID, &before); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.opRevert.internal")
+		return
+	}
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+// revertWishDelete puts the wish back, keeping its original id so anything that
+// referenced it still resolves.
+func (s *Server) revertWishDelete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
+	var before domain.Wish
+	if !decodeInto(detail.Before, &before) {
+		s.writeErrL(w, locale, http.StatusUnprocessableEntity, "no_snapshot", "err.opRevert.no_snapshot")
+		return
+	}
+	before.SessionID = sid
+	before.ID = orig.TargetID
+	if _, err := s.store.Wishes().Create(ctx, &before); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.opRevert.internal")
+		return
+	}
+	s.finishRevert(ctx, w, sid, orig)
 }

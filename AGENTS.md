@@ -62,15 +62,15 @@ go build ./... && go vet ./... && go test ./...
 
 - **装配顺序**（`cmd/daycore/main.go`）：config.Load → store.Open+Migrate → catalog/prompts → server.New → locale 覆盖层 → 两个 cleanup ticker → **Worker（无条件启动**，不再绑 OneBot）→ channels（仅当配了通道）→ inbound 消费循环。关停：SIGINT/SIGTERM → `httpSrv.Shutdown(15s)` → `WaitBackground` → `worker.Stop()`。
 - **中间件链**（全局单链，无分组）：`recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → dataSessionMW → mux`。三个身份中间件**「解析不强制」**（有效才注入 ctx，从不拦截）；真正的鉴权在 handler 内 `requireSession`（无 sid → 401 `no_session`）或 `adminAuthorized`。
-- **路由注册模式**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){…})`，注册表在 `internal/server/routes.go`。**不要去 `server.go` 加路由** —— 那里只剩静态 `/` 一条。`RouteTable(*Server)` 用零值 Server 重放注册（读路由表不需要数据库）。当前 **101 条路由 / 22 个组**（`docs/API_SURFACE.md` 是生成物，`make api-surface` 重生成）。
+- **路由注册模式**：每个 handler 文件在自己的 `init()` 里 `registerRoutes("<组名>", func(s *Server, mux Mux){…})`，注册表在 `internal/server/routes.go`。**不要去 `server.go` 加路由** —— 那里只剩静态 `/` 一条。`RouteTable(*Server)` 用零值 Server 重放注册（读路由表不需要数据库）。当前 **109 条路由 / 24 个组**（`docs/API_SURFACE.md` 是生成物，`make api-surface` 重生成）。
 - **存储注册模式**：`internal/storage/registry.go` 的 `storage.Register(dbType, opener)`，sqlstore/mongostore 在 `init()` 自注册，main.go blank import。`domain.Store` 是组合接口（约 179 个方法），**业务代码只 import `domain`，绝不直接引用具体 store** —— 漏一个 accessor 是编译错误，这正是两个 store 同步的强制手段。
 - **版本三层，不要混**（唯一真源 `internal/version/version.go`，同步 `web/frontend/package.json`）：
   1. 构建版本 `Version="2.2.0"` + `Channel="beta"`（`2.<minor>.<patch>-beta`；`GET /api/healthz`、设置页显示）。
-  2. **API 契约版本** `APIVersion=1` / `APIMinor=2`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
+  2. **API 契约版本** `APIVersion=1` / `APIMinor=7`（`GET /api/version`；各前端握手用这个）：breaking 升 major，additive 升 minor；契约面变了必须升版，由 `api/spec/contract-lock.json` + `go test` 强制。
   3. 各前端自己的版本号（在各自子仓库，与本仓解耦）。
-- **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。11 个 key。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。
-- **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，15 个工具定义在 `agent_tools.go` 的 `companionToolDefs`（11 个原有 + 4 个捕捉工具 assignment_upsert/wish_add/mood_record/material_add，β0+ 补齐，实现集中在 `tool_capture.go`）。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。每次模型调用（流式按轮）落一行 `ai_call_logs`（`s.logAICall`，best-effort）；第三方文本进提示词必须过 `untrustedWrap`（web_search 已接）。
-- **Worker**（`internal/server/worker.go`）：cron 驱动；产出全部落库、由 App 读，推到通道只是可选的最后一步。按用户排程是**首次请求时懒排**（`SetScheduleOnUse`，`markAwake` 节流放行时调一次；⚠️ 代价是重启当天早上有个缺口）。三个定时时刻由节律派生：`PlanAt = Wake − 3h30m`（默认 04:00）、`BriefAt = Wake`（07:30）、`ReviewAt = Sleep − 90m`（21:00）。另有 deadline 巡检、20h 关怀（Protector）。
+- **AI 子系统**（`internal/ai/`）：`AIProvider` 接口 + `RegisterFormat` 自注册 + Catalog（`config/models.yaml`）+ PromptService 三层（DB `prompt_overrides` 覆盖 → `PROMPTS_DIR/<locale>/<key>.tmpl` 磁盘逐文件覆盖 → `//go:embed` 内嵌）。**提示词模板必须 zh-CN / en-US 双 locale 成对**，缺一启动报错。14 个 key。**唯一的例外是 L1 硬边界**（`boundaries.go` + `prompts/boundaries.json`）：只有磁盘与内嵌两层，**没有 DB 层、没有端点**——能被控制台改写的边界等于能被删除，见 AI.md。视觉管线三分支（模型自带 vision / 转 vision 模型 / read_image+zoom_image 工具循环 ≤6 轮）。
+- **Agent loop**（`internal/server/`）：`runCompanionAgent` 最多 `AGENT_MAX_ROUNDS`(6) 轮，15 个工具定义在 `agent_tools.go` 的 `companionToolDefs`（11 个原有 + 4 个捕捉工具 assignment_upsert/wish_add/mood_record/material_add，β0+ 补齐，实现集中在 `tool_capture.go`）。SSE v2 帧协议：`delta / reasoning / tool_start / tool_result / decision_card / error / done` + 心跳；tool_result 带 `opId` 供撤销。sink 体系：`sseSender`（同步）/ `discardSink`（通道回复，不注册 propose_decision）/ `recordingSink`（异步端点）。决策卡：纯内存 registry，每 session 同时一张，新卡顶旧卡（进程重启即丢，单实例假设）。异步端点写 pending 占位消息，`main.go` 启动时 `FailPendingMessages` 清扫崩溃遗留。旧的 `<plan_update>` 标签协议已废弃。每次模型调用（流式按轮）落一行 `ai_call_logs`（`s.logAICall`，best-effort）；第三方文本进提示词必须过 `untrustedWrap`（web_search 已接）。**附件**：`attachmentIds` → `attachments` 表（所有权）+ `internal/blob`（字节）→ 内联 `ContentPart` 挂到最后一条 user 消息；`Ref` 永不出服务端（`json:"-"`），见 DATA.md 与 AI.md。
+- **Worker**（`internal/server/worker.go`）：cron 驱动；产出全部落库、由 App 读，推到通道只是可选的最后一步。按用户排程是**首次请求时懒排**（`SetScheduleOnUse`，`markAwake` 节流放行时调一次；⚠️ 代价是重启当天早上有个缺口）。三个定时时刻**真的由节律派生**（ζ-2 接线；此前是写死的 07:30/21:00，恰好等于 `Schedule(Cold())` 的输出，所以「派生」只在数值上成立）：`PlanAt = Wake − 3h30m`、`BriefAt = Wake`、`ReviewAt = Sleep − 90m`。⚠️ `PlanAt` 至今**没有消费者** —— 定时 auto-plan 作业不存在。另有 deadline 巡检、**节律学习作业**（日切跑，`rhythm_job.go`）、**Protector 20h 关怀**（`protector.go`，场次 key 是这段清醒的起点）。每会话 6 条 cron，全部经 `claim`/`finish` 走 job_runs 唯一索引互斥。
 - **多语言三层**（`internal/i18n/`）：DB `locale_overrides` → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US。**给后端加一门语言是丢一个翻译文件，不用改代码、不用发版**；内嵌两种是「地板」不是全集。用户自选一主一副（`SessionPrefs.PrimaryLocale`/`SecondaryLocale`），部署只给默认值（`DEFAULT_PRIMARY_LOCALE`/`DEFAULT_SECONDARY_LOCALE`）。⚠️ 前端还不是这样 —— `web/frontend/src/i18n.js` 是硬编码双语言字典。
 
 ## 代码组织与模块划分
@@ -81,10 +81,10 @@ go build ./... && go vet ./... && go test ./...
 | `internal/server/` | 路由、中间件、全部 handler、agent loop、cron Worker（一个文件一组 handler） |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PG/MySQL，`Dialect` 抽象），每实体一文件；三份 DDL 由 `dialect_parity_test.go` 静态比对 |
 | `internal/storage/mongostore/` | MongoDB，每实体一 repo 文件；`bson_test.go`（免真机）+ `conformance_test.go`（真机行为套件） |
-| `internal/storage/storagetest/` | **行为一致性套件**（36 例）：所有后端跑同一份，加后端的验收标准 |
+| `internal/storage/storagetest/` | **行为一致性套件**（42 例）：所有后端跑同一份，加后端的验收标准 |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService、流式协议、vision 管线；`formats/{openai,anthropic,ollama}` 自注册 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
-| `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说 |
+| `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说。**鉴权不在这一层** —— 它只认 ref 不认会话，所有权在 `attachments` 表上（ε 批次接的第一个真使用者） |
 | `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |
 | `internal/config/` | 环境变量配置（godotenv） |
 | `internal/search/` | web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS 优先 + 子串兜底） |
@@ -105,10 +105,11 @@ go build ./... && go vet ./... && go test ./...
 - **存储层取舍规则**：凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段**必须是列**；其余可以进 JSON blob。需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，三方言都支持）。`NormalizeDSN` 模式：代码依赖的连接参数（SQLite `busy_timeout`+WAL、MySQL `clientFoundRows`）由方言自己补，不写进文档等运维抄全。
 - **给已有表加列走 `ColumnMigration`**（`sqlstore/dialect.go` 的 `sessionColumnMigrations`，实际覆盖六张表），同时改三方言建表 DDL 与 mongostore doc struct；MySQL 的 TEXT 一律可空、读侧 COALESCE；新表不要用需要引号的列名。
 - **实时文档铁律**：任何代码改动必须在同一批修改中更新 `docs/` 对应文件；加/删路由连着改 `api/spec/paths/<tag>.yaml` → `make api-bundle` → 升 `APIMinor` → `make api-surface`，三样都有测试盯着，漏一样就红。
+- **设计约束也要进 docs，不只是事实**（2026-08-06 补）：**边界**（什么有意不做、什么绝对不能加）、**取舍**（选了什么、放弃了什么、代价多少）、**它防的哪个具体失败**。判据是「改这块代码的人不该需要先读一遍代码才知道哪些是有意为之」——**代码注释与 commit message 不算数**，它们不可检索也不随代码演进。这类约束被当成疏漏顺手「修掉」，是本仓最贵的一种回归。
 
 ## 测试策略
 
-- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：36 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
+- **`internal/storage/storagetest` 行为套件是存储层改动的验收标准**：42 个用例，SQLite（`go test ./...` 内）与真机 Mongo（`MONGO_TEST_DSN`，`make test-mongo`）、真机 PG/MySQL（`make test-sql`）跑同一份。测的是**行为**（lease 只有一个持有者、rev CAS 拒绝陈旧写、`ProposalOp.Args` 数字回来是 `float64`、TTL 不对称、游标续读无重无漏……），不是「能存能取」。
 - **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
 - **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
 - **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。

@@ -32,39 +32,39 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		TokenInBody bool    `json:"tokenInBody"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.register.bad_request")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
 	if email == "" || !strings.Contains(email, "@") {
-		s.writeErr(w, http.StatusBadRequest, "invalid_email", "请输入有效的邮箱")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "invalid_email", "err.register.invalid_email")
 		return
 	}
 	if len(body.Password) < 8 {
-		s.writeErr(w, http.StatusBadRequest, "weak_password", "密码至少 8 位")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "weak_password", "err.register.weak_password")
 		return
 	}
 	ctx := r.Context()
 	if _, err := s.store.Users().GetByEmail(ctx, email); err == nil {
-		s.writeErr(w, http.StatusConflict, "email_taken", "该邮箱已注册")
+		s.writeErrL(w, s.requestLocale(r), http.StatusConflict, "email_taken", "err.register.email_taken")
 		return
 	} else if !errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "注册失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.register.internal")
 		return
 	}
 
 	hash, err := s.hasher.Hash(body.Password)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "注册失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.register.internal")
 		return
 	}
 	user, err := s.store.Users().Upsert(ctx, &domain.User{Email: &email, Name: body.Name})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "注册失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.register.internal")
 		return
 	}
 	if err := s.store.Auth().UpsertCredential(ctx, &domain.Credential{UserID: user.ID, PasswordHash: hash}); err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "注册失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.register.internal")
 		return
 	}
 	s.finishLogin(w, r, user, body.TokenInBody)
@@ -81,7 +81,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		TokenInBody bool   `json:"tokenInBody"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.login.bad_request")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(body.Email))
@@ -89,17 +89,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.store.Users().GetByEmail(ctx, email)
 	if err != nil {
-		s.writeErr(w, http.StatusUnauthorized, "invalid_credentials", "邮箱或密码不正确")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "invalid_credentials", "err.login.invalid_credentials")
 		return
 	}
 	cred, err := s.store.Auth().GetCredentialByUserID(ctx, user.ID)
 	if err != nil {
-		s.writeErr(w, http.StatusUnauthorized, "invalid_credentials", "邮箱或密码不正确")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "invalid_credentials", "err.login.invalid_credentials")
 		return
 	}
 	ok, err := s.hasher.Verify(body.Password, cred.PasswordHash)
 	if err != nil || !ok {
-		s.writeErr(w, http.StatusUnauthorized, "invalid_credentials", "邮箱或密码不正确")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "invalid_credentials", "err.login.invalid_credentials")
 		return
 	}
 	s.finishLogin(w, r, user, body.TokenInBody)
@@ -135,7 +135,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, user *domain.User, tokenInBody bool) {
 	token, err := s.issueAndLink(w, r, user)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "登录失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.finishLogin.internal")
 		return
 	}
 	resp := map[string]any{"ok": true, "user": user}

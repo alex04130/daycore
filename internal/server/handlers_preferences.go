@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -39,6 +40,11 @@ type sessionPrefsPatch struct {
 	// Send "" for secondary to drop the switch entirely.
 	PrimaryLocale   *string `json:"primaryLocale"`
 	SecondaryLocale *string `json:"secondaryLocale"`
+
+	// Timezone is the user choosing their own zone, which outranks whatever
+	// their device reports from then on. Send "" to go back to following the
+	// device (and, until it reports, the deployment default).
+	Timezone *string `json:"timezone"`
 }
 
 // sessionPrefs loads a session's preferences, falling back to defaults (the
@@ -60,7 +66,7 @@ func (s *Server) handleSessionGetPreferences(w http.ResponseWriter, r *http.Requ
 	sess, err := s.store.Sessions().Get(r.Context(), sid)
 	if err != nil {
 		s.log.Error("get session preferences", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "internal", "获取偏好失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionGetPreferences.internal")
 		return
 	}
 	prefs := DefaultPrefs()
@@ -80,7 +86,7 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 	}
 	var patch sessionPrefsPatch
 	if err := s.readJSON(r, &patch); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.sessionPreferences.bad_request")
 		return
 	}
 
@@ -88,7 +94,7 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 	sess, err := s.store.Sessions().Get(ctx, sid)
 	if err != nil {
 		s.log.Error("get session for preferences", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "internal", "获取会话失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionPreferences.internal")
 		return
 	}
 
@@ -153,17 +159,34 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	tzChanged := false
+	if patch.Timezone != nil {
+		tz := strings.TrimSpace(*patch.Timezone)
+		switch {
+		case tz == "":
+			// Back to following the device. Clearing the source is what lets a
+			// later client hint take effect again.
+			tzChanged = prefs.Timezone != ""
+			prefs.Timezone, prefs.TimezoneSource = "", ""
+		case !validTimezone(tz):
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_timezone", "err.sessionPreferences.bad_timezone")
+			return
+		default:
+			tzChanged = prefs.Timezone != tz
+			prefs.Timezone, prefs.TimezoneSource = tz, TZSourceUser
+		}
+	}
 	if patch.MaterialCategories != nil {
 		if prefs.MaterialCategories == nil {
 			prefs.MaterialCategories = map[string]bool{}
 		}
 		for id, on := range patch.MaterialCategories {
 			if _, ok := domain.MaterialCategoryByID(id); !ok {
-				s.writeErr(w, http.StatusBadRequest, "bad_category", "未知的资料类别: "+id)
+				s.writeErrf(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.fmt.badCategory", id)
 				return
 			}
 			if id == domain.CategoryNote && !on {
-				s.writeErr(w, http.StatusBadRequest, "bad_category", "通用笔记类别不可停用")
+				s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_category", "err.sessionPreferences.bad_category")
 				return
 			}
 			prefs.MaterialCategories[id] = on
@@ -173,14 +196,21 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 	raw, err := json.Marshal(prefs)
 	if err != nil {
 		s.log.Error("marshal session preferences", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "internal", "偏好保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionPreferences.internal2")
 		return
 	}
 	prefsStr := string(raw)
 	if _, err := s.store.Sessions().Update(ctx, sid, domain.SessionUpdate{Preferences: &prefsStr}); err != nil {
 		s.log.Error("update session preferences", "err", err)
-		s.writeErr(w, http.StatusInternalServerError, "internal", "偏好保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionPreferences.internal2")
 		return
+	}
+	if tzChanged && s.worker != nil {
+		// The cron entries carry CRON_TZ of the OLD zone. Re-arm them here rather
+		// than waiting for the next markAwake: a user who just moved their
+		// timezone expects tomorrow's brief in the new one, and markAwake only
+		// reschedules when it also happens to admit.
+		s.worker.ScheduleUser(sid, s.sessionTimezone(ctx, sid))
 	}
 	s.writeJSON(w, http.StatusOK, prefs)
 }

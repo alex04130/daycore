@@ -11,6 +11,11 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("memory_add", (*Server).revertMemoryAdd_delete)
+	registerRevert("memory_delete", (*Server).revertMemoryAdd)
+	registerRevert("memory_clear", (*Server).revertMemoryClear)
+
 	registerRoutes("long-term memory", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/memory", s.handleMemoryList)
 		mux.HandleFunc("POST /api/memory", s.handleMemoryAdd)
@@ -33,7 +38,7 @@ func (s *Server) handleMemoryList(w http.ResponseWriter, r *http.Request) {
 	}
 	facts, err := s.store.Memory().ListFacts(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取记忆失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.memoryList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"facts": facts})
@@ -50,24 +55,24 @@ func (s *Server) handleMemoryAdd(w http.ResponseWriter, r *http.Request) {
 		Source string `json:"source"`
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Fact) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 fact")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.memoryAdd.bad_request")
 		return
 	}
 	fact := strings.TrimSpace(body.Fact)
 	if len(fact) > maxFactLen {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "fact 过长")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.memoryAdd.bad_request2")
 		return
 	}
 	source := orDefault(body.Source, "chat")
 	if !validFactSources[source] {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "source 必须是 chat/user/import")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.memoryAdd.bad_request3")
 		return
 	}
 	created, err := s.store.Memory().AddFact(r.Context(), &domain.MemoryFact{
 		SessionID: sid, Fact: fact, Source: source,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "记忆保存失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.memoryAdd.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -96,11 +101,11 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	err := s.store.Memory().DeleteFact(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErr(w, http.StatusNotFound, "fact_not_found", "没有这条记忆")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "fact_not_found", "err.memoryDelete.fact_not_found")
 		return
 	}
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "记忆删除失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.memoryDelete.internal")
 		return
 	}
 	summary := id
@@ -127,7 +132,7 @@ func (s *Server) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.store.Memory().ClearFacts(r.Context(), sid)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "记忆清空失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.memoryClear.internal")
 		return
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
@@ -146,7 +151,7 @@ func (s *Server) handleImportHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.Memory().ListImports(r.Context(), sid, 50)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "读取导入历史失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.importHistory.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"imports": items})

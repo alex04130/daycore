@@ -204,6 +204,21 @@ func (r jobRunRepo) Claim(ctx context.Context, run *domain.JobRun) (bool, error)
 	var d jobRunDoc
 	if derr := res.Decode(&d); derr != nil {
 		if notFound(derr) {
+			// Neither the insert nor the takeover landed. That is normally
+			// "somebody else owns this occurrence" — but it is also exactly what
+			// a transient write failure looks like from here, and reporting an
+			// outage as a lost race leaves the worker quiet with nothing to
+			// explain it. A row for the occurrence means we genuinely lost; no
+			// row means the insert error was real.
+			//
+			// The SQL side has always done this (sqlstore/coordination.go). This
+			// side returned false, nil unconditionally, so on Mongo — and only on
+			// Mongo — a failing write concern or a rejected document made the
+			// occurrence get skipped silently and never re-driven.
+			if n, cerr := r.c("job_runs").CountDocuments(ctx,
+				bson.M{"_id": jobRunKey(run.SessionID, run.Job, run.RunKey)}); cerr == nil && n == 0 {
+				return false, err
+			}
 			return false, nil
 		}
 		return false, derr

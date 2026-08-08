@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,7 +11,7 @@ import (
 	"daycore/internal/domain"
 )
 
-func (s *Server) toolPlanAdd(ctx context.Context, sid, tz, rawArgs string) toolResult {
+func (s *Server) toolPlanAdd(ctx context.Context, sid, locale, tz, rawArgs string) toolResult {
 	var args struct {
 		Date        string `json:"date"`
 		Title       string `json:"title"`
@@ -40,7 +41,7 @@ func (s *Server) toolPlanAdd(ctx context.Context, sid, tz, rawArgs string) toolR
 	if args.DurationMin > 0 {
 		block["duration_min"] = args.DurationMin
 	}
-	updated, opID, _, err := s.applyPlanPatch(ctx, sid, args.Date, planAction{Action: "add", Block: block}, domain.ActorAgent)
+	updated, opID, _, err := s.applyPlanPatch(ctx, sid, args.Date, locale, planAction{Action: "add", Block: block}, domain.ActorAgent)
 	if err != nil {
 		return toolFail("plan_add failed: %v", err)
 	}
@@ -49,7 +50,7 @@ func (s *Server) toolPlanAdd(ctx context.Context, sid, tz, rawArgs string) toolR
 		Summary: fmt.Sprintf("%s · %s", args.Date, args.Title)}
 }
 
-func (s *Server) toolPlanPatch(ctx context.Context, sid, rawArgs, kind string) toolResult {
+func (s *Server) toolPlanPatch(ctx context.Context, sid, locale, rawArgs, kind string) toolResult {
 	var args struct {
 		Date    string         `json:"date"`
 		Match   map[string]any `json:"match"`
@@ -68,8 +69,15 @@ func (s *Server) toolPlanPatch(ctx context.Context, sid, rawArgs, kind string) t
 	if kind == "update" && len(args.Changes) == 0 {
 		return toolFail("changes must not be empty")
 	}
-	updated, opID, matched, err := s.applyPlanPatch(ctx, sid, args.Date, planAction{Action: kind, Match: args.Match, Changes: args.Changes}, domain.ActorAgent)
+	updated, opID, matched, err := s.applyPlanPatch(ctx, sid, args.Date, locale, planAction{Action: kind, Match: args.Match, Changes: args.Changes}, domain.ActorAgent)
 	if err != nil {
+		// A refusal is information the model can act on — it should tell the
+		// user why and offer something else, not report a failure. Wrapping it
+		// as "update failed" would make a rule look like an outage.
+		var blocked *planBlocked
+		if errors.As(err, &blocked) {
+			return toolFail("%s", blocked.message(locale))
+		}
 		return toolFail("%s failed: %v", kind, err)
 	}
 	if matched == 0 {

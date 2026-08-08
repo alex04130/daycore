@@ -8,7 +8,9 @@ import (
 
 	"daycore/internal/ai"
 	"daycore/internal/domain"
+
 	"daycore/internal/i18n"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -34,21 +36,34 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Message             string `json:"message"`
-		Timezone            string `json:"timezone"`
-		AssistantName       string `json:"assistantName"`
-		ThreadID            string `json:"threadId"`
+		Message             string   `json:"message"`
+		Timezone            string   `json:"timezone"`
+		AssistantName       string   `json:"assistantName"`
+		ThreadID            string   `json:"threadId"`
+		AttachmentIDs       []string `json:"attachmentIds"`
 		ConversationHistory []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"conversationHistory"`
 	}
-	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 message")
+	// A message may be empty when it carries files: "上传即 intent" — dropping a
+	// photo in with no words is a complete thing to say.
+	if err := s.readJSON(r, &body); err != nil ||
+		(strings.TrimSpace(body.Message) == "" && len(body.AttachmentIDs) == 0) {
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aICompanion.bad_request")
 		return
 	}
 
 	sid := sessionIDFrom(r.Context())
+	// The device is the only thing that knows which zone it is in, so this is a
+	// hint we accept rather than context we refuse — see session_timezone.go for
+	// why that is not a hole in "never trust client-supplied context".
+	s.noteClientTimezone(r.Context(), sid, body.Timezone)
+	atts, err := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
+	if err != nil {
+		s.writeAttachmentErr(w, r, "aICompanion", err)
+		return
+	}
 	s.decisions.cancelForSession(sid) // a new message supersedes any pending card
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
@@ -63,13 +78,13 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		var err error
 		messages, err = s.buildCompanionMessages(ctx, sid, body.ThreadID, locale, body.Timezone, name, body.Message, nil)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanion.internal")
 			return
 		}
 	} else {
 		sys, err := s.companionSystemPrompt(ctx, sid, locale, body.Timezone, name)
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aICompanion.internal")
 			return
 		}
 		messages = []ai.Message{{Role: ai.RoleSystem, Content: sys}}
@@ -90,6 +105,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, ai.Message{Role: ai.RoleUser, Content: body.Message})
 		messages = s.maybeCompress(ctx, sid, "", locale, body.Timezone, name, messages)
 	}
+	attachPartsToLastUser(messages, s.attachmentParts(ctx, s.catalog.DefaultChat(), locale, atts))
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -107,10 +123,23 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	// threadId can't write into another session's thread. Best-effort: the SSE
 	// stream already completed.
 	if body.ThreadID != "" && strings.TrimSpace(answer) != "" {
-		_ = s.store.Chats().AppendMessages(context.WithoutCancel(ctx), []domain.ChatMessage{
-			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleUser, Content: body.Message},
+		persistCtx := context.WithoutCancel(ctx)
+		// The id is generated here, not read back from the append: mongostore's
+		// AppendMessages does not write generated ids into the caller's slice,
+		// so binding to turn[0].ID would attach nothing on exactly one of the
+		// four backends — and only when a user sent a file.
+		userMsgID := uuid.NewString()
+		err := s.store.Chats().AppendMessages(persistCtx, []domain.ChatMessage{
+			{ID: userMsgID, ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleUser, Content: body.Message},
 			{ThreadID: body.ThreadID, SessionID: sid, Role: domain.RoleAssistant, Content: answer},
 		})
+		if err == nil {
+			// A bind that fails leaves the uploads unbound and reclaimable —
+			// see bindAttachments.
+			if err := s.bindAttachments(persistCtx, sid, body.ThreadID, userMsgID, idsOf(atts)); err != nil {
+				s.log.Warn("could not attach uploads to the message", "session", sid, "err", err)
+			}
+		}
 	}
 }
 
@@ -207,8 +236,8 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 	l2 := ""
 	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.PersonaPrompt != "" {
 		l2 = "\n\n" + i18n.T(personaHeading, locale) + "\n" + sess.PersonaPrompt
-	} else {
-		l2 = "\n\n" + ai.DefaultPersona(locale, name)
+	} else if persona, err := s.prompts.Render(ctx, ai.PromptPersona, locale, map[string]any{"Name": name}); err == nil {
+		l2 = "\n\n" + persona
 	}
 
 	// L1_reminder: hard boundary restatement placed AFTER L2 so it can never

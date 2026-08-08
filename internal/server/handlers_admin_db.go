@@ -18,7 +18,7 @@ func init() {
 // GET /api/admin/db/tables
 func (s *Server) handleAdminDBTables(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBTables.unauthorized")
 		return
 	}
 	// TODO: reflect store schema metadata.
@@ -33,7 +33,7 @@ func (s *Server) handleAdminDBTables(w http.ResponseWriter, r *http.Request) {
 // GET /api/admin/db/table/{name}
 func (s *Server) handleAdminDBTableBrowse(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBTableBrowse.unauthorized")
 		return
 	}
 	_ = r.PathValue("name")
@@ -47,7 +47,7 @@ func (s *Server) handleAdminDBTableBrowse(w http.ResponseWriter, r *http.Request
 // DELETE /api/admin/db/table/{name}/{id}
 func (s *Server) handleAdminDBTableDelete(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBTableDelete.unauthorized")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": "per-table delete coming soon"})
@@ -56,7 +56,7 @@ func (s *Server) handleAdminDBTableDelete(w http.ResponseWriter, r *http.Request
 // GET /api/admin/db/export
 func (s *Server) handleAdminDBExport(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBExport.unauthorized")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"export": map[string]any{}, "note": "full export coming soon"})
@@ -65,7 +65,7 @@ func (s *Server) handleAdminDBExport(w http.ResponseWriter, r *http.Request) {
 // POST /api/admin/db/import
 func (s *Server) handleAdminDBImport(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBImport.unauthorized")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": "full import coming soon"})
@@ -74,9 +74,9 @@ func (s *Server) handleAdminDBImport(w http.ResponseWriter, r *http.Request) {
 // GET /api/admin/db/backup
 func (s *Server) handleAdminDBBackup(w http.ResponseWriter, r *http.Request) {
 	if !s.adminAuthorized(r) {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", "需要管理员令牌")
+		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminDBBackup.unauthorized")
 		return
 	}
 	// SQLite backup — write the db file directly.
-	s.writeErr(w, http.StatusNotImplemented, "not_implemented", "仅 SQLite 支持备份，当前引擎暂不支持")
+	s.writeErrL(w, s.requestLocale(r), http.StatusNotImplemented, "not_implemented", "err.adminDBBackup.not_implemented")
 }

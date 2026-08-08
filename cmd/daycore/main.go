@@ -128,6 +128,29 @@ func run(logger *slog.Logger) error {
 		logger.Info("prompt templates overlaid from disk", "dir", cfg.PromptsDir, "files", n)
 	}
 
+	// L1 hard boundaries. Resolved here rather than lazily at the first chat so
+	// that a broken boundaries file stops the process instead of degrading one
+	// request, and so HardBoundaryReminder's panic path is unreachable once we
+	// are serving.
+	boundaries, err := ai.StdBoundaries()
+	if err != nil {
+		return fmt.Errorf("load hard boundaries: %w", err)
+	}
+	bload, err := boundaries.LoadDir(cfg.PromptsDir)
+	if err != nil {
+		return fmt.Errorf("load hard boundaries from %s: %w", cfg.PromptsDir, err)
+	}
+	if len(bload.Locales) > 0 {
+		logger.Info("hard boundaries overlaid from disk", "path", bload.Path, "locales", bload.Locales)
+	}
+	if bload.Stale() {
+		// Their copy wins — that is the point of the file. But a copy taken
+		// before a release that added a rule silently withholds that rule, and
+		// this line is the only place anyone would find out.
+		logger.Warn("hard boundaries file predates this build; diff it against the shipped defaults",
+			"path", bload.Path, "file_version", bload.Version, "shipped_version", bload.Embedded)
+	}
+
 	// File bus. Optional: a deployment without one simply has no feature that
 	// needs bytes, and refusing to boot over that would be worse than saying so.
 	blobStore, err := blob.Open(cfg.BlobStore, cfg.DataDir)
@@ -171,6 +194,20 @@ func run(logger *slog.Logger) error {
 	// Background cleanup for stale temp-context entries + expired binding tokens.
 	srv.StartTempContextCleanup(0)
 	srv.StartChannelBindingCleanup(0)
+	// Uploads nobody sent. Without this every abandoned upload is permanent:
+	// its row keeps the blob referenced, so no other sweep can reclaim it.
+	srv.StartAttachmentCleanup(0)
+
+	// Leader election. Starts before the Worker so that the first cron firing
+	// already has an answer to "do I lead" — LeadsWorker is false until the
+	// first renewal lands, and starting the other way round would let the first
+	// minute run unguarded.
+	//
+	// ⚠️ This is what makes more than one instance safe, together with the
+	// per-occurrence job rows. Read docs/ARCHITECTURE.md before changing the
+	// order of any of this.
+	srv.StartWorkerLease()
+	srv.StartJobRunPrune()
 
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
@@ -221,7 +258,9 @@ func run(logger *slog.Logger) error {
 	// this is avoiding, and it belongs with Lease-based election (batch ζ) —
 	// otherwise every instance would schedule every user.
 	srv.SetScheduleOnUse(func(sid string) {
-		worker.ScheduleUser(sid, cfg.WorkerDefaultTZ)
+		// The session's own zone, not the deployment default — see
+		// internal/server/session_timezone.go.
+		worker.ScheduleUser(sid, srv.SessionTimezone(context.Background(), sid))
 	})
 
 	if registry != nil {
@@ -268,6 +307,17 @@ func run(logger *slog.Logger) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		err := httpSrv.Shutdown(shutdownCtx)
+		// Stop the tick loops before anything else waits: they are the only
+		// background work that re-enters the store on a schedule, and a tick that
+		// fires after the store closes logs an error nobody can act on. It also
+		// has to happen before any loop that OWNS something (a lease) exists —
+		// that loop would otherwise reclaim what the process is giving up.
+		srv.StopTicks()
+		// Only now: the renewal loop is stopped, so nothing can take the lease
+		// back after this. Releasing before StopTicks would let the next tick
+		// re-acquire what this process is giving up, and the next instance would
+		// wait a whole TTL for a leader that has already exited.
+		srv.ReleaseWorkerLease()
 		// Wait for detached background work (async turns, channel replies) so
 		// in-flight results still get persisted; stale pending placeholders
 		// from a hard deadline are swept to "error" on the next boot.

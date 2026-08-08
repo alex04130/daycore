@@ -155,11 +155,11 @@ func (s *Server) handleDecisionRespond(w http.ResponseWriter, r *http.Request) {
 		Text   string `json:"text"`
 	}
 	if err := s.readJSON(r, &body); err != nil || (body.Choice == "" && strings.TrimSpace(body.Text) == "") {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 choice 或 text")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.decisionRespond.bad_request")
 		return
 	}
 	if !s.decisions.resolve(id, sid, decisionAnswer{Choice: body.Choice, Text: strings.TrimSpace(body.Text)}) {
-		s.writeErr(w, http.StatusNotFound, "decision_not_found", "这张卡片已经过期了")
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "decision_not_found", "err.decisionRespond.decision_not_found")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
@@ -319,12 +319,9 @@ func (s *Server) streamRound(ctx context.Context, sink agentSink, provider ai.AI
 // tells the loop to end this stream gracefully.
 func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid string, call ai.ToolCall) (res toolResult, cancelled bool) {
 	var args struct {
-		Title   string `json:"title"`
-		Summary string `json:"summary"`
-		Options []struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
-		} `json:"options"`
+		Title   string           `json:"title"`
+		Summary string           `json:"summary"`
+		Options []decisionOption `json:"options"`
 	}
 	if err := json.Unmarshal([]byte(call.Arguments), &args); err != nil || len(args.Options) == 0 {
 		return toolFail("propose_decision needs title and 2-4 options"), false
@@ -333,12 +330,18 @@ func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid str
 	ch := s.decisions.register(sid, id)
 	defer s.decisions.drop(id)
 
-	sink.send(map[string]any{"type": "decision_card", "id": id, "title": args.Title, "summary": args.Summary, "options": args.Options})
-
 	wait := decisionTimeoutSSE
 	if dw, ok := sink.(decisionWaiter); ok {
 		wait = dw.decisionWait()
 	}
+	// The row before the frame: the card is a projection of a proposal, not a
+	// thing that exists only in this process's memory. Until this line the
+	// registry WAS the card, so a restart lost every question in flight and
+	// nothing about them ever reached the ledger.
+	s.persistDecision(ctx, sid, id, "", args.Title, args.Summary, args.Options, wait)
+
+	sink.send(map[string]any{"type": "decision_card", "id": id, "title": args.Title, "summary": args.Summary, "options": args.Options})
+
 	timeout := time.NewTimer(wait)
 	defer timeout.Stop()
 	tick := time.NewTicker(15 * time.Second)
@@ -346,6 +349,10 @@ func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid str
 	for {
 		select {
 		case ans := <-ch:
+			// Settled with a background context on purpose: the request's ctx is
+			// about to be cancelled on the cancelled/ended paths, and losing the
+			// row's final state is exactly what persisting it was for.
+			s.settleDecision(context.WithoutCancel(ctx), sid, id, ans.Choice)
 			if ans.Choice == "cancelled" {
 				return toolResult{OK: true, Data: map[string]any{"choice": "cancelled"}}, true
 			}
@@ -355,10 +362,12 @@ func (s *Server) runProposeDecision(ctx context.Context, sink agentSink, sid str
 			}
 			return toolResult{OK: true, Data: data, Summary: args.Title}, false
 		case <-timeout.C:
+			s.settleDecision(context.WithoutCancel(ctx), sid, id, "timeout")
 			return toolResult{OK: true, Data: map[string]any{"choice": "timeout"}, Summary: args.Title}, false
 		case <-tick.C:
 			sink.ping()
 		case <-ctx.Done():
+			s.settleDecision(context.WithoutCancel(ctx), sid, id, "cancelled")
 			return toolResult{OK: true, Data: map[string]any{"choice": "cancelled"}}, true
 		}
 	}

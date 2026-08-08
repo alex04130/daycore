@@ -16,7 +16,35 @@
     tags: [plan]
     summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
-    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
+      '409':
+        description: The plan gate refused — the block is locked or has petrified.
+        content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
+/api/plan/lock:
+  post:
+    operationId: lockPlanBlock
+    tags: [plan]
+    summary: Pin a block's time by hand, or let it go — the way out of a lock refusal.
+    description: >-
+      Sets lockLevel with lockSource=user, which is what stops derivation from
+      putting the old lock back on the next write. Unlocking clears the reason:
+      "set by your class timetable" should not stay attached to something the
+      timetable no longer governs. Resetting to "derived" is deliberately not
+      offered — see docs/specs/plan-semantics.md.
+    requestBody:
+      required: true
+      content: { application/json: { schema: { type: object, required: [date, blockId, level], properties: {
+        date: { type: string },
+        blockId: { type: string },
+        level: { type: string, enum: [none, soft, hard] },
+        reason: { type: string, description: "Optional, ≤200 runes. Kept verbatim and never translated — they are the user's own words. Empty renders as the default reason for the level, in the reader's language." } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
+      '404': { description: No such block on that day. }
+      '409':
+        description: The plan gate refused — the block has petrified, so its lock is history too.
+        content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
 /api/plan/range:
   get:
     operationId: getPlanRange

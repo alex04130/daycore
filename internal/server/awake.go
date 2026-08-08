@@ -90,18 +90,17 @@ func (s *Server) markAwake(sid string) {
 	if f := s.scheduleOnUse.Load(); f != nil {
 		(*f)(sid)
 	}
-	loc := time.UTC
-	if s.cfg != nil && s.cfg.WorkerDefaultTZ != "" {
-		if l, err := time.LoadLocation(s.cfg.WorkerDefaultTZ); err == nil {
-			loc = l
-		}
-	}
-	// TODO(rhythm): per-session timezone. WORKER_DEFAULT_TZ is a deployment-wide
-	// default, so a user in another zone gets their day boundary drawn in the
-	// wrong place. Recording in the wrong zone is still better than not
-	// recording — the day key is recomputable from the minutes, a missing day is
-	// not — but this has to be fixed before the learner ships (batch ζ).
-	cfg := rhythm.DefaultConfig()
+	// The session's own zone (ζ-4). This used to be the deployment-wide
+	// WORKER_DEFAULT_TZ, which drew a user in another zone's day boundary in the
+	// wrong place — and the day boundary is the whole unit the learner works in.
+	//
+	// It reads the session on the hot path only once per awakeThrottle (five
+	// minutes), because markAwake has already passed the admission gate by the
+	// time it gets here.
+	loc := s.sessionLocation(context.Background(), sid)
+	// Shared with the learner: two independent DefaultConfig() calls would
+	// silently mis-bucket every row the day one of them changed. See rhythm_job.go.
+	cfg := rhythmConfig()
 	day, minute := rhythm.DayOf(now, loc, cfg)
 
 	s.GoTracked(func() {
@@ -110,6 +109,7 @@ func (s *Server) markAwake(sid string) {
 		if err := s.store.Rhythm().Observe(ctx, sid, day, minute); err != nil {
 			s.log.Debug("rhythm: observe failed", "sid", sid, "day", day, "err", err)
 		}
+		s.foldAwakeMark(ctx, sid, now, cfg)
 	})
 }
 
@@ -125,4 +125,47 @@ func (s *Server) SetScheduleOnUse(f func(sid string)) {
 		return
 	}
 	s.scheduleOnUse.Store(&f)
+}
+
+// foldAwakeMark advances the O(1) "how long have they been up" state.
+//
+// # Why this had to exist before the Protector could
+//
+// rhythm_profiles.run_since and last_signal_at had NO production writer. The
+// day rows were being written (Observe, above) and the two live marks were not,
+// so rhythm.Live.Run read a zero RunSince — which it correctly interprets as
+// "they are asleep" — and NeedsProtector was permanently false.
+//
+// Wiring the Protector without this would have produced a feature that compiles,
+// whose tests pass on fabricated rows, and that never once fires in production
+// with no error and no log line. That is the shape this repo has shipped six
+// times now, and it is the reason the input side goes in first.
+//
+// # Why Touch and not Save
+//
+// The row has two writers on wildly different cadences: this one, on every
+// admitted signal, and the nightly learner, which writes wake/sleep/source/days.
+// A whole-row Save from the learner would carry a snapshot of the marks taken
+// before it started and write it back minutes later, erasing a stretch that
+// began in between — and a zero RunSince reads as asleep, so the Protector would
+// forget somebody had been up for nine hours. Touch writes only the two marks,
+// and only forward.
+//
+// Best-effort, like everything else on this path: a request must not fail
+// because a rhythm mark could not be written.
+func (s *Server) foldAwakeMark(ctx context.Context, sid string, now time.Time, cfg rhythm.Config) {
+	var live rhythm.Live
+	// Both stores return ErrNotFound rather than (nil, nil) for a missing row.
+	// Treating any error as fatal here would mean the very first signal never
+	// seeds the row, silently.
+	if p, err := s.store.Rhythm().Get(ctx, sid); err == nil && p != nil {
+		live = rhythm.Live{RunSince: p.RunSince, LastSignalAt: p.LastSignalAt}
+	}
+	next := live.Observe(now, cfg)
+	if next == live {
+		return // an out-of-order signal; Observe already declined it
+	}
+	if err := s.store.Rhythm().Touch(ctx, sid, next.RunSince, next.LastSignalAt); err != nil {
+		s.log.Debug("rhythm: touch failed", "sid", sid, "err", err)
+	}
 }

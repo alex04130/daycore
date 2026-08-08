@@ -117,6 +117,12 @@ var cases = []suiteCase{
 	{"Proposal/StackIsAConjunctionNotAStamp", proposalStackIsAConjunction},
 	{"Proposal/PruneSparesPending", proposalPruneSparesPending},
 	{"Proposal/OwnerInstanceIsQueryable", proposalOwnerInstanceIsQueryable},
+	{"Attachment/RoundTripAndSessionScope", attachmentRoundTripAndScope},
+	{"Attachment/BindIsExclusiveAndIdempotent", attachmentBindOwnership},
+	{"Attachment/HydrateIsOrderedAndScoped", attachmentHydrate},
+	{"Attachment/DeleteReturnsTheRowAndSparesBound", attachmentDeleteReturnsRows},
+	{"Attachment/DeleteByThreadTakesItsBytes", attachmentDeleteByThread},
+	{"Attachment/PruneReclaimsOnlyUnsentUploads", attachmentPruneUnbound},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1504,5 +1510,269 @@ func proposalOwnerInstanceIsQueryable(t *testing.T, h Harness) {
 	// console's view of one session would quietly become "the unclaimed ones".
 	if n, _ := s.Proposals().Count(bg(), domain.ProposalFilter{SessionID: "s1"}); n != 3 {
 		t.Errorf("empty OwnerInstance filtered instead of matching any: %d", n)
+	}
+}
+
+// ── attachments (ε) ─────────────────────────────────────────────────────────
+
+func att(sid, name, mime string) *domain.Attachment {
+	return &domain.Attachment{
+		SessionID: sid, Ref: "ref-" + name, MIME: mime,
+		Kind: domain.AttachmentKindOf(mime), Size: 11, SHA256: "abc", Filename: name,
+	}
+}
+
+func mustAttach(t *testing.T, s domain.Store, a *domain.Attachment) *domain.Attachment {
+	t.Helper()
+	out, err := s.Attachments().Create(bg(), a)
+	if err != nil {
+		t.Fatalf("create attachment %q: %v", a.Filename, err)
+	}
+	return out
+}
+
+// A row with no ref is an owner record for nothing: every later check passes and
+// the failure surfaces as a 404 at read time, which reads like a missing file
+// rather than a bug at write time. Session scoping is the other half — the id is
+// the only thing a client sends, so a Get that trusted it would hand any
+// authenticated caller any upload in the installation.
+func attachmentRoundTripAndScope(t *testing.T, h Harness) {
+	s := h.Store()
+	a := mustAttach(t, s, att("s1", "a.png", "image/png"))
+	if a.ID == "" || a.CreatedAt.IsZero() {
+		t.Fatalf("create returned %+v, want an id and a timestamp", a)
+	}
+	if a.Kind != domain.AttachmentImage {
+		t.Errorf("kind = %q, want %q", a.Kind, domain.AttachmentImage)
+	}
+	got, err := s.Attachments().Get(bg(), "s1", a.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Ref != a.Ref || got.MIME != a.MIME || got.Size != a.Size ||
+		got.SHA256 != a.SHA256 || got.Filename != a.Filename {
+		t.Errorf("round trip lost fields:\n got %+v\nwant %+v", *got, *a)
+	}
+	if got.Bound() {
+		t.Error("a fresh upload reads as bound")
+	}
+	if _, err := s.Attachments().Get(bg(), "s2", a.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("another session read the attachment: err=%v", err)
+	}
+	if _, err := s.Attachments().Create(bg(), &domain.Attachment{SessionID: "s1"}); err == nil {
+		t.Error("an attachment with no ref was accepted")
+	}
+	if _, err := s.Attachments().Create(bg(), &domain.Attachment{Ref: "r"}); err == nil {
+		t.Error("an attachment with no session was accepted")
+	}
+}
+
+// One attachment on two messages would make "delete the message, delete its
+// bytes" ambiguous, and the ambiguity shows up as either a leaked blob or a
+// message rendering a broken image. Resending the same message must still work,
+// which is why the same (id, message) pair is a no-op rather than a conflict.
+func attachmentBindOwnership(t *testing.T, h Harness) {
+	s := h.Store()
+	mine := mustAttach(t, s, att("s1", "a.png", "image/png"))
+	theirs := mustAttach(t, s, att("s2", "b.png", "image/png"))
+
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{mine.ID}); err != nil {
+		t.Fatalf("bind: %v", err)
+	}
+	got, _ := s.Attachments().Get(bg(), "s1", mine.ID)
+	if got.MessageID != "m1" || got.ThreadID != "t1" {
+		t.Errorf("after bind: thread=%q message=%q", got.ThreadID, got.MessageID)
+	}
+	// Idempotent: the client resent the same message.
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{mine.ID}); err != nil {
+		t.Errorf("rebinding to the same message should be a no-op, got %v", err)
+	}
+	// A second message may not take it.
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m2", []string{mine.ID}); !errors.Is(err, domain.ErrAttachmentBound) {
+		t.Errorf("binding to a second message: err=%v, want ErrAttachmentBound", err)
+	}
+	if got, _ := s.Attachments().Get(bg(), "s1", mine.ID); got.MessageID != "m1" {
+		t.Errorf("the refused bind moved the attachment anyway: message=%q", got.MessageID)
+	}
+	// Another session's upload is invisible, so it is missing rather than taken.
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m3", []string{theirs.ID}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("binding a foreign attachment: err=%v, want ErrNotFound", err)
+	}
+	if got, _ := s.Attachments().Get(bg(), "s2", theirs.ID); got.Bound() {
+		t.Error("a foreign session bound someone else's upload")
+	}
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "", []string{mine.ID}); err == nil {
+		t.Error("bind accepted an empty message id")
+	}
+	// The cap is enforced here and not only in the handler, because the agent
+	// pipeline writes messages too.
+	many := make([]string, domain.AttachmentsPerMessage+1)
+	for i := range many {
+		many[i] = mustAttach(t, s, att("s1", "x.png", "image/png")).ID
+	}
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m9", many); !errors.Is(err, domain.ErrTooManyAttachments) {
+		t.Errorf("over the per-message cap: err=%v, want ErrTooManyAttachments", err)
+	}
+}
+
+// Hydrating a page of messages is one query, ordered by upload time so a
+// message's files render in the order the user picked them.
+func attachmentHydrate(t *testing.T, h Harness) {
+	s := h.Store()
+	first := mustAttach(t, s, att("s1", "1.png", "image/png"))
+	second := mustAttach(t, s, att("s1", "2.pdf", "application/pdf"))
+	other := mustAttach(t, s, att("s1", "3.png", "image/png"))
+	foreign := mustAttach(t, s, att("s2", "4.png", "image/png"))
+
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{first.ID, second.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m2", []string{other.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Attachments().Bind(bg(), "s2", "t9", "m1", []string{foreign.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Attachments().ListByMessages(bg(), "s1", []string{"m1", "m2", "", "m1"})
+	if err != nil {
+		t.Fatalf("hydrate: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("hydrate returned %d rows, want 3 (duplicate and empty ids must not multiply or widen the result): %+v", len(got), got)
+	}
+	if got[0].ID != first.ID || got[1].ID != second.ID {
+		t.Errorf("attachments came back out of upload order: %q then %q", got[0].Filename, got[1].Filename)
+	}
+	for _, a := range got {
+		if a.SessionID != "s1" {
+			t.Errorf("hydrate crossed sessions: %+v", a)
+		}
+	}
+	if got, err := s.Attachments().ListByMessages(bg(), "s1", nil); err != nil || len(got) != 0 {
+		t.Errorf("hydrating no messages returned %d rows (err=%v)", len(got), err)
+	}
+	// The composer's view: uploads not yet sent, newest first, mine only.
+	pending := mustAttach(t, s, att("s1", "5.png", "image/png"))
+	un, err := s.Attachments().ListUnbound(bg(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(un) != 1 || un[0].ID != pending.ID {
+		t.Errorf("unbound list = %+v, want just the pending upload", un)
+	}
+}
+
+// Delete returns the row because the caller — and only the caller — has the file
+// bus. A repository that dropped the row and said "ok" would leak the bytes
+// forever with nothing left in the database to find them by.
+func attachmentDeleteReturnsRows(t *testing.T, h Harness) {
+	s := h.Store()
+	loose := mustAttach(t, s, att("s1", "loose.png", "image/png"))
+	sent := mustAttach(t, s, att("s1", "sent.png", "image/png"))
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{sent.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	gone, err := s.Attachments().Delete(bg(), "s1", loose.ID)
+	if err != nil {
+		t.Fatalf("delete unbound: %v", err)
+	}
+	if gone == nil || gone.Ref != loose.Ref {
+		t.Fatalf("delete returned %+v, want the row so its bytes can go too", gone)
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", loose.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("deleted attachment still readable: %v", err)
+	}
+	// A bound attachment belongs to a message now; the door out is the message.
+	if _, err := s.Attachments().Delete(bg(), "s1", sent.ID); !errors.Is(err, domain.ErrAttachmentBound) {
+		t.Errorf("deleting a bound attachment: err=%v, want ErrAttachmentBound", err)
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", sent.ID); err != nil {
+		t.Errorf("the refused delete removed it anyway: %v", err)
+	}
+	if _, err := s.Attachments().Delete(bg(), "s2", sent.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("cross-session delete: err=%v, want ErrNotFound", err)
+	}
+}
+
+// Deleting a conversation takes its bytes with it. Without this, the only record
+// of those blobs disappears with the messages and nothing can ever reclaim them.
+func attachmentDeleteByThread(t *testing.T, h Harness) {
+	s := h.Store()
+	a := mustAttach(t, s, att("s1", "a.png", "image/png"))
+	b := mustAttach(t, s, att("s1", "b.png", "image/png"))
+	elsewhere := mustAttach(t, s, att("s1", "c.png", "image/png"))
+	foreign := mustAttach(t, s, att("s2", "d.png", "image/png"))
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{a.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m2", []string{b.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Attachments().Bind(bg(), "s1", "t2", "m3", []string{elsewhere.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Attachments().Bind(bg(), "s2", "t1", "m4", []string{foreign.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	gone, err := s.Attachments().DeleteByThread(bg(), "s1", "t1")
+	if err != nil {
+		t.Fatalf("delete by thread: %v", err)
+	}
+	if len(gone) != 2 {
+		t.Fatalf("returned %d rows, want the 2 that were removed: %+v", len(gone), gone)
+	}
+	for _, a := range gone {
+		if a.Ref == "" {
+			t.Error("a returned row has no ref, so its bytes cannot be deleted")
+		}
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", elsewhere.ID); err != nil {
+		t.Errorf("another thread's attachment was removed: %v", err)
+	}
+	if _, err := s.Attachments().Get(bg(), "s2", foreign.ID); err != nil {
+		t.Errorf("another session's thread t1 was removed: %v", err)
+	}
+	if gone, err := s.Attachments().DeleteByThread(bg(), "s1", "t1"); err != nil || len(gone) != 0 {
+		t.Errorf("deleting an already-empty thread returned %d rows (err=%v)", len(gone), err)
+	}
+}
+
+// An upload nobody sent is reclaimable; a sent one never is. The cutoff is
+// absolute rather than a duration so the sweeper and the test agree on "old"
+// without either of them waiting.
+func attachmentPruneUnbound(t *testing.T, h Harness) {
+	s := h.Store()
+	loose := mustAttach(t, s, att("s1", "loose.png", "image/png"))
+	sent := mustAttach(t, s, att("s1", "sent.png", "image/png"))
+	if err := s.Attachments().Bind(bg(), "s1", "t1", "m1", []string{sent.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing is older than an hour ago yet.
+	if gone, err := s.Attachments().PruneUnbound(bg(), time.Now().Add(-time.Hour)); err != nil || len(gone) != 0 {
+		t.Fatalf("prune with an old cutoff removed %d rows (err=%v) — the cutoff is not being applied", len(gone), err)
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", loose.ID); err != nil {
+		t.Fatalf("the no-op prune removed the upload anyway: %v", err)
+	}
+
+	gone, err := s.Attachments().PruneUnbound(bg(), time.Now().Add(time.Hour))
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if len(gone) != 1 || gone[0].ID != loose.ID {
+		t.Fatalf("prune returned %+v, want exactly the unsent upload", gone)
+	}
+	if gone[0].Ref == "" {
+		t.Error("the pruned row has no ref, so its bytes stay on disk forever")
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", loose.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("pruned attachment still readable: %v", err)
+	}
+	if _, err := s.Attachments().Get(bg(), "s1", sent.ID); err != nil {
+		t.Errorf("prune reclaimed an attachment that belongs to a message: %v", err)
 	}
 }

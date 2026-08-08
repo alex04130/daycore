@@ -45,7 +45,7 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 		TargetWeekday string `json:"targetWeekday"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIPlanText.bad_request")
 		return
 	}
 	if strings.TrimSpace(body.Description) == "" {
@@ -63,7 +63,7 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 		RelativeDateMap: dc.RelativeDateMap,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIPlanText.internal")
 		return
 	}
 
@@ -123,7 +123,7 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 		TargetDate  string `json:"targetDate"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIPlanImage.bad_request")
 		return
 	}
 	if body.ImageBase64 == "" {
@@ -143,7 +143,7 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 		Date: dc.Date, Weekday: dc.Weekday, Time: dc.Time, Timezone: dc.Timezone,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIPlanImage.internal")
 		return
 	}
 
@@ -203,7 +203,7 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 		Timezone    string `json:"timezone"`
 	}
 	if err := s.readJSON(r, &body); err != nil {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "请求格式错误")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIExtractScheduleImage.bad_request")
 		return
 	}
 	if body.ImageBase64 == "" {
@@ -223,7 +223,7 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 		Date: dc.Date, Weekday: dc.Weekday, Time: dc.Time, Timezone: dc.Timezone,
 	})
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aIExtractScheduleImage.internal")
 		return
 	}
 

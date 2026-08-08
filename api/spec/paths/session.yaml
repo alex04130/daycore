@@ -35,11 +35,13 @@
   get:
     operationId: getPreferences
     tags: [session]
-    summary: Get the proactive-feature toggles, category overrides and language pair.
+    summary: Get the proactive-feature toggles, timezone, category overrides and language pair.
     responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
   patch:
     operationId: setPreferences
     tags: [session]
-    summary: Partial update of toggles, category overrides and language pair.
+    summary: Partial update of toggles, timezone, category overrides and language pair.
     requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
-    responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+      '400': { description: "bad_timezone (not an IANA zone this build can load), bad_category, or unsupported_locale." }

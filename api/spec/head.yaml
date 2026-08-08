@@ -25,9 +25,11 @@ servers:
 tags:
   - { name: session }
   - { name: plan }
+  - { name: proposals }
   - { name: rules }
   - { name: ai }
   - { name: chat }
+  - { name: files }
   - { name: materials }
   - { name: wishes }
   - { name: inbox }

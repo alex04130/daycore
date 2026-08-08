@@ -331,6 +331,22 @@ func (mysqlDialect) Migrations() []string {
 			created_at BIGINT NOT NULL,
 			KEY chat_messages_thread (thread_id, created_at)
 		)`,
+		`CREATE TABLE IF NOT EXISTS attachments (
+			id VARCHAR(191) PRIMARY KEY,
+			session_id VARCHAR(191) NOT NULL,
+			thread_id VARCHAR(191) NOT NULL DEFAULT '',
+			message_id VARCHAR(191) NOT NULL DEFAULT '',
+			ref TEXT NOT NULL,
+			kind VARCHAR(32) NOT NULL DEFAULT 'file',
+			mime VARCHAR(191) NOT NULL DEFAULT '',
+			size BIGINT NOT NULL DEFAULT 0,
+			sha256 VARCHAR(64) NOT NULL DEFAULT '',
+			filename VARCHAR(255) NOT NULL DEFAULT '',
+			created_at BIGINT NOT NULL,
+			KEY attachments_message (session_id, message_id, created_at),
+			KEY attachments_thread (session_id, thread_id),
+			KEY attachments_sweep (message_id, created_at)
+		)`,
 		`CREATE TABLE IF NOT EXISTS ai_call_logs (
 			id VARCHAR(191) PRIMARY KEY,
 			session_id VARCHAR(191) NOT NULL,

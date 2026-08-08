@@ -21,7 +21,7 @@ import (
 
 func patchOne(t *testing.T, s *Server, sid, date, blockID, actor string) {
 	t.Helper()
-	_, _, matched, err := s.applyPlanPatch(context.Background(), sid, date, planAction{
+	_, _, matched, err := s.applyPlanPatch(context.Background(), sid, date, "zh-CN", planAction{
 		Action:  "update",
 		Match:   map[string]any{"id": blockID},
 		Changes: map[string]any{"title": "改过了"},

@@ -20,7 +20,7 @@
 
 ### B. SSE v2 帧协议（唯一 SSE 端点：`POST /api/ai/companion`）
 
-请求体 `{ message, timezone, assistantName, threadId?, conversationHistory? }`。有 `threadId` 时后端加载**并持久化**该线程历史（多轮上下文跨请求累积）；无 `threadId` 时用 `conversationHistory`（role 仅 user/assistant 被接受，`system` 被强制降级为 user）。
+请求体 `{ message, timezone, assistantName, threadId?, attachmentIds?, conversationHistory? }`。有 `threadId` 时后端加载**并持久化**该线程历史（多轮上下文跨请求累积）；无 `threadId` 时用 `conversationHistory`（role 仅 user/assistant 被接受，`system` 被强制降级为 user）。带了 `attachmentIds` 时 `message` 可以为空 —— 丢一张图不说话是一句完整的话。
 
 响应 `text/event-stream`，每帧 `data: {json}\n\n`，按 `type` 区分（**不再有 `[DONE]`**）：
 
@@ -38,6 +38,31 @@
 **Agent 不再用 XML 标签**：所有计划/规则/记忆变更由后端 agent 通过 15 个工具（get_weather/web_search/list_upcoming/plan_add/plan_update/plan_remove/rule_upsert/rule_remove/memory_add/memory_remove/propose_decision + **β0+ 补的四个捕捉工具** assignment_upsert/wish_add/mood_record/material_add，max 6 轮）执行，前端只需渲染 `tool_start`/`tool_result` 动作卡，**不再解析 `<plan_update>` 等标签、不再自己发 PATCH**。撤销用 `tool_result.opId` → `POST /api/ops/{id}/revert`。
 
 **决策卡时序**：`decision_card` 发出后 agent 阻塞 ≤45s（期间 `: ping` 保活）→ 前端弹卡 → 用户选 → `POST /api/decisions/{id}/respond` → 后端解阻塞、流继续 → `done`。不选也可（超时/新消息取消）。一 session 同时仅一张待响应卡。
+
+### B2. 附件（ε 批次，2026-08-06）
+
+三步，没有第四步：**上传 → 拿 id → 发消息时带上 id**。
+
+1. `POST /api/files?filename=<原名>`，**请求体就是文件原始字节**，类型放 `Content-Type`。不是 multipart，不是 base64 JSON。浏览器侧就是：
+   ```js
+   const r = await fetch('/api/files?filename=' + encodeURIComponent(f.name),
+     { method: 'POST', headers: { 'Content-Type': f.type }, body: f, credentials: 'include' })
+   const { id, kind, mime, size, filename } = await r.json()   // 201
+   ```
+2. `POST /api/ai/companion`（或 `/async`）带 `attachmentIds: [id, ...]`，最多 20 个。
+3. 渲染：消息的 `attachments[]` 由后端读时水合；图片直接 `<img src="/api/files/{id}">`，其它类型给个下载链接（`?download=1` 强制另存）。
+
+**永远拿不到存储 ref，只有 id。** 后端查了会话才把 id 解析成字节 —— 这是文件总线的全部鉴权，别去猜 ref 的形状，它是不透明的、且不会出现在任何响应里。
+
+| 要点 | 说明 |
+|---|---|
+| `kind` | `image` / `audio` / `video` / `document` / `file`，**闭集**。按它决定怎么渲染，不要自己解析 MIME |
+| 没发出去的上传 | `GET /api/files` 列出来（重新加载后恢复 composer），`DELETE /api/files/{id}` 撤掉，**24 小时后自动回收** |
+| 发出去之后 | 附件归那条消息了，`DELETE /api/files/{id}` 返回 409 —— 删消息才能删它 |
+| `features.files` | `GET /api/version` 里的这一位是 false 就**别画回形针**：这个部署没配 `BLOB_STORE`，上传一律 503 |
+| 模型读不了的类型 | 后端不会静默丢，会把文件名念给模型听，所以助手会说「我看不到这个文件的内容」而不是编 |
+| 上限 | `MAX_UPLOAD_BYTES` 默认 32 MiB（超了 413）；进模型的内联上限另有一个 `MAX_IMAGE_BYTES`（默认 8 MiB），超了走「读不了」那条路 |
+| ETag | 是内容 SHA-256，`If-None-Match` 精确命中给 304 |
 
 ### C. 时区显示（TimeBlock.timeMode）
 
@@ -69,7 +94,7 @@
 
 ### G. 前后端分离 / 原生端：版本契约 + header 认证（2026-07-14 新增）
 
-**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, features, locales}`。`features` 是能力发现（`vision`/`transcribe`/`tts`/`imagegen` 各 bool，由模型目录实时派生）：false = 本部署没有这个能力，端据此开关 UI，不要硬编码假设。
+**版本契约 `GET /api/version`（公开）**：`{apiVersion, apiMinor, build, channel, minClient, features, locales}`。`features` 是能力发现（`vision`/`transcribe`/`tts`/`imagegen` 由模型目录实时派生，`files` 由有没有配 `BLOB_STORE` 决定）：false = 本部署没有这个能力，端据此开关 UI，不要硬编码假设。
 
 - `apiVersion` = API 契约大版本，只在破坏性变更时 +1，**独立于构建版本**。客户端硬编码自己期望的值，不等 → 硬阻断并提示升级（web 前端把它存 `state.apiMismatch`）。
 - `apiMinor` = 新增性变更（加端点/字段）+1；客户端可据此对可选功能降级。
@@ -89,7 +114,7 @@
 - 主副相同会被拒（`400 unsupported_locale`）—— 在自己和自己之间切换的按钮什么都不做。
 - 写 `language` 时值必须在用户自己那两种里，否则 `400`；但**读永远不失败** —— 落在配对外的存量值会被静默钳到主语言，换配对不会让谁的设置页打不开。改配对时后端顺手把 `language` 拉回配对内。
 
-> ⚠️ 历史说明：`locales` 落地当时**没有单独升 `apiMinor`**，理由是把散在各批次的提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。后来 `contract-lock.json` + `CheckVersion`（「自上次冻结以来至少动过一次」）接管了这条纪律，`APIMinor` 现在是 **2**（β0+ 加 `features` 时升的）。冻结点仍在 η。
+> ⚠️ 历史说明：`locales` 落地当时**没有单独升 `apiMinor`**，理由是把散在各批次的提升合并到 SPEC-FREEZE 一次做完，否则会撞出 1.1/1.2/1.3 三个真源。后来 `contract-lock.json` + `CheckVersion`（「自上次冻结以来至少动过一次」）接管了这条纪律，`APIMinor` 现在是 **6**（ε 批次加文件总线端点与 `attachmentIds` 时升的）。冻结点仍在 η。
 
 **双轨认证（cookie 全保留，header 新增；分离部署/原生端主推 header）**：
 

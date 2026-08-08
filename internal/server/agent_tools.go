@@ -85,11 +85,11 @@ func visiblePlan(dp *domain.DayPlan) *domain.DayPlan {
 func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, call ai.ToolCall) toolResult {
 	switch call.Name {
 	case "plan_add":
-		return s.toolPlanAdd(ctx, sid, tz, call.Arguments)
+		return s.toolPlanAdd(ctx, sid, locale, tz, call.Arguments)
 	case "plan_update":
-		return s.toolPlanPatch(ctx, sid, call.Arguments, "update")
+		return s.toolPlanPatch(ctx, sid, locale, call.Arguments, "update")
 	case "plan_remove":
-		return s.toolPlanPatch(ctx, sid, call.Arguments, "remove")
+		return s.toolPlanPatch(ctx, sid, locale, call.Arguments, "remove")
 	case "rule_upsert":
 		return s.toolRuleUpsert(ctx, sid, tz, call.Arguments)
 	case "rule_remove":

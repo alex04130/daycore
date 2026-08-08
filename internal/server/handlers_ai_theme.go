@@ -37,7 +37,7 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 		ThemeID     string `json:"themeId"` // existing custom theme to edit
 	}
 	if err := s.readJSON(r, &body); err != nil || strings.TrimSpace(body.Description) == "" {
-		s.writeErr(w, http.StatusBadRequest, "bad_request", "缺少 description")
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aITheme.bad_request")
 		return
 	}
 
@@ -51,11 +51,11 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 	if body.ThemeID != "" {
 		cur, err := s.store.Themes().Get(ctx, sid, body.ThemeID)
 		if errors.Is(err, domain.ErrNotFound) {
-			s.writeErr(w, http.StatusNotFound, "theme_not_found", "没有这个主题")
+			s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "theme_not_found", "err.aITheme.theme_not_found")
 			return
 		}
 		if err != nil {
-			s.writeErr(w, http.StatusInternalServerError, "internal", "读取主题失败")
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aITheme.internal")
 			return
 		}
 		data.CurrentName = cur.Name
@@ -76,7 +76,7 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 
 	sys, err := s.prompts.Render(ctx, ai.PromptThemeGen, s.requestLocale(r), data)
 	if err != nil {
-		s.writeErr(w, http.StatusInternalServerError, "internal", "提示词渲染失败")
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.aITheme.internal2")
 		return
 	}
 	provider := s.catalog.DefaultChat()

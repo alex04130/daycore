@@ -31,9 +31,11 @@ servers:
 tags:
   - { name: session }
   - { name: plan }
+  - { name: proposals }
   - { name: rules }
   - { name: ai }
   - { name: chat }
+  - { name: files }
   - { name: materials }
   - { name: wishes }
   - { name: inbox }
@@ -92,14 +94,16 @@ paths:
     get:
       operationId: getPreferences
       tags: [session]
-      summary: Get the proactive-feature toggles, category overrides and language pair.
+      summary: Get the proactive-feature toggles, timezone, category overrides and language pair.
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
     patch:
       operationId: setPreferences
       tags: [session]
-      summary: Partial update of toggles, category overrides and language pair.
+      summary: Partial update of toggles, timezone, category overrides and language pair.
       requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+        '400': { description: "bad_timezone (not an IANA zone this build can load), bad_category, or unsupported_locale." }
 
   # ─── plan ─────────────────────────────────────────────────────────────────
   /api/plan:
@@ -120,7 +124,35 @@ paths:
       tags: [plan]
       summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
-      responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
+        '409':
+          description: The plan gate refused — the block is locked or has petrified.
+          content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
+  /api/plan/lock:
+    post:
+      operationId: lockPlanBlock
+      tags: [plan]
+      summary: Pin a block's time by hand, or let it go — the way out of a lock refusal.
+      description: >-
+        Sets lockLevel with lockSource=user, which is what stops derivation from
+        putting the old lock back on the next write. Unlocking clears the reason:
+        "set by your class timetable" should not stay attached to something the
+        timetable no longer governs. Resetting to "derived" is deliberately not
+        offered — see docs/specs/plan-semantics.md.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [date, blockId, level], properties: {
+          date: { type: string },
+          blockId: { type: string },
+          level: { type: string, enum: [none, soft, hard] },
+          reason: { type: string, description: "Optional, ≤200 runes. Kept verbatim and never translated — they are the user's own words. Empty renders as the default reason for the level, in the reader's language." } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
+        '404': { description: No such block on that day. }
+        '409':
+          description: The plan gate refused — the block has petrified, so its lock is history too.
+          content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
   /api/plan/range:
     get:
       operationId: getPlanRange
@@ -128,6 +160,54 @@ paths:
       summary: Batch fetch [from,to] with rule occurrences merged per date.
       parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
+
+  # ─── proposals ────────────────────────────────────────────────────────────
+  /api/proposals:
+    get:
+      operationId: listProposals
+      tags: [proposals]
+      summary: What is waiting on the user — the card stack.
+      description: >-
+        Defaults to the stack: pending, already delivered, and not yet lapsed.
+        That conjunction is the point — deliveredAt is a permanent stamp, so
+        asking about it alone would return every card this session was ever shown.
+        Pass all=1 for the console view of everything.
+      parameters:
+        - { name: all, in: query, schema: { type: string, enum: ["1"] }, description: Everything this session ever had, newest first. }
+        - { name: level, in: query, schema: { type: string, enum: [L1, L2, L3] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { proposals: { type: array, items: { $ref: '#/components/schemas/Proposal' } } } } } } }
+  /api/proposals/{id}/respond:
+    post:
+      operationId: respondProposal
+      tags: [proposals]
+      summary: Answer a card nobody is blocked on.
+      description: >-
+        Distinct from POST /api/decisions/{id}/respond, which unblocks an agent
+        turn waiting right now. Both write the same row. An empty or "reject"
+        choice rejects; anything else accepts and marks that row.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { choice: { type: string }, text: { type: string } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+        '404': { description: No such card. }
+        '409': { description: Already answered, or expired. }
+  /api/plan/conflict:
+    post:
+      operationId: markPlanConflict
+      tags: [proposals]
+      summary: "\u6807\u8bb0\u51b2\u7a81 \u2014 the third way out of a lock refusal."
+      description: >-
+        For when neither taking leave nor unlocking is right: the class really is
+        immovable AND something else really does need that time. Creates a
+        decision card rather than resolving it, because the system does not know
+        which of the two matters more. Refuses with 422 if nothing actually
+        overlaps — a card claiming a conflict that is not there teaches the user
+        to distrust the cards.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, blockId], properties: { date: { type: string }, blockId: { type: string } } } } } }
+      responses:
+        '200': { description: The card that was created., content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+        '422': { description: Nothing else wants that time. }
 
   # ─── rules ────────────────────────────────────────────────────────────────
   /api/rules:
@@ -170,7 +250,7 @@ paths:
         error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
         FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
         history; client roles are whitelisted to user/assistant.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message], properties: { message: { type: string }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
       responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
   /api/ai/companion/async:
     post:
@@ -185,7 +265,7 @@ paths:
         appear in the placeholder's toolEvents while still pending — answer it
         via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
         threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [message, threadId], properties: { message: { type: string }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
       responses:
         '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -298,6 +378,75 @@ paths:
   /api/companion-history:
     get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
     post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
+
+  # ─── files ────────────────────────────────────────────────────────────────
+  /api/files:
+    post:
+      operationId: uploadFile
+      tags: [files]
+      summary: Upload bytes and get an attachment id back.
+      description: >-
+        The body is the file's RAW BYTES with its type in Content-Type — not
+        multipart and not base64 JSON. From a browser that is
+        `fetch(url, {method:'POST', headers:{'Content-Type': file.type}, body: file})`.
+        The response never contains a storage ref: the id is the only handle, and
+        the server resolves it to bytes only for the session that uploaded them.
+        An upload is unbound until it rides along with a chat message
+        (POST /api/ai/companion with attachmentIds); unbound uploads are reclaimed
+        after 24 hours. 503 when the deployment has no BLOB_STORE configured,
+        which is a supported configuration rather than a fault.
+      parameters:
+        - { name: filename, in: query, schema: { type: string }, description: "Original name, shown to the user and echoed in Content-Disposition. Sanitised server-side." }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '201': { description: Stored., content: { application/json: { schema: { $ref: '#/components/schemas/Attachment' } } } }
+        '400': { description: No Content-Type, or zero bytes. }
+        '413': { description: Over MAX_UPLOAD_BYTES. }
+        '503': { description: This deployment has no file bus. }
+    get:
+      operationId: listPendingFiles
+      tags: [files]
+      summary: Uploads not yet sent — what a composer restores after a reload.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { files: { type: array, items: { $ref: '#/components/schemas/Attachment' } } } } } } }
+  /api/files/{id}:
+    get:
+      operationId: downloadFile
+      tags: [files]
+      summary: The bytes.
+      description: >-
+        Always proxied, never a redirect to a signed URL — a client that had to
+        handle both shapes would only ever be tested against one. Served with
+        nosniff and a sandbox CSP because these are user-supplied bytes on the
+        app's own origin. ETag is the content SHA-256, so If-None-Match is exact.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: download, in: query, schema: { type: string, enum: ["1"] }, description: "Force Content-Disposition: attachment." }
+      responses:
+        '200': { description: OK, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '304': { description: Matched If-None-Match. }
+        '404': { description: No such attachment in this session. }
+        '410': { description: The row outlived its bytes. }
+        '503': { description: This deployment has no file bus. }
+    delete:
+      operationId: deleteFile
+      tags: [files]
+      summary: Drop an upload that was never sent.
+      description: >-
+        Only unbound uploads. Once an attachment belongs to a message the way to
+        remove it is to remove the message — otherwise a message would render a
+        file that is no longer there.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: Deleted, row and bytes. }
+        '404': { description: No such attachment in this session. }
+        '409': { description: It belongs to a message now. }
 
   # ─── materials ────────────────────────────────────────────────────────────
   /api/materials:
@@ -697,10 +846,11 @@ paths:
         defaultPrimary/defaultSecondary are what a brand-new user starts with;
         a signed-in user's own pair comes from GET /api/session/preferences.
 
-        features is capability discovery: what this deployment's model catalog
-        can do (vision / transcribe / tts / imagegen), derived live. False means
+        features is capability discovery: what this deployment can do
+        (vision / transcribe / tts / imagegen from the model catalog, files from
+        whether a BLOB_STORE is configured), derived live. False means
         "not available here" — clients gate UI on it rather than assuming.
-      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { apiVersion: { type: integer }, apiMinor: { type: integer }, build: { type: string }, channel: { type: string }, minClient: { type: string }, features: { type: object, description: "Capability discovery, derived live from the model catalog; false = not available on this deployment.", properties: { vision: { type: boolean }, transcribe: { type: boolean }, tts: { type: boolean }, imagegen: { type: boolean }, files: { type: boolean, description: "POST /api/files works. False when no BLOB_STORE is configured — do not show an attach control." } } }, locales: { type: object, properties: { available: { type: array, items: { type: string }, example: ["en-US", "zh-CN"] }, defaultPrimary: { type: string, example: "zh-CN" }, defaultSecondary: { type: string, example: "en-US" } } } } } } } } }
 
 components:
   securitySchemes:
@@ -778,6 +928,95 @@ components:
         action: { type: string, enum: [add, update, remove] }
         match: { type: object, additionalProperties: true, description: "e.g. {id}" }
         changes: { type: object, additionalProperties: true }
+        confirm:
+          type: boolean
+          description: >-
+            The way through a soft lock: the user was told this one was agreed
+            with someone else and said go ahead. Does nothing for a hard lock or
+            a petrified block — those have no way through, and a flag that
+            opened them would make the gate advisory. See docs/specs/plan-semantics.md.
+    Proposal:
+      type: object
+      description: >-
+        Everything the agent wants to do but has not done — or has done and is
+        still offering to undo. Ghosts, cards, decision cards and channel
+        approvals are all this, seen from different ends. Semantics in
+        docs/specs/plan-semantics.md §three.
+      properties:
+        id: { type: string }
+        state:
+          type: string
+          enum: [pending, accepted, rejected, expired]
+          description: >-
+            Four, not three. A silent expiry must stay distinguishable from a
+            deliberate no — the ledger keeps everything, and an expired offer
+            was never seen.
+        level: { type: string, enum: [L1, L2, L3], description: The attention ladder. L0 never becomes a proposal. }
+        kind: { type: string, enum: [timed, card, decision] }
+        title: { type: string }
+        summary: { type: string }
+        reason: { type: string }
+        evidence: { type: string }
+        date: { type: string }
+        start: { type: string, description: "HH:MM" }
+        dur: { type: integer, nullable: true }
+        btype: { type: string }
+        lockLevel: { type: string }
+        lockReason: { type: string }
+        rows:
+          type: array
+          description: A compound card, each line accepted or rejected on its own.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              state: { type: string, enum: [pending, accepted, rejected, expired] }
+        sessionId: { type: string }
+        mergeKey: { type: string, description: Same key → only the newest undelivered survives. }
+        deliverAfter: { type: string, format: date-time }
+        deliveredAt:
+          type: string
+          format: date-time
+          description: >-
+            A PERMANENT stamp; nothing clears it. "How many cards are in the
+            stack" is a conjunction (pending + delivered + still deliverable),
+            not a question about this field.
+        pushedAt: { type: string, format: date-time, description: What the ≤3/day push budget counts. }
+        ttlPolicy:
+          type: string
+          enum: [silence_accepts, silence_rejects]
+          description: >-
+            Acted first → silence confirms; asked first → silence voids.
+            Backwards, one of these executes unattended work and the other
+            discards an undo window.
+        expiresAt: { type: string, format: date-time }
+        resolution: { type: string, enum: [user, silence, superseded] }
+        origin: { type: string, enum: [agent, daemon, upload, protector, user] }
+        threadId: { type: string }
+        rev: { type: integer, description: Optimistic concurrency — row-level accepts race otherwise. }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    PlanBlocked:
+      type: object
+      description: >-
+        409 body when the plan gate refuses a write. 409 rather than 403 because
+        nothing about the caller is wrong — the request conflicts with the state
+        of the block it names, and that state can change.
+      required: [error, code, message, blockId, confirmable]
+      properties:
+        error: { type: string, enum: [blocked] }
+        code:
+          type: string
+          enum: [locked, petrified]
+          description: Which rule refused. `petrified` means the day has turned; `locked` means the slot is not the user's to move.
+        message: { type: string, description: Localized, ready to show. }
+        blockId: { type: string }
+        confirmable:
+          type: boolean
+          description: Re-sending with `action.confirm` would succeed. True only for soft locks.
+        lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
+        lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
     Session:
       type: object
@@ -805,6 +1044,24 @@ components:
           type: object
           additionalProperties: { type: boolean }
           description: "Per-category enablement overrides (id → on/off); missing = registry default. Unknown ids and note:false are rejected (400 bad_category)."
+        timezone:
+          type: string
+          description: >
+            The IANA zone this user's own day is measured in — it decides when
+            the petrify line falls, where their rhythm day boundary sits, and
+            what time the morning brief arrives. Empty means "follow the device,
+            and until it reports, the deployment default" (WORKER_DEFAULT_TZ).
+            Setting it here is the USER choosing, which outranks whatever their
+            device reports from then on; send "" to go back to following the
+            device. A client also reports its zone implicitly via the timezone
+            field on POST /api/ai/companion, which fills in or updates a
+            device-detected value but never overwrites this one. 400
+            bad_timezone if it is not a zone this build can load.
+        timezoneSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
         primaryLocale:
           type: string
           description: >
@@ -917,6 +1174,25 @@ components:
         content: { type: string }
         toolEvents: { type: string, description: "JSON array of SSE v2 frames (tool_start/tool_result/decision_card/error) for replay." }
         status: { type: string, enum: ["", pending, done, error], description: "Async turn state. Empty (rows predating the field) reads as done. pending = agent still running (a decision_card may appear in toolEvents while pending — answer via POST /api/decisions/{id}/respond)." }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: "Files sent with this message. Hydrated on read from their own table — not a column." }
+        createdAt: { type: string, format: date-time }
+    Attachment:
+      type: object
+      description: >-
+        A file on the bus, addressed by id. The storage ref is deliberately
+        absent from this schema and from every response: it is a bearer handle
+        minted by a store that has no notion of who is asking, so the server
+        resolves id → ref itself after checking the session.
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        threadId: { type: string, description: "Set once bound to a message." }
+        messageId: { type: string, description: "Empty while the upload has not been sent." }
+        kind: { type: string, enum: [image, audio, video, document, file], description: "What to render. A closed set so a client never has to know that image/avif is an image." }
+        mime: { type: string }
+        size: { type: integer, format: int64 }
+        sha256: { type: string, description: "Of the stored bytes; also the ETag on download." }
+        filename: { type: string }
         createdAt: { type: string, format: date-time }
     CustomTheme:
       type: object
