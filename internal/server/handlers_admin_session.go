@@ -177,10 +177,11 @@ func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 // header path serves. A browser always sends it on a cross-origin request, which
 // is the case being screened.
 //
-// ⚠️ Deployment note that belongs next to this code: behind a proxy the process
-// should listen on 127.0.0.1 (HOST=127.0.0.1). If it is also reachable directly,
-// an attacker can address it on its own port and bypass whatever the proxy
-// enforces — including rate limits and TLS.
+// Deployment note: in a real proxied install the upstream port is not exposed
+// anyway (compose does not publish it, bare metal binds loopback), so this needs
+// no special care. The thing to avoid is running a proxy AND publishing the app
+// port on the same host — then the proxy is optional from the attacker's side,
+// and with it go the rate limits and the TLS.
 func (s *Server) sameOriginRequest(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {

@@ -21,6 +21,7 @@ import (
 	"daycore/internal/channels"
 	"daycore/internal/channels/onebot"
 	"daycore/internal/config"
+	"daycore/internal/domain"
 	"daycore/internal/search"
 	"daycore/internal/server"
 	"daycore/internal/storage"
@@ -85,14 +86,31 @@ func run(logger *slog.Logger) error {
 		logger.Warn("using INSECURE development secrets — set APP_ENV=production with real JWT_SECRET/COOKIE_SECRET/ADMIN_TOKEN before exposing to any network")
 	}
 
+	// Storage. A failure here no longer takes the process with it — see
+	// internal/server/degraded.go for why, and for what is served instead.
+	//
+	// The short version: dying means a crash loop under any supervisor, the only
+	// evidence is a log line somebody has to know to look for, and the screen
+	// that would let you FIX the configuration is served by the process that
+	// keeps dying.
+	var degradedReason string
 	store, err := storage.Open(cfg.DBType, cfg.DBDSN)
 	if err != nil {
-		return fmt.Errorf("open db (%s): %w", cfg.DBType, err)
+		degradedReason = fmt.Sprintf("open db (%s): %v", cfg.DBType, err)
+		store = nil
 	}
-	defer store.Close()
-
-	if err := store.Migrate(context.Background()); err != nil {
-		return fmt.Errorf("migrate: %w", err)
+	if store != nil {
+		defer store.Close()
+		if err := store.Migrate(context.Background()); err != nil {
+			// Migrating is where a wrong DSN, a missing permission or an
+			// incompatible schema usually surfaces — later than Open, and just
+			// as fatal to every feature.
+			degradedReason = fmt.Sprintf("migrate: %v", err)
+		}
+	}
+	if degradedReason != "" {
+		logger.Error("STORAGE UNAVAILABLE — starting in degraded mode: the admin console is served, everything else answers 503. Fix the configuration and restart.",
+			"reason", degradedReason)
 	}
 	// Best-effort migrations (native FTS) log warnings instead of failing.
 	if ws, ok := store.(interface{ MigrationWarnings() []string }); ok {
@@ -103,7 +121,8 @@ func run(logger *slog.Logger) error {
 
 	// A crash leaves async companion placeholders stuck in "pending" forever —
 	// sweep them to "error" so clients stop polling.
-	if n, err := store.Chats().FailPendingMessages(context.Background()); err != nil {
+	if store == nil {
+	} else if n, err := store.Chats().FailPendingMessages(context.Background()); err != nil {
 		// Was swallowed by `err == nil && n > 0`: a database that pings but whose
 		// tables are broken failed here with no trace at all. Not fatal — the
 		// sweep is a convenience, and clients time out on their own — but it must
@@ -124,7 +143,14 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("load oauth providers: %w", err)
 	}
 
-	prompts, err := ai.NewPromptService(store.Prompts())
+	// A nil repository means "embedded and disk only" — which is exactly right in
+	// degraded mode: the prompts still render, they just cannot be overridden
+	// from the console until storage is back.
+	var promptRepo domain.PromptRepository
+	if store != nil {
+		promptRepo = store.Prompts()
+	}
+	prompts, err := ai.NewPromptService(promptRepo)
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
@@ -193,11 +219,25 @@ func run(logger *slog.Logger) error {
 		Logger:   logger,
 	})
 
+	if degradedReason != "" {
+		srv.EnterDegraded(degradedReason)
+	}
+
 	// Pull the database layer of the message catalog. Best-effort: a translation
 	// override that cannot be read is a degraded language, not a reason to refuse
 	// to boot — the file and embedded layers still render every page.
-	if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
-		logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
+	if store != nil {
+		if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
+			logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
+		}
+	}
+
+	// Everything below reads or writes rows on a timer. In degraded mode it would
+	// be a loop logging the same failure every interval — noise on top of a
+	// problem the operator already knows about, and every tick another chance to
+	// nil-dereference. The console is what this process is for right now.
+	if store == nil {
+		return serveDegraded(logger, cfg, srv)
 	}
 
 	// Background cleanup for stale temp-context entries + expired binding tokens.
@@ -339,5 +379,41 @@ func run(logger *slog.Logger) error {
 			logger.Warn("background agents did not finish before shutdown deadline", "err", werr)
 		}
 		return err
+	}
+}
+
+// serveDegraded runs the HTTP server with no storage behind it.
+//
+// A separate, much shorter path rather than a set of `if store != nil` guards
+// through the normal one: there is no worker, no lease, no sweep and no channel
+// consumer here, and threading nil past all of them would leave five places
+// where a future change reintroduces the crash. What this process does is
+// answer, at the address the operator already knows, with what is wrong.
+func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) error {
+	httpSrv := &http.Server{
+		Addr:              cfg.ListenAddr(),
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Warn("listening in DEGRADED mode — admin console only; every other route answers 503",
+			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
+			"reason", srv.DegradedReason())
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		logger.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
 	}
 }

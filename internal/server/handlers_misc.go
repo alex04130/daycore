@@ -18,6 +18,22 @@ func init() {
 
 // GET /api/healthz — liveness + DB connectivity + build version.
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Degraded: the process is up on purpose and is not ready for user traffic.
+	//
+	// ⚠️ 503 here is a READINESS answer. Wire this as a liveness probe and the
+	// orchestrator restarts the process — which is exactly the crash loop
+	// degraded boot exists to replace. See docs/ARCHITECTURE.md.
+	if s.Degraded() {
+		s.writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"ok": false, "status": "degraded", "db": s.cfg.DBType,
+			// No detail: this endpoint is unauthenticated and a driver error
+			// routinely carries the DSN, which routinely carries a password.
+			// The operator gets the reason through the console.
+			"error":   "storage unavailable; serving the admin console only",
+			"version": version.Full(), "channel": version.Channel, "env": s.cfg.Env,
+		})
+		return
+	}
 	if err := s.store.Ping(r.Context()); err != nil {
 		// Don't leak DSN/host fragments from the driver error to unauthenticated
 		// callers; log the detail server-side instead.

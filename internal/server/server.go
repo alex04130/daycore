@@ -81,6 +81,10 @@ type Server struct {
 	ticksDone chan struct{}
 	tickWG    sync.WaitGroup
 
+	// Degraded boot (see degraded.go): storage was unavailable at startup, so
+	// this process serves only what needs no database.
+	degraded degraded
+
 	// Leader election for the background worker (see leader.go). instanceID is
 	// generated on first use rather than in New so that the zero value keeps
 	// working and so that it can never come from configuration.
@@ -165,7 +169,9 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	// middleware chain (outermost first)
-	return s.recoverMW(s.requestIDMW(s.loggingMW(s.corsMW(s.sessionMW(s.userMW(s.dataSessionMW(mux)))))))
+	// degradedMW sits inside logging (so refusals are visible) and OUTSIDE the
+	// three identity middlewares (which read the store). See degraded.go.
+	return s.recoverMW(s.requestIDMW(s.loggingMW(s.corsMW(s.degradedMW(s.sessionMW(s.userMW(s.dataSessionMW(mux))))))))
 }
 
 // ─── context plumbing ────────────────────────────────────────────────────────
