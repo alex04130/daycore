@@ -17,14 +17,39 @@ func init() {
 	})
 }
 
-// adminAuthorized gates the prompt-editing endpoints. With ADMIN_TOKEN set, the
-// X-Admin-Token header must match (constant-time); unset means open in dev,
-// closed in prod.
+// adminAuthorized gates every admin endpoint. Two ways in, for two callers —
+// see handlers_admin_session.go for the design and what it fixes.
+//
+// ⚠️ There is no longer an "open" branch. It used to return !IsProduction() when
+// ADMIN_TOKEN was unset, which made the configuration API unauthenticated on
+// every development box, every staging deployment, and every self-hosted
+// instance whose owner never set APP_ENV. config.Load now invents a token and
+// prints it instead, so "no credential configured" is not a reachable state.
+//
+// If you are here to add a bypass for local development: the generated token in
+// the startup log IS the local-development path.
 func (s *Server) adminAuthorized(r *http.Request) bool {
 	if s.cfg.AdminToken == "" {
-		return !s.cfg.IsProduction()
+		// Unreachable via config.Load. Refusing rather than opening is the right
+		// direction for a guard whose precondition another file maintains.
+		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Token")), []byte(s.cfg.AdminToken)) == 1
+	// Machines: a custom header, so cross-origin JavaScript cannot send it
+	// without a preflight it will not get.
+	if hdr := r.Header.Get("X-Admin-Token"); hdr != "" {
+		return subtle.ConstantTimeCompare([]byte(hdr), []byte(s.cfg.AdminToken)) == 1
+	}
+	// Humans: the console's httpOnly cookie. Cookies ride along on cross-site
+	// requests, so this path needs the Origin check that the header path does
+	// not — SameSite=Strict is the first guard and this is the second.
+	c, err := r.Cookie(adminCookie)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	if !s.sameOriginRequest(r) {
+		return false
+	}
+	return s.tokens != nil && s.tokens.ParseAdmin(c.Value) == nil
 }
 
 // adminLocale reads the ?locale= query param, defaulting to i18n.Default.

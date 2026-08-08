@@ -146,6 +146,8 @@ var Settings = []Setting{
 	// ── derived, not configured ──
 	{Env: "", Field: "UsingDevSecrets", Layer: LayerBoot,
 		Why: "computed during Load from whether the secrets were supplied; not a knob"},
+	{Env: "", Field: "GeneratedAdminToken", Layer: LayerBoot, Secret: true,
+		Why: "computed during Load; true when no ADMIN_TOKEN was supplied and one was invented for this process"},
 }
 
 // SettingFor returns the classification of a Config field.

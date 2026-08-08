@@ -1,3 +1,46 @@
+/api/admin/session:
+  post:
+    operationId: adminLogin
+    tags: [admin]
+    summary: Exchange the raw admin token for a short-lived console cookie.
+    description: >-
+      TWO WAYS INTO THE ADMIN API, for two callers. Machines (curl, CI, deploy
+      scripts) keep sending `X-Admin-Token` on every request — that path is
+      unchanged and was never the problem: the token is in a header rather than
+      a URL and the comparison is constant-time.
+
+      Humans use this endpoint once and get `dc_admin`: httpOnly (an XSS on the
+      console cannot read it), Secure, SameSite=Strict, and short-lived. What it
+      fixes is that the console used to keep the raw token in sessionStorage,
+      where any XSS could read a credential that never expired and could only be
+      rotated by redeploying.
+
+      The cookie carries NO revocation mechanism — there is no admin account to
+      bump a token version on, and the console must keep working when storage is
+      down — so its TTL is its revocation. Logging out clears the cookie;
+      a copy taken beforehand stays valid until it expires.
+
+      CSRF: SameSite=Strict plus an Origin check, because a cookie rides along on
+      cross-site requests and httpOnly buys confidentiality rather than
+      authority. The header path needs neither — a custom header forces a
+      preflight.
+
+      ⚠️ An unset ADMIN_TOKEN no longer means "open outside production". The
+      server generates one at startup and prints it; there is no unauthenticated
+      state to fall into.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, expiresIn: { type: integer, description: seconds } } } } } }
+      '401': { description: Wrong token. }
+      '403': { description: Cross-origin request. }
+      '429': { description: Rate limited (shares the auth limiter). }
+  delete:
+    operationId: adminLogout
+    tags: [admin]
+    summary: Clear the console cookie.
+    description: Deliberately open — a logout that 401s leaves somebody unable to clear a session they cannot use.
+    responses:
+      '200': { description: OK }
 /api/admin/prompts:
   get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
 /api/admin/prompts/{key}:

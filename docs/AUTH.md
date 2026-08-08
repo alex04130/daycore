@@ -45,7 +45,7 @@
 
 ## 鉴权旁路
 
-- `X-Admin-Token`（handlers_admin.go `adminAuthorized`）：ADMIN_TOKEN 设置时常量时间匹配；未设 → dev 全开 / prod 关闭。**⚠️ 待改造，见下。**
+- **管理面双路**（`handlers_admin.go` `adminAuthorized` + `handlers_admin_session.go`）：机器走 `X-Admin-Token`（常量时间比较），人走 `dc_admin` httpOnly cookie。**没有「全开」这一档了** —— 见下。
 - `X-Import-Token`（handlers_import.go `importSession`）：无 cookie 时按 token 解析会话（扩展直推）。
 
 ### ⚠️ 管理面鉴权待改造（2026-07-29 记，落地在批次 F4）
@@ -62,7 +62,23 @@
 
 ⚠️ **cookie 方案有个前提：真的有 TLS。** `Secure` cookie 在纯 HTTP 上不会被发送，而 `deploy/nginx.conf` 只 `listen 80`、没有 ssl 段，`SECURE_COOKIES` 默认 `false`。所以：**头那条路不能删** —— 它在纯 HTTP 上照样能用（虽然那时候什么都在明文里），而 cookie 那条路会**静默地登不上**。控制台在这种情形下必须说清「你没有 TLS，所以管理登录不可用」，而不是给一个转圈的登录框。参考部署要不要加 TLS 段是另一件事，但**协议不能假设它已经有了**。
 
-⚠️ **与存储降级启动直接冲突的一条**：降级模式下没有 DB，**token version 吊销就不可用**（签发只要 `JWT_SECRET`，吊销要查库）。所以降级模式里那个 admin JWT 的 TTL 必须显著更短，而且 `ADMIN_TOKEN` 未设时**绝不能**沿用「dev 全开」—— 否则「存储挂了仍然把控制台端上来」就等于把一个无鉴权配置界面挂到网上。降级模式必须要求显式凭证，没有就只给一个说明页。
+✅ **F4a 已落地（2026-08-07）。** 三个问题各自的修法：
+
+| 原问题 | 现在 |
+|---|---|
+| 明文密钥长期躺在 `sessionStorage`，**永不过期**，XSS 读走就是永久有效 | `POST /api/admin/session` 用原始 token 换一次 `dc_admin` cookie：**httpOnly**（控制台上的 XSS 读不到）、`Secure`、`SameSite=Strict`、30 分钟。原始 token 再也不进 JS 可读的存储 |
+| 环境变量 → 轮换要重新部署，无 TTL、无吊销、无身份 | TTL 就是吊销（见下）。`DELETE /api/admin/session` 清 cookie |
+| **`ADMIN_TOKEN` 未设 = dev 全开** | **这一档没有了**。`config.Load` 未设时**生成一个并在启动日志里打出来**；生产环境未设直接拒绝启动 |
+
+**「未设 = 全开」是三条里最危险的一条**，因为它命中的是每一台开发机、每一个 staging、每一个自部署但没设 `APP_ENV` 的实例 —— 一个**无鉴权的配置 API**。生成一个反而两头都好：本地开发只是从日志里复制一次，而**任何时刻都不存在「没有凭证」这个状态**。生产不给生成 —— 一个没人写下来的 token 是一个没人能轮换的 token。
+
+**scope 是必须的**：user JWT 与 admin JWT 用同一把密钥签，没有 `scp` 声明的话**一个用户会话就能认证管理 API** —— 而用户令牌是任何人注册一下就有的。两个方向都校验（`Parse` 拒绝 admin scope，`ParseAdmin` 拒绝 user scope），因为一道守卫守不住一条边界的两侧。
+
+**CSRF 两道，缺一不可**：cookie 会跟着跨站请求一起发出去，所以 httpOnly 买到的是**保密性不是权限**。`SameSite=Strict`（浏览器不会附带）+ **Origin 校验**（给不认 SameSite 的浏览器或流程）。**请求头那条路两道都不需要** —— 自定义请求头会触发预检，跨源攻击者过不去；所以带 `Origin` 的机器请求不会被误伤。
+
+⚠️ **admin token 没有吊销机制**，因为 token version 吊销要查库，而降级启动的整个前提就是**在存储挂掉时把控制台端上来**。所以 **TTL 就是吊销**，30 分钟，**调大它是安全改动不是便利改动**。登出前被复制走的 token 会一直有效到过期 —— 这是「必须能在没有数据库时工作」的诚实代价。
+
+**这条设计的每一处都不碰数据库**，那正是 F4a 与降级启动必须同批设计的原因：一个需要查行的管理登录，会在最需要它的时刻停止工作。
 
 ## 有意公开的信息披露
 

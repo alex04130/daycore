@@ -72,6 +72,15 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	if cfg.GeneratedAdminToken {
+		// Printed once, and it has to be printed: a generated credential nobody
+		// is told about is the same as no credential, except harder to diagnose.
+		// This replaces the old "unset ADMIN_TOKEN = open admin API outside
+		// production", which was an unauthenticated configuration API on every
+		// dev box and every self-hosted instance with no APP_ENV set.
+		logger.Warn("no ADMIN_TOKEN configured; generated one for this process only — it changes on every restart",
+			"admin_token", cfg.AdminToken)
+	}
 	if cfg.UsingDevSecrets {
 		logger.Warn("using INSECURE development secrets — set APP_ENV=production with real JWT_SECRET/COOKIE_SECRET/ADMIN_TOKEN before exposing to any network")
 	}

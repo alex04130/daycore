@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -127,6 +129,21 @@ type Config struct {
 	// UsingDevSecrets is true when JWT/Cookie secrets fell back to the insecure
 	// public dev defaults (no real secret configured). main.go warns on it.
 	UsingDevSecrets bool
+
+	// GeneratedAdminToken is true when no ADMIN_TOKEN was supplied and one was
+	// invented for this process. main.go prints it — a generated credential
+	// nobody is told about is the same as no credential at all, except harder to
+	// diagnose.
+	GeneratedAdminToken bool
+}
+
+// randomToken makes a URL-safe 256-bit secret.
+func randomToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // Load reads .env (if present) then environment variables, applies defaults, and
@@ -192,6 +209,32 @@ func Load() (*Config, error) {
 	}
 	if c.DBType == "" {
 		return nil, fmt.Errorf("DB_TYPE must not be empty")
+	}
+
+	// An unset ADMIN_TOKEN used to mean "the admin API is open outside
+	// production" (handlers_admin.go's old `return !IsProduction()`). That is an
+	// UNAUTHENTICATED configuration API on every dev box, every staging
+	// deployment, and every self-hosted instance whose owner never set APP_ENV —
+	// and it is the branch that would have been most dangerous under the planned
+	// degraded boot, where the whole point is to serve the console while storage
+	// is down.
+	//
+	// Generating one instead removes the open state entirely without making
+	// local development painful: it is printed once at startup, so getting in is
+	// a copy-paste, and there is never a moment when there is no credential.
+	// Production still refuses to invent one — a token nobody wrote down is a
+	// token nobody can rotate, and a deployment that means to be administered
+	// should say so.
+	if c.AdminToken == "" {
+		if c.IsProduction() {
+			return nil, fmt.Errorf("ADMIN_TOKEN is required in production")
+		}
+		tok, err := randomToken()
+		if err != nil {
+			return nil, fmt.Errorf("generate a development admin token: %w", err)
+		}
+		c.AdminToken = tok
+		c.GeneratedAdminToken = true
 	}
 	// In production, default the Secure cookie flag on unless the operator
 	// explicitly opted out — a forgotten SECURE_COOKIES must not silently ship

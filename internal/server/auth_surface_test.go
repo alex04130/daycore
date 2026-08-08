@@ -28,9 +28,13 @@ var publicRoutes = map[string]string{
 	"GET /api/models":        "capability discovery",
 	"POST /api/session/init": "this is what mints the session",
 
-	"POST /api/auth/register":                 "no session yet by definition",
-	"POST /api/auth/login":                    "no session yet by definition",
-	"POST /api/auth/logout":                   "must work with an expired session",
+	"POST /api/auth/register": "no session yet by definition",
+	"POST /api/auth/login":    "no session yet by definition",
+	"POST /api/auth/logout":   "must work with an expired session",
+	"DELETE /api/admin/session": "logging out must work with an expired or absent admin cookie — " +
+		"401ing a logout leaves somebody unable to clear a session they cannot use, and " +
+		"it clears a cookie rather than reading anything",
+	"POST /api/admin/session":                 "this is what mints the admin session; the raw ADMIN_TOKEN in the body IS the credential",
 	"GET /api/auth/providers":                 "shown on the signed-out screen",
 	"GET /api/me":                             "answers {user:null} when anonymous",
 	"GET /api/auth/oauth/{provider}":          "starts the redirect dance",
