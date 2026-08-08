@@ -86,7 +86,7 @@ go build ./... && go vet ./... && go test ./...
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT/签名 cookie |
 | `internal/blob/` | **文件总线**：`Store` 注册表 + `localfs` 本机磁盘驱动 + `blobtest` 行为套件（11 例）。`DATA_DIR` 是仓库第一个可写路径；`nil` 是受支持的配置，需要字节的功能各自检查并明说。**鉴权不在这一层** —— 它只认 ref 不认会话，所有权在 `attachments` 表上（ε 批次接的第一个真使用者） |
 | `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |
-| `internal/config/` | 环境变量配置（godotenv） |
+| `internal/config/` | 环境变量配置（godotenv）+ **配置分层**（`layer.go` 的 `Settings`：每个旋钮标启动期/运行时/密钥；新加字段没分类直接红，见 `docs/CONFIG.md`）|
 | `internal/search/` | web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS 优先 + 子串兜底） |
 | `internal/weather/` | WeatherProvider registry（open-meteo/qweather/owm/wttr.in，30min 缓存） |
 | `internal/version/` | 版本唯一真源（构建版本 + API 契约版本，别混） |
@@ -142,7 +142,8 @@ go build ./... && go vet ./... && go test ./...
 |---|---|
 | 仓库铁律、布局、常用事实（本文件的浓缩版） | [`CLAUDE.md`](CLAUDE.md) |
 | **总规划：做什么、按什么顺序、为什么** | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
-| 架构、包结构、中间件、启动关停、配置分层 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| 架构、包结构、中间件、启动关停、多实例、两层时区 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| **每个配置项能不能热改**（启动期/运行时/密钥，加字段必须分类） | [`docs/CONFIG.md`](docs/CONFIG.md)（表是生成的） |
 | 实体、四个存储后端、加表加列、迁移事故史 | [`docs/DATA.md`](docs/DATA.md) |
 | 认证三轨、CORS、鉴权旁路 | [`docs/AUTH.md`](docs/AUTH.md) |
 | agent loop、SSE 帧协议、工具带、决策卡 | [`docs/AGENT.md`](docs/AGENT.md) |

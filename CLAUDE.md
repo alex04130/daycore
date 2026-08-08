@@ -39,6 +39,7 @@
 
 - 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta，**minor 只在一整份规划完成时 +1**。发布节奏：v2 beta → 小范围内测 → v2 继续改 → 公测 → v3 正式版。
 - 构建验证：`go build ./... && go vet ./... && go test ./...`（或 `make test`，会先跑 i18n 校验）。
+- **加一个配置项必须同批分类**（`internal/config/layer.go` 的 `Settings`：启动期 / 运行时 / 是不是密钥）—— 不分类 `go test` 直接红。判据与生成的总表见 `docs/CONFIG.md`；`make config-doc` 重生成。
 - 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
 - **存储层改动的验收标准是 `internal/storage/storagetest` 的行为套件**（42 个用例，**四个后端跑同一份**）。它测的是四个后端必须一致的**行为**，`dialect_parity_test.go` 是三方言 DDL 的**静态**比对，两者互不替代。本机跑真机那几个：`make test-mongo`（Mongo）、`make test-sql`（PG + MySQL）。
 - **SQL 里存自由数据不必只会「一个大 JSON 整体重写」**：需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，SQLite/PG/MySQL 都支持，已实测），键集开放且要按键查就用侧表。**凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段必须是列** —— 塞进 blob 就退成读-改-写，那是正确性取舍不是性能取舍。
