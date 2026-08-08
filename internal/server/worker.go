@@ -89,10 +89,26 @@ func (w *Worker) ScheduleUser(sid, tz string) {
 		}
 		ids = append(ids, id)
 	}
-	// Morning brief: 07:30 in the user's own timezone (CRON_TZ prefix).
-	add("morning", cronScheduleAt(7, 30, tz), func() { w.runBrief(sid, tz, "morning") })
-	// Evening review: 21:00 in the user's own timezone.
-	add("evening", cronScheduleAt(21, 0, tz), func() { w.runBrief(sid, tz, "evening") })
+	// The two daily times come from the learned rhythm (ζ-2). They used to be
+	// the literals 07:30 and 21:00, which happen to be exactly what
+	// Schedule(Cold()) produces — so "derived from the rhythm" was true of the
+	// numbers and false of the mechanism: learning something else changed
+	// nothing. This is where that stopped being true.
+	//
+	// Read under w.mu via a background context: ScheduleUser is called from a
+	// request path and from the learn job, and neither should be able to make
+	// this block on a caller's cancelled context.
+	jobs := w.jobsFor(context.Background(), sid)
+	// Morning brief: at the learned wake time, in the user's own timezone.
+	add("morning", cronScheduleAtHM(jobs.BriefAt, tz), func() { w.runBrief(sid, tz, "morning") })
+	// Evening review: 90 minutes before the learned bedtime.
+	add("evening", cronScheduleAtHM(jobs.ReviewAt, tz), func() { w.runBrief(sid, tz, "evening") })
+	// Rhythm learning: at the day cut, when yesterday's row is final.
+	add("rhythm", cronScheduleAt(rhythmConfig().DayCutHour, 0, tz), func() { w.runRhythmLearn(sid, tz) })
+	// The Protector. Half-hourly because the predicate is a threshold on a
+	// continuously growing number: the interval only bounds how late the nudge
+	// can be, half an hour against a twenty-hour stretch.
+	add("protector", protectorEvery, func() { w.checkProtector(sid, tz) })
 	// Deadline check: every 2 hours.
 	add("deadline", "0 */2 * * *", func() { w.checkDeadlines(sid, tz) })
 	// Rolling replan: every 30 minutes.
@@ -169,6 +185,19 @@ func cronScheduleAt(hour, min int, tz string) string {
 		tz = "UTC"
 	}
 	return fmt.Sprintf("CRON_TZ=%s %d %d * * *", tz, min, hour)
+}
+
+// cronScheduleAtHM is cronScheduleAt for an "HH:MM" the rhythm produced. An
+// unparseable value falls back to the cold-start time for that job rather than
+// dropping the entry — a brief at the default hour beats no brief, the same
+// trade resolveTZ makes.
+func cronScheduleAtHM(hm, tz string) string {
+	var h, m int
+	if n, err := fmt.Sscanf(hm, "%d:%d", &h, &m); n != 2 || err != nil ||
+		h < 0 || h > 23 || m < 0 || m > 59 {
+		return cronScheduleAt(7, 30, tz)
+	}
+	return cronScheduleAt(h, m, tz)
 }
 
 // ─── leadership and occurrence ownership ─────────────────────────────────────
@@ -607,10 +636,15 @@ func parseBlockTime(dateStr, timeStr string, loc *time.Location) (time.Time, err
 	if _, err := fmt.Sscanf(timeStr, "%d:%d", &h, &m); err != nil {
 		return time.Time{}, err
 	}
-	return time.Date(
-		time.Now().In(loc).Year(), time.Now().In(loc).Month(), time.Now().In(loc).Day(),
-		h, m, 0, 0, loc,
-	), nil
+	// dateStr used to be accepted and then ignored — the date came from
+	// time.Now() regardless. Both existing callers happened to pass today, so
+	// the parameter was a lie nothing could catch; the first caller to pass any
+	// other date would silently get a time on the wrong day.
+	y, mo, d := time.Now().In(loc).Date()
+	if t, err := time.ParseInLocation("2006-01-02", dateStr, loc); err == nil {
+		y, mo, d = t.Date()
+	}
+	return time.Date(y, mo, d, h, m, 0, 0, loc), nil
 }
 
 // lookupWeather tries to get a 2-day forecast for Beijing (future: session setting).

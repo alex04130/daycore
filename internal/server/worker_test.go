@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func discardLogger() *slog.Logger {
@@ -98,5 +99,37 @@ func TestScheduleUserFallsBackOnAnUnknownTimezone(t *testing.T) {
 	bad.ScheduleUser("s1", "Not/AZone")
 	if got := bad.EntryCount(); got != want {
 		t.Errorf("rescheduling under the same unknown zone added entries: %d, want %d", got, want)
+	}
+}
+
+// parseBlockTime accepted a date and ignored it: the day came from time.Now()
+// whatever you passed. Both callers at the time happened to pass today, so the
+// parameter was a lie nothing could catch — until the Protector became the first
+// caller to reason about a different day and silently got yesterday's blocks
+// treated as still ahead.
+func TestParseBlockTimeUsesTheDateItIsGiven(t *testing.T) {
+	loc := time.UTC
+	got, err := parseBlockTime("2020-03-05", "09:30", loc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if y, m, d := got.Date(); y != 2020 || m != time.March || d != 5 {
+		t.Errorf("parsed %v, want 2020-03-05 — the date argument is being ignored", got)
+	}
+	if got.Hour() != 9 || got.Minute() != 30 {
+		t.Errorf("parsed %v, want 09:30", got)
+	}
+
+	// An empty or unparseable date still falls back to today, which is what the
+	// existing callers rely on.
+	today := time.Now().In(loc)
+	for _, bad := range []string{"", "not-a-date"} {
+		got, err := parseBlockTime(bad, "09:30", loc)
+		if err != nil {
+			t.Fatalf("parseBlockTime(%q): %v", bad, err)
+		}
+		if y, m, d := got.Date(); y != today.Year() || m != today.Month() || d != today.Day() {
+			t.Errorf("parseBlockTime(%q) = %v, want today", bad, got)
+		}
 	}
 }

@@ -103,7 +103,8 @@
 - ✅ **Lease 选主 + 场次占有**（2026-08-06）—— `internal/server/leader.go`；`claim`/`finish` 装进四个作业体，位置是**抑制门之后、干活之前**。设计与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。顺带修掉两个既有缺陷：`ScheduleUser` 的死守卫（**单实例上就在重复发**）、坏时区的部分失败伪装成成功。
 - ✅ **每会话时区**（2026-08-06）—— `SessionPrefs.Timezone` + `TimezoneSource`；石化线、节律 day key、cron 排程、通道回复全部改读会话自己的。设备提示可以填也可以更新一个 `detected` 值，但**绝不覆盖用户自己在设置页选的**。`APIMinor` 6→7。设计见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 - ✅ **撤销闭合**（2026-08-06）—— 18 条注册散到 8 个 handler 文件；**真正的产出是闸门** `TestEveryLoggedActionIsDeclared`：AST 扫出每一处被记账的 action，逼它要么可撤、要么写明为什么不可撤。第一次跑就抓到 8 条未声明，其中 `wish_update` / `wish_delete` 是**真缺口**（账本里根本没存可还原的东西）。见 [DATA.md](DATA.md)。
-- ⬜ 节律学习作业 → ⬜ Protector。
+- ✅ **节律学习作业**（2026-08-07）—— `internal/rhythm` 此前是第六次「写完、测过、没人调用」（515 行纯函数、两个调用方、都只算 day key）。跑在日切；**窗口过滤必须在作业里做**（`LearnDays` 不做，`Days(limit)` 是行数上限不是日期过滤）；**证据变薄不遗忘**（保留学到的时刻，只降天数）。三个定时时刻此前「由节律派生」只在数值上成立。
+- ✅ **Protector 20h 关怀**（2026-08-07）—— 先修致命断点：`run_since`/`last_signal_at` 零生产写者，谓词恒假。场次 key 是**这段清醒的起点**（dayKey 会响两次、slotKey 每半小时一次）。TTL 取 ask-first 而非设计稿的 act-first —— 凌晨四点的沉默不是同意。推送预算 ≤3/天，从已有的行数出来。
 
 ⚠️ 时区一项的紧迫性已重估（2026-08-05）：`awake.go` 的 TODO 注释写明 day key 可由 (day, minute) + 已知录制时区重算——**节律信号是可追认的**，STRATEGY §五.3 的「不可追认」论证已化解，本批位置维持。Lease 是存储层就绪、server 零引用的纯接线活，工作量比表观小。
 
