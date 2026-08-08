@@ -10,6 +10,9 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("mood_record", (*Server).revertMoodRecord_delete)
+
 	registerRoutes("moods", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/mood/kinds", s.handleMoodKinds)
 		mux.HandleFunc("GET /api/mood", s.handleMoodList)

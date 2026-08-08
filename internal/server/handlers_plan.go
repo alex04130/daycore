@@ -15,6 +15,9 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("plan_upsert", (*Server).revertPlanUpsert)
+
 	registerRoutes("plans", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/plan", s.handlePlanGet)
 		mux.HandleFunc("POST /api/plan", s.handlePlanUpsert)

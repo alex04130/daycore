@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"path/filepath"
+	"runtime"
 	"strconv"
 
 	"daycore/internal/domain"
@@ -57,34 +59,107 @@ type revertHandler func(s *Server, ctx context.Context, w http.ResponseWriter,
 // gap: handleOpRevert refuses with "irreversible" and says which action.
 var revertHandlers = map[string]revertHandler{}
 
-// registerRevert declares the inverse of an action. Registering the same action
+// irreversibleActions names the actions that are logged but deliberately have no
+// inverse, with the reason.
+//
+// It exists so that "no inverse" is a DECISION somebody wrote down rather than
+// the default outcome of forgetting. Before it, a write with no registration and
+// a write whose author had thought about it and concluded there is nothing to
+// undo were indistinguishable — both produced a 400 at the moment the user
+// pressed the button, which is the worst time to find out.
+var irreversibleActions = map[string]string{}
+
+// revertSites records which file declared each action, so a duplicate can name
+// both sources. The panic happens during package init, before TestMain runs and
+// before any test name is printed; without the file names the only way to find
+// it is to read every registration by eye.
+var revertSites = map[string]string{}
+
+// registerRevert declares the inverse of an action. Declaring the same action
 // twice panics — two inverses for one action means one of them is dead code, and
 // which one wins would depend on link order.
+//
+// ⚠️ revertHandlers must stay a package-level var initialiser. Go initialises
+// package-level variables before ANY init() in the package, whatever the file
+// order; move the make() into an init() and the first file alphabetically to
+// call this writes to a nil map.
 func registerRevert(action string, h revertHandler) {
-	if _, dup := revertHandlers[action]; dup {
-		panic("server: duplicate revert handler for " + action)
-	}
+	claimAction(action)
 	revertHandlers[action] = h
 }
 
-func init() {
-	registerRevert("plan_add", (*Server).revertPlanAdd)
-	registerRevert("plan_update", (*Server).revertPlanUpdate)
-	registerRevert("plan_remove", (*Server).revertPlanRemove)
-	registerRevert("plan_upsert", (*Server).revertPlanUpsert)
-	registerRevert("plan_autoplan", (*Server).revertPlanUpsert)
-	registerRevert("rule_create", (*Server).revertRuleCreate_delete)
-	registerRevert("rule_update", (*Server).revertRuleUpdate)
-	registerRevert("rule_delete", (*Server).revertRuleCreate)
-	registerRevert("rule_batch", (*Server).revertRuleBatch)
-	registerRevert("memory_add", (*Server).revertMemoryAdd_delete)
-	registerRevert("memory_delete", (*Server).revertMemoryAdd)
-	registerRevert("memory_clear", (*Server).revertMemoryClear)
-	registerRevert("assignment_upsert", (*Server).revertAssignmentUpsert)
-	registerRevert("wish_create", (*Server).revertWishCreate_delete)
-	registerRevert("mood_record", (*Server).revertMoodRecord_delete)
-	registerRevert("material_create", (*Server).revertMaterialCreate_delete)
+// registerIrreversible declares that an action has no inverse, and why.
+//
+// The reason is not decoration: it is what a future reader needs in order to
+// tell "nobody got round to it" from "there is nothing to undo". Both look
+// identical from the outside.
+func registerIrreversible(action, reason string) {
+	claimAction(action)
+	irreversibleActions[action] = reason
 }
+
+func claimAction(action string) {
+	site := callerFile(3)
+	if prev, dup := revertSites[action]; dup {
+		panic("server: action " + action + " is declared twice — in " + prev + " and in " + site +
+			"; one of the two is dead code and which one wins depends on link order")
+	}
+	revertSites[action] = site
+}
+
+func callerFile(skip int) string {
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown"
+	}
+	return filepath.Base(file) + ":" + strconv.Itoa(line)
+}
+
+// decodeInto re-materialises a snapshot from the ledger.
+//
+// The ledger stores JSON, so a Before/After comes back as map[string]any and has
+// to go through a second round trip to become a typed value. Reporting failure
+// rather than silently leaving a zero value is the point: a revert that "worked"
+// and restored an empty row is worse than one that refused.
+func decodeInto(snapshot any, dst any) bool {
+	if snapshot == nil {
+		return false
+	}
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal(b, dst) == nil
+}
+
+// Actions that are logged and deliberately have no inverse.
+//
+// Declared rather than left out: "nobody registered one" and "there is nothing
+// to undo" produce the same 400 at the moment the user presses the button, and
+// only one of them is a bug. The reason is what tells them apart.
+func init() {
+	registerIrreversible("tool_get_weather",
+		"a read. The ledger records that the agent looked something up, so the user can see why it said what it said; there is no state to put back.")
+	registerIrreversible("tool_web_search",
+		"a read, same as the weather lookup. Undoing a search would mean unseeing it.")
+	registerIrreversible("proposal_accepted",
+		"the record that the user answered a card. The WRITES an acceptance performs are logged separately and are individually undoable; undoing the answer itself would mean claiming they never decided.")
+	registerIrreversible("proposal_rejected",
+		"the record that the user declined or let a card lapse. Nothing was written, so there is nothing to put back — and re-showing a card they dismissed is the opposite of what saying no meant.")
+	registerIrreversible("conflict_mark",
+		"marking a scheduling clash creates a decision card and changes no plan. The card is answered or expires on its own; the way out is to answer it, not to erase the observation.")
+	registerIrreversible("revert",
+		"the compensation entry for undoing something else. Undoing an undo is redo, which is a different feature with different semantics (EXPERIENCE_CORE consensus 23). Chaining through this path would compound compensations rather than replay them.")
+}
+
+// The inverses themselves are registered by the files that own the writes — see
+// handlers_plan.go, plan_patch.go, handlers_rules.go and the rest. A feature
+// that is linked in is a feature whose writes are undoable, and the inverse sits
+// next to the code that will need changing when the write changes.
+//
+// TestEveryLoggedActionIsDeclared is what makes that safe to spread out: a
+// registration deleted during a move fails the build's tests rather than
+// surfacing as a 400 the first time a user presses undo.
 
 // The two one-liners that used to sit inline in the switch. They are named for
 // what they undo, not for what they do — revertRuleCreate_delete undoes a

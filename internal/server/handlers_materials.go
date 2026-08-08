@@ -14,6 +14,10 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	// 作业的写入方今天是 tool_capture.go，但这个实体的 REST 面归本文件。
+	registerRevert("assignment_upsert", (*Server).revertAssignmentUpsert)
+
 	registerRoutes("canvas materials", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/courses", s.handleCourseList)
 		mux.HandleFunc("GET /api/assignments", s.handleAssignmentList)

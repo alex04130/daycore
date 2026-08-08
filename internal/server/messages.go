@@ -120,6 +120,7 @@ func init() {
 	i18n.Register("err.aICompanionAsync.too_many_attachments", i18n.Text{"zh-CN": "一条消息最多带 %d 个附件"})
 	i18n.Register("err.aICompanionAsync.attachment_internal", i18n.Text{"zh-CN": "读取附件失败"})
 	i18n.Register("err.sessionPreferences.bad_timezone", i18n.Text{"zh-CN": "时区名不认识 —— 需要 IANA 格式，比如 Asia/Shanghai"})
+	i18n.Register("err.opRevert.no_snapshot", i18n.Text{"zh-CN": "这条操作没有留下可还原的快照，撤不回来了"})
 	i18n.Register("err.fileList.internal", i18n.Text{"zh-CN": "读取待发送文件失败"})
 	i18n.Register("err.fileDownload.file_not_found", i18n.Text{"zh-CN": "文件不存在"})
 	i18n.Register("err.fileDownload.no_file_bus", i18n.Text{"zh-CN": "这个部署没有配置文件总线（BLOB_STORE），读不到文件内容"})

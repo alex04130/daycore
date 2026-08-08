@@ -579,14 +579,41 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 ## 撤销注册表（`handlers_ops.go`，批次 0，2026-07-28）
 
-`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。⚠️ **机制在，搬迁没做**：12 条 `registerRevert` 目前全挤在 `handlers_ops.go` 自己的一个 `init()` 里，没有任何别的文件调用它 —— 照下面那句「住在写这条 op 的代码旁边」去 `handlers_plan.go` / `handlers_rules.go` / `handlers_memory.go` 找逆操作会一无所获。搬迁是批次 D 的事。
+`switch orig.Action` 改成 `revertHandlers` 映射表 + `registerRevert(action, h)`。✅ **搬迁已完成（ζ-5，2026-08-06）**：18 条注册散在 8 个 handler 文件里，逆操作住在写这条 op 的代码旁边。
 
 **为什么**：switch 是错的形状 —— 每加一个写操作都要回到同一个文件改同一个函数，于是一批本来不相干的并行工作全撞在这里（计划里 `handlers_ops.go` 被 8 个工作项争）。映射表让逆操作住在**写这条 op 的代码旁边**，那也是别人会去找它的地方。
 
 - 注册同一个 action 两次 **panic** —— 两个逆操作意味着有一个是死代码，而谁赢取决于链接顺序。
 - 没注册不是静默的缺口：`handleOpRevert` 明确返回 `irreversible` 并说出是哪个 action。铁律 3 说一切可撤，这里就是这句话被守住或被打破的地方。
 - `revert` 自己永不可注册为可撤销：撤销一次撤销是一笔新的正向操作，不是回滚（共识 23，账本 append-only，后悔是新的一笔而不是橡皮擦）。
-- 测试 `handlers_ops_test.go`：注册表非空、12 个已知写操作都有逆、重复注册 panic。
+### 闸门：`TestEveryLoggedActionIsDeclared`（ζ-5 的真正产出）
+
+搬迁本身是整理，**闸门才是关掉那个洞的东西**。它防的具体失败：
+
+> 删掉 `registerRevert("wish_create", …)` 那一行 —— 编译过（Go 不管没人调用的方法）、`go vet` 过、**全部测试过、CI 全绿**。唯一的症状是用户点撤销时拿到 400。
+
+注册表是个 map，缺一项不是编译错误，而在此之前**没有任何东西比对过「我们写了哪些 action」与「我们能撤哪些」**。
+
+闸门用 AST 扫出包里每一处 `domain.OperationLog{…}` 的 `Action:` 字面量，逐个要求它**要么可撤、要么被 `registerIrreversible(action, reason)` 明确声明**。两个方向都查：声明了却没人写的 action 也红（那就是本仓第六次「写完没人调」）。
+
+**为什么要有 `registerIrreversible` 而不是「没注册就是不可撤」**：两者从外面看完全一样 —— 都是用户按下按钮那一刻的一个 400，而只有一种是 bug。写下来的**理由**是唯一能把「没人来得及做」和「本来就没什么可撤」区分开的东西。另有一条测试要求理由不能短于 20 字，否则字段会退化成装饰。
+
+**它看不见的**：`Action` 不是字面量而是运行时拼出来的地方（`plan_patch.go` 的三元映射、`proposals.go` 的裁决）。这些手工列在 `dynamicActionSites` 里，而那张表**两个方向都被核对** —— 没申报的动态站点要红，表里留着已经消失的站点也要红。手写清单只有这样才不会烂。
+
+⚠️ **被它取代的旧测试**：`TestKnownWritesAreReversible` 手抄了 12 个 action 名。轮到它退休时实际已有 16 条 —— β0+ 加的四个捕捉工具没人往清单里补，于是**一个只检查自己子集的测试报了几个月的绿**。留着它比删掉更糟：多一张会忘记更新的清单，还带着测试通过的可信度。
+
+### 闸门第一次跑就抓到的
+
+八条未声明。六条是设计上不可撤（两条只读工具、提案裁决两条、标记冲突、revert 自身），已就地写明理由。**另外两条是真缺口**：
+
+| | 原来存的 | 后果 |
+|---|---|---|
+| `wish_update` | `Detail: marshalCompact(updated)` —— 只有 after | 账本行看起来是完整的、撤销按钮也在，**里面没有任何可以还原的东西** |
+| `wish_delete` | `Detail: marshalCompact(id)` —— 只有一个 id 字符串 | 同上，且行已经不在了，没有第二处记得它是什么 |
+
+修法：`wish_update` 在 merge **之前**拷一份 before（merge 是就地改 `prev` 的，不拷就会把 after 当成 before）；`wish_delete` 删之前先 `Get` 一次 —— 多一次读，换的是撤销按钮从「一定 400」变成「能用」。
+
+- 测试：闸门（上）+ 重复注册 panic（现在会报出**两个**来源文件名，因为 panic 发生在包 init 阶段、早于任何测试名被打印）。
 
 **同批修掉一个真 bug**：防重复撤销原来是扫最近 200 条 op —— 会话忙到把 revert 挤出第 200 行之后，同一操作可以被撤销两次，而**补偿不是幂等的**（「把块加回去」执行两次就加了两个块）。改成 `OperationLogRepository.RevertedBy(sid, targetID)` 精确查询。
 

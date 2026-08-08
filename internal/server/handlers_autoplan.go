@@ -15,6 +15,10 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	// 自动规划复用整日 upsert 的逆操作 —— 撤销一次 auto-plan 就是把那天恢复成生成前的样子。
+	registerRevert("plan_autoplan", (*Server).revertPlanUpsert)
+
 	registerRoutes("ai", func(s *Server, mux Mux) {
 		mux.HandleFunc("POST /api/ai/auto-plan", s.handleAIAutoPlan)
 	})

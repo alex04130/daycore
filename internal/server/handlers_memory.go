@@ -11,6 +11,11 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("memory_add", (*Server).revertMemoryAdd_delete)
+	registerRevert("memory_delete", (*Server).revertMemoryAdd)
+	registerRevert("memory_clear", (*Server).revertMemoryClear)
+
 	registerRoutes("long-term memory", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/memory", s.handleMemoryList)
 		mux.HandleFunc("POST /api/memory", s.handleMemoryAdd)

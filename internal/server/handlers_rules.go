@@ -10,6 +10,12 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("rule_create", (*Server).revertRuleCreate_delete)
+	registerRevert("rule_update", (*Server).revertRuleUpdate)
+	registerRevert("rule_delete", (*Server).revertRuleCreate)
+	registerRevert("rule_batch", (*Server).revertRuleBatch)
+
 	registerRoutes("schedule rules", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/rules", s.handleRuleList)
 		mux.HandleFunc("POST /api/rules", s.handleRuleCreate)

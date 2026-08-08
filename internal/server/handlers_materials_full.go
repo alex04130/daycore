@@ -11,6 +11,9 @@ import (
 )
 
 func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	registerRevert("material_create", (*Server).revertMaterialCreate_delete)
+
 	registerRoutes("materials", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/materials", s.handleMaterialList)
 		mux.HandleFunc("POST /api/materials", s.handleMaterialCreate)

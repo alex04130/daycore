@@ -34,17 +34,14 @@ func TestEveryRegisteredRevertResolves(t *testing.T) {
 // The actions the plan-and-rules surface writes today all have inverses. This is
 // the list to extend, deliberately, when a new write lands — not a switch to
 // edit in passing.
-func TestKnownWritesAreReversible(t *testing.T) {
-	for _, action := range []string{
-		"plan_add", "plan_update", "plan_remove", "plan_upsert", "plan_autoplan",
-		"rule_create", "rule_update", "rule_delete", "rule_batch",
-		"memory_add", "memory_delete", "memory_clear",
-	} {
-		if _, ok := revertHandlers[action]; !ok {
-			t.Errorf("%s has no registered inverse", action)
-		}
-	}
-}
+// TestKnownWritesAreReversible used to live here with twelve action names typed
+// out by hand. It is gone, replaced by TestEveryLoggedActionIsDeclared in
+// oplog_actions_test.go, because the hand-written list did exactly what
+// hand-written lists do: β0+ added four capture tools, nobody added them to the
+// list, and a test that checked a subset of itself reported clean for months.
+//
+// Keeping it alongside the AST gate would be worse than deleting it — a second
+// list to forget to update, with the credibility of a passing test.
 
 // Registering twice would make the winner depend on link order, and the loser
 // dead code nobody notices.

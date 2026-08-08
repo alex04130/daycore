@@ -14,6 +14,14 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
+	// plan_patch.go 是 plan_add / plan_update / plan_remove 三条的唯一生产者。
+	registerRevert("plan_add", (*Server).revertPlanAdd)
+	registerRevert("plan_update", (*Server).revertPlanUpdate)
+	registerRevert("plan_remove", (*Server).revertPlanRemove)
+}
+
 type planAction struct {
 	Action  string         `json:"action"` // "update" | "remove" | "add"
 	Match   map[string]any `json:"match"`
