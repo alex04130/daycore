@@ -84,51 +84,14 @@ func (s *Server) sweepProposals(parent context.Context) {
 	}
 }
 
-// # Delivery scheduling is deliberately NOT built yet
+// # Delivery scheduling lives in proposal_delivery.go
 //
-// Proposal carries DeliverAfter and DeliveredAt, and consensus 15 describes a
-// pool where generation is unthrottled and delivery is the gate. The scheduler
-// that would move a queued card into the stack does not exist, and building it
-// now would be the mistake this repo keeps making — a mechanism with no
-// producer, written and tested and never called, which is what leases,
-// job_runs, the file bus, internal/rhythm and four other things were.
+// This file said, one commit ago, that a delivery scheduler was deliberately not
+// built because nothing queued. That was true of every producer at the time and
+// stopped being true the moment one fired on a clock instead of in response to
+// something the user had just done — the Protector, at four in the morning.
 //
-// Nothing queues today: every producer stamps DeliveredAt at creation, because
-// each is a response to something the user just did (a decision card in a turn,
-// a conflict they asked about, a care nudge at hour twenty). A card that is on
-// screen the moment it is made needs no scheduler.
-//
-// Build it when the first producer genuinely queues — the daemon chain
-// (habit scan → Rule proposal, wish-pool gap filling) is the one EXPERIENCE_CORE
-// §12.2 describes, and it produces cards nobody asked for at a moment nobody
-// chose. That is when "when should this be shown" becomes a real question, and
-// the answer will need the reordering, merging and back-pressure of consensus 15
-// rather than a timestamp comparison.
-
-// # Why there is NO special sweep for decision cards
-//
-// A KindDecision card is the only kind bound to a live goroutine: the agent turn
-// that created it waits on a process-local channel. After a restart that channel
-// is gone, so the obvious worry is a row that says pending forever while the
-// client shows a card that unblocks nobody.
-//
-// It does not happen, and the reason is worth writing down because the fix for
-// it was very nearly a new cross-session repository method on four backends:
-//
-//	persistDecision sets ExpiresAt to the agent's own wait budget — 45 seconds
-//	synchronous, 90 asynchronous. An orphaned decision card is therefore ALREADY
-//	LAPSED by the time anything could look at it.
-//
-// Lapsed means Deliverable() is false and the stack query excludes it, so the
-// user never sees it; and the expiry pass below settles it to expired/silence
-// like any other lapse. StartProposalSweep runs its first pass at boot rather
-// than one interval in, so the window between a restart and that settlement is
-// as close to zero as a sweep can make it.
-//
-// ⚠️ The thing that would break this: giving decision cards a long TTL. If a
-// card is ever allowed to outlive the turn that made it, it stops being
-// self-settling and this comment stops being true — that change needs a real
-// cross-session sweep, and ProposalFilter cannot express one (session_id is
-// unconditional in the filter builder, deliberately: "a filter never spans
-// users"). It would have to be a new repository method, four backends and a
-// conformance case.
+// The rule that survives is the one about mechanisms with no callers. The
+// conclusion drawn from it was premature, and it is recorded here rather than
+// quietly deleted because "we decided not to build X" is exactly the kind of
+// note that outlives its reason.

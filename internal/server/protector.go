@@ -139,13 +139,19 @@ func (w *Worker) checkProtector(sid, tz string) {
 		State: domain.ProposalPending, Level: domain.LevelL2, Kind: domain.KindCard,
 		Origin: domain.OriginProtector,
 		Title:  i18n.T(keyProtectorTitle, locale), Summary: body,
-		// Ask first. The design mock is written in the past tense ("我先帮你顺延
-		// 了"), which would be TTLSilenceAccepts — and that is the wrong polarity
-		// here: at hour twenty this person may equally be mid-deadline and about
-		// to need those blocks. Silence at 4am is not consent, it is somebody
-		// concentrating or asleep, and moving their morning under them costs more
-		// than asking does. Flip it if the product decides otherwise; the shape
-		// is one constant.
+		// Ask first, and the card moves nothing until it is answered.
+		//
+		// The design mock is in the past tense ("我先帮你顺延了") = act-first. The
+		// alternative considered and rejected was "move provisionally, revert if
+		// unanswered", which sounds gentler and is not: the plan would change
+		// twice with the user doing nothing, so what they saw at 09:00 is not
+		// what is there at 10:00, and the ledger carries a move and a revert for
+		// something they never touched. Ask-first keeps one promise instead —
+		// the plan changes only after they press something.
+		//
+		// Flipping it is one constant plus a producer for AppliedOpIDs (an
+		// act-first card must name what it already did, and the store enforces
+		// that).
 		TTLPolicy: domain.TTLSilenceRejects,
 		// One card per stretch, so a second nudge cannot stack on the first.
 		MergeKey: "protector:" + runKey,
@@ -155,6 +161,12 @@ func (w *Worker) checkProtector(sid, tz string) {
 		},
 	}
 	p.ExpiresAt = domain.ProposalExpiry(p, now, loc, nil)
+	// Queued, NOT delivered. It fires at four in the morning because that is when
+	// somebody has been up for twenty hours; stamping it delivered right then
+	// makes it a card "shown" at 4am and read at noon, when it is a remark about
+	// yesterday. It becomes visible on the user's next visit, and if it lapses
+	// before that it is voided having never been shown — which is honest, because
+	// the moment it was about has passed. See proposal_delivery.go.
 	if err := w.s.store.Proposals().Create(ctx, p); err != nil {
 		jobErr = err
 		w.log.Warn("protector: could not create the card", "sid", sid, "err", err)

@@ -187,3 +187,93 @@ func TestProposalSweepIsLeaderGated(t *testing.T) {
 		t.Errorf("the leader did not sweep: %+v", got)
 	}
 }
+
+// A card made at four in the morning is not a card the user was shown at four in
+// the morning. Queued means it appears on their next visit, and if it lapses
+// before that it is voided having never been seen — which is honest, because the
+// moment it was about has passed.
+func TestQueuedProposalIsDeliveredOnTheNextVisit(t *testing.T) {
+	s, sid := sweepServer(t)
+	ctx := context.Background()
+
+	queued := seedProposal(t, s, &domain.Proposal{
+		SessionID: sid, Title: "要不要眯一会？", Origin: domain.OriginProtector,
+	})
+	if queued.DeliveredAt != nil {
+		t.Fatal("the fixture was created already delivered")
+	}
+	// Not in the stack yet: the stack requires the stamp.
+	stack, err := s.store.Proposals().List(ctx, domain.ProposalFilter{
+		SessionID: sid, State: domain.ProposalPending,
+		Delivered: domain.PresenceSet, DeliverableAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stack) != 0 {
+		t.Fatalf("a queued card is already in the stack: %+v", stack)
+	}
+
+	s.deliverQueued(ctx, sid)
+
+	got, _ := s.store.Proposals().Get(ctx, sid, queued.ID)
+	if got.DeliveredAt == nil {
+		t.Fatal("opening the app did not deliver the queued card")
+	}
+	// Idempotent: a second request must not re-stamp (which would move the
+	// "when were you shown this" answer every time they refreshed).
+	first := *got.DeliveredAt
+	s.deliverQueued(ctx, sid)
+	got, _ = s.store.Proposals().Get(ctx, sid, queued.ID)
+	if !got.DeliveredAt.Equal(first) {
+		t.Errorf("delivery stamp moved on a second visit: %v → %v", first, *got.DeliveredAt)
+	}
+}
+
+// Queued and already lapsed: voided without ever having been shown.
+func TestQueuedProposalThatLapsedIsNeverDelivered(t *testing.T) {
+	s, sid := sweepServer(t)
+	ctx := context.Background()
+
+	lapsed := seedProposal(t, s, &domain.Proposal{
+		SessionID: sid, Title: "昨天的事", Origin: domain.OriginProtector,
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+
+	s.deliverQueued(ctx, sid)
+
+	got, _ := s.store.Proposals().Get(ctx, sid, lapsed.ID)
+	if got.DeliveredAt != nil {
+		t.Error("a card that lapsed before the user opened the app was still shown to them")
+	}
+}
+
+// Only the newest of a merge group survives delivery. Superseding here rather
+// than at creation is what lets a producer keep producing while the user is away
+// without stacking N copies of the same nudge.
+func TestDeliverySupersedesOlderCardsInTheSameGroup(t *testing.T) {
+	s, sid := sweepServer(t)
+	ctx := context.Background()
+
+	older := seedProposal(t, s, &domain.Proposal{
+		SessionID: sid, Title: "第一次", Origin: domain.OriginProtector, MergeKey: "protector:run:x",
+	})
+	// Force a distinct, later creation instant: Supersede breaks ties on
+	// created_at, and two rows in the same millisecond would make this a
+	// coin flip rather than a test.
+	time.Sleep(2 * time.Millisecond)
+	newer := seedProposal(t, s, &domain.Proposal{
+		SessionID: sid, Title: "第二次", Origin: domain.OriginProtector, MergeKey: "protector:run:x",
+	})
+
+	s.deliverQueued(ctx, sid)
+
+	gotOld, _ := s.store.Proposals().Get(ctx, sid, older.ID)
+	gotNew, _ := s.store.Proposals().Get(ctx, sid, newer.ID)
+	if gotNew.DeliveredAt == nil {
+		t.Error("the newest card in the group was not delivered")
+	}
+	if gotOld.State == domain.ProposalPending && gotOld.DeliveredAt != nil {
+		t.Errorf("both cards in one merge group were delivered: %s / %s", gotOld.Title, gotNew.Title)
+	}
+}
