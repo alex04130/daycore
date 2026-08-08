@@ -463,6 +463,10 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 	var jobErr error
 	defer func() { w.finish(ctx, run, jobErr) }()
 
+	// The fact track, and the only thing in the product that may escalate:
+	// domain.BackingOf(Proposal{Origin: OriginDeadline}) is hard, which is what
+	// licenses the 24h → 12h → 1h climb. Everything soft-backed gets one
+	// delivery and never comes back louder — see domain/proposal.go.
 	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent), "rungs", rungs)
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)

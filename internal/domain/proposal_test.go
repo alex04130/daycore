@@ -201,3 +201,53 @@ func TestProposalExpiryIsNeverInThePast(t *testing.T) {
 		}
 	}
 }
+
+// The hard/soft split (adjudications 2 and 3), stated as a table so the rule is
+// readable without running it — 「是规则不是 AI 感觉——可测可断言」.
+func TestBackingIsDerivedNotAsserted(t *testing.T) {
+	cases := []struct {
+		name string
+		p    Proposal
+		want ProposalBacking
+	}{
+		{"an appointment: somebody else's time", Proposal{BType: BlockAppointment}, BackingHard},
+		{"a deadline warning carries no block type", Proposal{Origin: OriginDeadline}, BackingHard},
+		{"a study block the user pinned is still their own", Proposal{BType: BlockTask, LockLevel: LockHard}, BackingSoft},
+		{"a care nudge", Proposal{Origin: OriginProtector}, BackingSoft},
+		{"the assistant noticed a gap", Proposal{Origin: OriginDaemon, BType: BlockRelax}, BackingSoft},
+		{"a card the user summoned", Proposal{Origin: OriginUser, BType: BlockTask}, BackingSoft},
+	}
+	for _, tc := range cases {
+		if got := BackingOf(tc.p); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+		if got, want := tc.p.MayEscalate(), tc.want == BackingHard; got != want {
+			t.Errorf("%s: MayEscalate = %v, want %v", tc.name, got, want)
+		}
+	}
+}
+
+// Hardness is NOT lockedness, and conflating them would make "I decided this
+// matters to me" and "somebody else is waiting" the same thing.
+func TestHardnessIsNotLockedness(t *testing.T) {
+	pinnedStudy := Proposal{BType: BlockTask, LockLevel: LockHard}
+	looseDentist := Proposal{BType: BlockAppointment, LockLevel: LockNone}
+	if BackingOf(pinnedStudy) != BackingSoft {
+		t.Error("a hard-locked study block was treated as a hard fact — the user pinning their own intention is not somebody else waiting")
+	}
+	if BackingOf(looseDentist) != BackingHard {
+		t.Error("an unlocked appointment was treated as soft — the lock says whether it can move, not what missing it costs")
+	}
+}
+
+// Future types plug in by joining the set: no new field, no new rule.
+func TestHardBlockTypes(t *testing.T) {
+	if !BlockAppointment.HardFact() {
+		t.Error("appointment must be hard")
+	}
+	for _, t2 := range []BlockType{BlockTask, BlockBreak, BlockRelax, BlockMeal} {
+		if t2.HardFact() {
+			t.Errorf("%s is the user's own intention about their own day; treating it as hard makes the assistant nag", t2)
+		}
+	}
+}

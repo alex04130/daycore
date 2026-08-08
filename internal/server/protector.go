@@ -136,7 +136,10 @@ func (w *Worker) checkProtector(sid, tz string) {
 
 	p := &domain.Proposal{
 		ID: "pr_" + uuid.NewString(), SessionID: sid,
-		State: domain.ProposalPending, Level: domain.LevelL2, Kind: domain.KindCard,
+		// L3: the ladder's own definition of L3 is "a push, budget ≤3/day", and
+		// §5 says this nudge is worth spending one. It was L2 and pushed anyway,
+		// which made the level a label rather than a statement.
+		State: domain.ProposalPending, Level: domain.LevelL3, Kind: domain.KindCard,
 		Origin: domain.OriginProtector,
 		Title:  i18n.T(keyProtectorTitle, locale), Summary: body,
 		// Ask first, and the card moves nothing until it is answered.
@@ -184,6 +187,12 @@ func (w *Worker) checkProtector(sid, tz string) {
 
 	// Worth a push budget entry, says §5. Spending it is the caller's call, and
 	// the budget is shared with everything else that pushes today.
+	//
+	// ⚠️ This card is SOFT-backed (BackingOf → soft: it is something the
+	// assistant noticed, not a commitment anybody made), so it gets one delivery
+	// and never comes back louder. It reaches L3 anyway because L3 is about
+	// medium — "this is worth a push" — while backing is about whether it may
+	// ESCALATE. The two are independent and this is the case that shows it.
 	if w.spendPushBudget(ctx, sid, now, loc) {
 		w.sendToChannels(ctx, sid, p.Title+"\n"+body)
 		pushed := time.Now()

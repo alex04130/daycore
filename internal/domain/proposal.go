@@ -103,6 +103,54 @@ const (
 	LevelL3 ProposalLevel = "L3" // a push, budget ≤3/day
 )
 
+// ProposalBacking is what a proposal rests on, and it is what decides whether it
+// may climb the ladder (STRATEGY §六 adjudication 2).
+//
+// § 1.3's requirement, verbatim: 「提案是否升级为强制语义，看它背后有没有硬事实
+// （考试冲突的提案 = 硬；「今晚适合早睡」= 软），是规则不是 AI 感觉——可测可断言」.
+//
+// So it is derived, never asserted. BackingOf reads it off what the proposal
+// actually references; the agent does not get to pass it, because "is this
+// important" is exactly the judgement a model will get wrong in the direction of
+// interrupting more.
+type ProposalBacking string
+
+const (
+	// BackingHard: somebody else's time or a real deadline is behind this. It may
+	// escalate — re-raised at rising urgency as the moment approaches, and it
+	// does not spend the ≤3/day suggestion budget.
+	BackingHard ProposalBacking = "hard"
+	// BackingSoft: the assistant noticed something. One delivery, ever. If it is
+	// ignored it lapses and is not raised again at a louder rung, because
+	// "ignoring is always safe" (iron rule 2) is a promise and escalation would
+	// break it.
+	BackingSoft ProposalBacking = "soft"
+)
+
+// BackingOf derives what a proposal rests on.
+//
+// Derived rather than stored, and derived rather than passed in: a stored field
+// can drift from the thing it describes, and a passed-in one is the model's
+// opinion. The inputs are facts already on the row.
+func BackingOf(p Proposal) ProposalBacking {
+	if p.BType.HardFact() {
+		return BackingHard
+	}
+	switch p.Origin {
+	case OriginDeadline:
+		// A due date the user or an import put there. The archetypal hard fact.
+		return BackingHard
+	}
+	return BackingSoft
+}
+
+// MayEscalate reports whether this proposal is allowed to come back louder.
+//
+// The one rule the ladder rests on. It is a predicate on the row rather than a
+// decision at the call site so that "was this allowed to escalate" is answerable
+// after the fact from the ledger alone — which is what 「可测可断言」 asks for.
+func (p Proposal) MayEscalate() bool { return BackingOf(p) == BackingHard }
+
 // ProposalKind is how it wants to be shown. Rendering is the frontend's call —
 // a timeline app draws a ghost, a card app draws a card, a channel sends text.
 type ProposalKind string
@@ -147,6 +195,11 @@ const (
 	// should not count against the agent's rapport the way an unsolicited one
 	// does.
 	OriginUser ProposalOrigin = "user"
+	// OriginDeadline is the fact track: an assignment or exam whose due date the
+	// user or an import put there. It is the archetypal hard fact and the reason
+	// BackingOf has an origin arm at all — a deadline warning carries no BType,
+	// so hardness cannot be read off the block type alone.
+	OriginDeadline ProposalOrigin = "deadline"
 )
 
 // ── TTL defaults ────────────────────────────────────────────────────────────

@@ -43,7 +43,7 @@ const APIVersion = 1
 
 // APIMinor bumps on additive, backward-compatible contract changes (new
 // endpoints or fields). Clients may gate optional features on it.
-const APIMinor = 9
+const APIMinor = 10
 
 // MinClient is the oldest client build this server considers compatible.
 // Advisory: clients show an update hint when their own build is older.

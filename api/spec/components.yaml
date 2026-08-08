@@ -108,7 +108,20 @@ components:
             Four, not three. A silent expiry must stay distinguishable from a
             deliberate no — the ledger keeps everything, and an expired offer
             was never seen.
-        level: { type: string, enum: [L1, L2, L3], description: The attention ladder. L0 never becomes a proposal. }
+        level:
+          type: string
+          enum: [L1, L2, L3]
+          description: >-
+            The attention ladder — the MEDIUM. L1 an in-view ghost bound to a
+            slot, L2 a card in the stack, L3 a push against the ≤3/day budget.
+            L0 never becomes a proposal. Independent of whether the proposal may
+            ESCALATE, which is decided by what it rests on (see origin/btype):
+            a hard-backed one — an appointment, a deadline — may come back louder
+            as the moment approaches; a soft one gets one delivery, ever, because
+            "ignoring is always safe" is a promise and escalation would break it.
+            The distinction is derived server-side from the row, never asserted
+            by the agent: "is this important" is exactly the judgement a model
+            gets wrong in the direction of interrupting more.
         kind: { type: string, enum: [timed, card, decision] }
         title: { type: string }
         summary: { type: string }
@@ -117,7 +130,16 @@ components:
         date: { type: string }
         start: { type: string, description: "HH:MM" }
         dur: { type: integer, nullable: true }
-        btype: { type: string }
+        btype:
+          type: string
+          description: >-
+            The block type this proposal is about. "appointment" is the only
+            HARD one today — a slot somebody else is also holding — and future
+            hard types (meeting, flight, exam) join that set rather than adding a
+            field. task/break/relax/meal are the user's own intentions about
+            their own day. Deliberately NOT the same as lockLevel: a lock says
+            "this cannot move", hardness says "missing this costs somebody other
+            than you".
         lockLevel: { type: string }
         lockReason: { type: string }
         rows:
@@ -149,7 +171,15 @@ components:
             discards an undo window.
         expiresAt: { type: string, format: date-time }
         resolution: { type: string, enum: [user, silence, superseded] }
-        origin: { type: string, enum: [agent, daemon, upload, protector, user] }
+        origin:
+          type: string
+          enum: [agent, daemon, upload, protector, user, deadline]
+          description: >-
+            Which part of the system produced it. "deadline" is the fact track —
+            a due date the user or an import put there, the archetypal hard fact,
+            and the one origin that licenses escalation. "user" means the user
+            asked for this card; it matters for the ledger, since a summoned card
+            should not count against rapport the way an unsolicited one does.
         threadId: { type: string }
         rev: { type: integer, description: Optimistic concurrency — row-level accepts race otherwise. }
         createdAt: { type: string, format: date-time }
