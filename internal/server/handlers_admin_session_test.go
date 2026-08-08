@@ -208,3 +208,95 @@ func TestAdminLogoutClearsAndIsAlwaysAvailable(t *testing.T) {
 		}
 	}
 }
+
+// The reverse proxy is the normal deployment, and comparing Origin against
+// r.Host alone is how this check kills it: the browser sends the public URL,
+// while r.Host is whatever the proxy chose — and NGINX'S DEFAULT IS WRONG FOR
+// US (`proxy_pass` sets Host to the upstream address, so r.Host is
+// "daycore:8080" and every admin request 403s).
+func TestOriginCheckSurvivesAReverseProxy(t *testing.T) {
+	s := adminServer(t)
+	s.cfg.PublicBaseURL = "https://daycore.example.com"
+	tok, err := s.tokens.IssueAdmin("console")
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(mut func(*http.Request)) int {
+		return adminReq(t, s, http.MethodGet, "/api/admin/prompts", "", func(r *http.Request) {
+			r.AddCookie(&http.Cookie{Name: adminCookie, Value: tok})
+			mut(r)
+		}).Code
+	}
+
+	// The case that used to 403: a proxy that did NOT forward Host.
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore:8080" // what nginx's default proxy_pass produces
+		r.Header.Set("Origin", "https://daycore.example.com")
+	}); code != http.StatusOK {
+		t.Errorf("a correctly proxied request was refused: %d — PUBLIC_BASE_URL is what identifies this deployment", code)
+	}
+
+	// Scheme is ignored on purpose: TLS terminates at the proxy, so an https
+	// request arrives here as plain http. Comparing schemes rejects exactly the
+	// deployments that did TLS right.
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore.example.com"
+		r.Header.Set("Origin", "https://daycore.example.com")
+	}); code != http.StatusOK {
+		t.Errorf("an https Origin against a plaintext upstream was refused: %d", code)
+	}
+
+	// X-Forwarded-Host only counts from a proxy we were told to trust.
+	s.cfg.PublicBaseURL = ""
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore:8080"
+		r.Header.Set("X-Forwarded-Host", "daycore.example.com")
+		r.Header.Set("Origin", "https://daycore.example.com")
+	}); code != http.StatusUnauthorized {
+		t.Errorf("X-Forwarded-Host was believed without TRUST_PROXY_HEADERS: %d — a header a client can set is a header a client can lie with", code)
+	}
+	s.cfg.TrustProxyHeaders = true
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore:8080"
+		r.Header.Set("X-Forwarded-Host", "daycore.example.com, inner")
+		r.Header.Set("Origin", "https://daycore.example.com")
+	}); code != http.StatusOK {
+		t.Errorf("a trusted X-Forwarded-Host was ignored: %d", code)
+	}
+
+	// And a genuinely foreign origin is still refused through every path.
+	s.cfg.PublicBaseURL = "https://daycore.example.com"
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore.example.com"
+		r.Header.Set("Origin", "https://evil.example")
+	}); code != http.StatusUnauthorized {
+		t.Errorf("a foreign origin was accepted: %d", code)
+	}
+	// Including one that merely CONTAINS the real host.
+	if code := get(func(r *http.Request) {
+		r.Host = "daycore.example.com"
+		r.Header.Set("Origin", "https://daycore.example.com.evil.test")
+	}); code != http.StatusUnauthorized {
+		t.Errorf("a lookalike origin was accepted: %d", code)
+	}
+}
+
+// An intranet deployment on plain HTTP is a real case: Secure cookies are never
+// sent over http, so forcing them on would lock the operator out of their own
+// console. SECURE_COOKIES stays independently settable, and the cookie follows
+// it rather than a hardcoded true.
+func TestAdminCookieFollowsTheSecureSetting(t *testing.T) {
+	for _, secure := range []bool{true, false} {
+		s := adminServer(t)
+		s.cfg.SecureCookies = secure
+		rec := adminReq(t, s, http.MethodPost, "/api/admin/session", `{"token":"the-real-token"}`, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login: %d", rec.Code)
+		}
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == adminCookie && c.Secure != secure {
+				t.Errorf("SECURE_COOKIES=%v produced Secure=%v — an intranet install on plain http would never receive the cookie", secure, c.Secure)
+			}
+		}
+	}
+}

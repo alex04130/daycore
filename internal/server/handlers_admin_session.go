@@ -139,22 +139,90 @@ func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 
 // sameOriginRequest checks the Origin header against this deployment.
 //
-// Absent Origin is allowed: non-browser clients (curl, CI) do not send one, and
-// they are exactly the callers the header path serves. A browser always sends it
-// on a cross-origin request, which is the case being screened.
+// # Behind a reverse proxy, which is the normal deployment
+//
+// Comparing Origin against r.Host alone is how this check kills a proxied
+// install. The browser sends `https://daycore.example.com`; what the process
+// sees in r.Host depends entirely on the proxy's configuration, and NGINX'S
+// DEFAULT IS WRONG FOR US — `proxy_pass` sets Host to `$proxy_host`, the
+// upstream address, so r.Host is `daycore:8080` and every admin request is a
+// 403. deploy/nginx.conf sets `Host $host`, but the operator writing their own
+// config is the normal case and a security check that depends on somebody
+// remembering one line is not a security check.
+//
+// So the accepted set is built from everything that legitimately identifies this
+// deployment:
+//
+//	PUBLIC_BASE_URL      authoritative. The operator already had to state the
+//	                     external URL here for OAuth redirects to work, so it is
+//	                     both correct and already verified by another feature.
+//	X-Forwarded-Host     the other common proxy convention, and ONLY when
+//	                     TRUST_PROXY_HEADERS says the proxy is trusted — an
+//	                     untrusted client can set it to anything.
+//	r.Host               the direct case, and the proxied case when Host is
+//	                     forwarded properly.
+//	ALLOWED_ORIGINS      an explicit operator decision.
+//
+// # Scheme is deliberately ignored
+//
+// TLS terminates at the proxy, so a request arriving over https reaches this
+// process as plain http. Comparing schemes would reject exactly the deployments
+// that did TLS correctly. Host and port are what identify the site; the scheme
+// downgrade an attacker would need is a network position from which CSRF is the
+// least of the problems.
+//
+// # Absent Origin is allowed
+//
+// Non-browser clients (curl, CI) do not send one, and they are exactly who the
+// header path serves. A browser always sends it on a cross-origin request, which
+// is the case being screened.
+//
+// ⚠️ Deployment note that belongs next to this code: behind a proxy the process
+// should listen on 127.0.0.1 (HOST=127.0.0.1). If it is also reachable directly,
+// an attacker can address it on its own port and bypass whatever the proxy
+// enforces — including rate limits and TLS.
 func (s *Server) sameOriginRequest(r *http.Request) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
 	}
 	for _, allowed := range s.cfg.AllowedOrigins {
 		if strings.EqualFold(strings.TrimSpace(allowed), origin) {
 			return true
 		}
 	}
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
+	for _, host := range s.deploymentHosts(r) {
+		if host != "" && strings.EqualFold(host, u.Host) {
+			return true
+		}
 	}
-	return strings.EqualFold(u.Host, r.Host)
+	return false
+}
+
+// deploymentHosts lists the host:port values that legitimately mean "this
+// deployment", most authoritative first.
+func (s *Server) deploymentHosts(r *http.Request) []string {
+	hosts := make([]string, 0, 3)
+	if s.cfg != nil && s.cfg.PublicBaseURL != "" {
+		if u, err := url.Parse(s.cfg.PublicBaseURL); err == nil {
+			hosts = append(hosts, u.Host)
+		}
+	}
+	// Only from a proxy we were told to trust. TRUST_PROXY_HEADERS already gates
+	// X-Forwarded-For for the same reason: a header a client can set is a header
+	// a client can lie with, and here the lie would be "I am same-origin".
+	if s.cfg != nil && s.cfg.TrustProxyHeaders {
+		if fwd := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); fwd != "" {
+			// A proxy chain appends, so the first entry is the original client's.
+			if i := strings.IndexByte(fwd, ','); i >= 0 {
+				fwd = strings.TrimSpace(fwd[:i])
+			}
+			hosts = append(hosts, fwd)
+		}
+	}
+	return append(hosts, r.Host)
 }
