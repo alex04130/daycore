@@ -249,6 +249,36 @@ components:
           enum: ["", user, detected]
           readOnly: true
           description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
+        location:
+          type: string
+          maxLength: 128
+          description: >
+            Where this user is, as free text a weather source can resolve
+            ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+            evening briefs, which look up the weather with no model in the loop
+            and therefore cannot ask anybody where to look. The chat tool takes
+            a location as an argument, so the model can already ask about
+            anywhere — a trip's destination, next week's city — and needs
+            nothing stored.
+
+            Same precedence as timezone: setting it here is the USER choosing
+            and outranks the client's reports from then on; "" goes back to
+            following the client. A client reports its place via the location
+            field on POST /api/ai/companion.
+
+            When nothing is known — no setting, and no memory fact stating a
+            home — the brief simply has NO weather line. That is deliberate: a
+            wrong city is worse than no city, because "17°C and raining" is a
+            sentence somebody dresses by.
+
+            Free text rather than coordinates because every weather source here
+            resolves a place name itself; geocoding server-side would mean
+            owning a geocoder and disagreeing with the source.
+        locationSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the location. Read-only, like timezoneSource."
         primaryLocale:
           type: string
           description: >

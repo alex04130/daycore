@@ -250,7 +250,7 @@ paths:
         error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
         FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
         history; client roles are whitelisted to user/assistant.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, location: { type: string, maxLength: 128, description: "Where the device is, free text. Fills in or updates a device-detected location; never overwrites one the user set on the settings page. Used only by the briefs — the chat tool takes a location as an argument." }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
       responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
   /api/ai/companion/async:
     post:
@@ -265,7 +265,7 @@ paths:
         appear in the placeholder's toolEvents while still pending — answer it
         via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
         threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, location: { type: string, maxLength: 128 }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
       responses:
         '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -1307,6 +1307,36 @@ components:
           enum: ["", user, detected]
           readOnly: true
           description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
+        location:
+          type: string
+          maxLength: 128
+          description: >
+            Where this user is, as free text a weather source can resolve
+            ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+            evening briefs, which look up the weather with no model in the loop
+            and therefore cannot ask anybody where to look. The chat tool takes
+            a location as an argument, so the model can already ask about
+            anywhere — a trip's destination, next week's city — and needs
+            nothing stored.
+
+            Same precedence as timezone: setting it here is the USER choosing
+            and outranks the client's reports from then on; "" goes back to
+            following the client. A client reports its place via the location
+            field on POST /api/ai/companion.
+
+            When nothing is known — no setting, and no memory fact stating a
+            home — the brief simply has NO weather line. That is deliberate: a
+            wrong city is worse than no city, because "17°C and raining" is a
+            sentence somebody dresses by.
+
+            Free text rather than coordinates because every weather source here
+            resolves a place name itself; geocoding server-side would mean
+            owning a geocoder and disagreeing with the source.
+        locationSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the location. Read-only, like timezoneSource."
         primaryLocale:
           type: string
           description: >

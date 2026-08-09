@@ -343,7 +343,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	w.log.Info("running brief", "sid", sid, "kind", kind)
 
 	// Gather context: weather, today's plan, upcoming deadlines.
-	weatherSummary := w.lookupWeather(ctx, locale)
+	weatherSummary := w.lookupWeather(ctx, sid, locale)
 	planSummary := w.loadPlanSummary(ctx, sid, today)
 
 	// Build the prompt and call the agent.
@@ -701,15 +701,21 @@ func parseBlockTime(dateStr, timeStr string, loc *time.Location) (time.Time, err
 // always been the behaviour and it is the right one: a missing sentence beats a
 // brief that arrives late or not at all.
 //
-// ⚠️ The location is still hardcoded to 北京 — a pre-existing defect this batch
-// did not fix. Every session gets Beijing's weather regardless of where they
-// are. Fixing it needs a place on the session, which is a different change; the
-// per-session TIMEZONE landed in ζ-4 but a location did not.
-func (w *Worker) lookupWeather(ctx context.Context, locale string) string {
+// The location comes from the ladder in session_location.go, whose last rung is
+// silence. It used to be hardcoded to 北京 for every user anywhere, with
+// `// future: session setting` beside it — a confidently wrong forecast every
+// morning, which is worse than none, because "17°C and raining" is a sentence
+// somebody dresses by.
+func (w *Worker) lookupWeather(ctx context.Context, sid, locale string) string {
 	if w.s.weather == nil {
 		return ""
 	}
-	fc, err := w.s.weather.Lookup(ctx, "", domain.WeatherQuery{Location: "北京", Days: 2, Locale: locale})
+	place, _ := w.s.SessionLocation(ctx, sid)
+	if place == "" {
+		// No line rather than a guess. The brief has four other things to say.
+		return ""
+	}
+	fc, err := w.s.weather.Lookup(ctx, "", domain.WeatherQuery{Location: place, Days: 2, Locale: locale})
 	if err != nil {
 		return ""
 	}
@@ -892,6 +898,25 @@ type SessionPrefs struct {
 	// an airport. See timezone.go.
 	Timezone       string `json:"timezone,omitempty"`
 	TimezoneSource string `json:"timezoneSource,omitempty"`
+
+	// Location is where this user is, as free text a weather source can resolve
+	// ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+	// evening briefs, which query the weather without a model in the loop and
+	// therefore cannot ask anybody where to look.
+	//
+	// LocationSource mirrors TimezoneSource and carries the same rule: a client
+	// hint may fill in or update a detected value but must never overwrite what
+	// the user typed. Somebody who set their home city on purpose should not
+	// have it rewritten the first time they open the app on a train.
+	//
+	// ⚠️ Not a coordinate pair, and not derived from the timezone. Free text
+	// because every weather source in this project takes free text and resolves
+	// it itself — turning "Cambridge, MA" into a lat/lon here would mean this
+	// process owning a geocoder, and getting a different answer than the source
+	// would have. A timezone is not a location either: Asia/Shanghai covers a
+	// country.
+	Location       string `json:"location,omitempty"`
+	LocationSource string `json:"locationSource,omitempty"`
 }
 
 // DefaultPrefs returns the default (all-on) preferences.

@@ -38,6 +38,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Message             string   `json:"message"`
 		Timezone            string   `json:"timezone"`
+		Location            string   `json:"location"`
 		AssistantName       string   `json:"assistantName"`
 		ThreadID            string   `json:"threadId"`
 		AttachmentIDs       []string `json:"attachmentIds"`
@@ -59,6 +60,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	// hint we accept rather than context we refuse — see session_timezone.go for
 	// why that is not a hole in "never trust client-supplied context".
 	s.noteClientTimezone(r.Context(), sid, body.Timezone)
+	s.noteClientLocation(r.Context(), sid, body.Location)
 	atts, err := s.resolveAttachments(r.Context(), sid, body.AttachmentIDs)
 	if err != nil {
 		s.writeAttachmentErr(w, r, "aICompanion", err)

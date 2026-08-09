@@ -108,3 +108,20 @@ func (s *Server) toolListUpcoming(ctx context.Context, sid, rawArgs string) tool
 		Data:    map[string]any{"days": days, "assignments": assignments},
 		Summary: fmt.Sprintf("%d days", args.Days)}
 }
+
+// weatherIDs and searchIDs are the usable source ids for the tool band, sorted.
+// nil-safe because a Server can legitimately be built without either — a
+// deployment with no weather simply does not offer the tool.
+func (s *Server) weatherIDs() []string {
+	if s.weather == nil {
+		return nil
+	}
+	return s.weather.IDs()
+}
+
+func (s *Server) searchIDs() []string {
+	if s.search == nil {
+		return nil
+	}
+	return s.search.IDs()
+}

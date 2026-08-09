@@ -63,6 +63,17 @@ func schemaInt(desc string) map[string]any {
 	return map[string]any{"type": "integer", "description": desc}
 }
 
+// schemaEnum is a string parameter restricted to a fixed set.
+//
+// The caller passes an ALREADY SORTED slice and this does not sort it again —
+// deliberately, so there is one place that owns the ordering. Sorting in two
+// places is how two orderings appear; and the ordering is load-bearing, because
+// these bytes go into the tool band, which renders before the system prompt and
+// takes the whole cached prefix with it when it changes.
+func schemaEnum(desc string, values []string) map[string]any {
+	return map[string]any{"type": "string", "description": desc, "enum": values}
+}
+
 // visiblePlan returns the full day plan with only visible (non-hidden) blocks.
 func visiblePlan(dp *domain.DayPlan) *domain.DayPlan {
 	if dp == nil {
@@ -121,7 +132,21 @@ func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, c
 // propose_decision — a sink whose client cannot answer a card (channel replies)
 // must not offer the tool at all, or the agent would wait out the full decision
 // timeout for an answer that can never arrive.
-func companionToolDefs(caps ai.Capabilities, interactive bool) []ai.ToolDef {
+// companionToolDefs builds the tool band for one conversation round.
+//
+// weatherIDs / searchIDs are the sources currently usable, already sorted. Two
+// rules come out of docs/specs/transport.md and both are about the prompt cache
+// rather than tidiness — the tool band renders BEFORE the system prompt, and
+// the ephemeral breakpoint sits on the system block, so a band whose bytes
+// differ between rounds rewrites that breakpoint and all four layers behind it:
+//
+//   - the enum is the sorted id list, never a map iteration and never anything
+//     carrying a timestamp;
+//   - a capability with NO usable source is left out of the band entirely
+//     rather than offered and failing. The precedent is the interactive gate
+//     below: a tool that cannot succeed costs a round trip and leaves its error
+//     in the conversation.
+func companionToolDefs(caps ai.Capabilities, interactive bool, weatherIDs, searchIDs []string) []ai.ToolDef {
 	blockType := map[string]any{"type": "string", "enum": []string{"task", "appointment", "break", "relax", "meal"}, "description": "块类型，默认 task"}
 	// The mood enum is derived from the domain registry, not copied: the
 	// twelve ids are a product decision with one owner (mood_kind.go), and a
@@ -230,26 +255,47 @@ func companionToolDefs(caps ai.Capabilities, interactive bool) []ai.ToolDef {
 			}, "title", "body"),
 		},
 		{
-			Name:        "get_weather",
-			Description: "查询某地未来几天的天气预报（用户问天气、或安排户外活动前主动查）。",
-			Parameters: schemaObj(map[string]any{
-				"location": schemaStr("城市/地名，如\"上海\""),
-				"days":     schemaInt("预报天数 1-7，默认 2"),
-			}, "location"),
-		},
-		{
-			Name:        "web_search",
-			Description: "联网搜索实时信息（新闻、地点、时效性事实）。常识问题不要用。",
-			Parameters: schemaObj(map[string]any{
-				"query":       schemaStr("搜索关键词"),
-				"max_results": schemaInt("结果条数 1-5，默认 3"),
-			}, "query"),
-		},
-		{
 			Name:        "list_upcoming",
 			Description: "查看未来几天的计划与临期作业总览（回答\"这周怎么样/有空吗\"之类问题前先看）。",
 			Parameters:  schemaObj(map[string]any{"days": schemaInt("天数 1-14，默认 7")}),
 		},
+	}
+	// 天气：一个源都没有就不进工具带。
+	if len(weatherIDs) > 0 {
+		params := map[string]any{
+			// Any place, not just where the user is. The morning brief needs a
+			// stored home location because it has no model to ask; this tool has
+			// the opposite property, and saying so is what makes it usable for
+			// "what's the weather like in Kyoto next week" while planning a trip.
+			"location": schemaStr("任意城市/地名，如\"上海\"、\"京都\"。可以问用户所在地以外的地方 —— 比如商量旅行计划时查目的地。"),
+			"days":     schemaInt("预报天数 1-7，默认 2"),
+		}
+		if len(weatherIDs) > 1 {
+			// Only offered when there is a choice to make. A single-element enum
+			// is a parameter that can only be filled one way — it spends tokens
+			// and invites the model to name a source it did not need to think
+			// about.
+			params["source"] = schemaEnum("数据源；不填由后端按默认顺序挑。指定了就用那个，那个不可用会直接报错、不会悄悄换一个。", weatherIDs)
+		}
+		tools = append(tools, ai.ToolDef{
+			Name:        "get_weather",
+			Description: "查询某地未来几天的天气预报（用户问天气、安排户外活动、或商量出行计划时主动查）。",
+			Parameters:  schemaObj(params, "location"),
+		})
+	}
+	if len(searchIDs) > 0 {
+		params := map[string]any{
+			"query":       schemaStr("搜索关键词"),
+			"max_results": schemaInt("结果条数 1-5，默认 3"),
+		}
+		if len(searchIDs) > 1 {
+			params["source"] = schemaEnum("搜索源；不填由后端按默认顺序挑。", searchIDs)
+		}
+		tools = append(tools, ai.ToolDef{
+			Name:        "web_search",
+			Description: "联网搜索实时信息（新闻、地点、时效性事实）。常识问题不要用。",
+			Parameters:  schemaObj(params, "query"),
+		})
 	}
 	if interactive {
 		tools = append(tools, ai.ToolDef{

@@ -173,7 +173,11 @@ func (s *Server) handleDecisionRespond(w http.ResponseWriter, r *http.Request) {
 // propose_decision from the tool belt — for sinks whose client has no UI to
 // answer a card (channel replies).
 func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.Request, provider ai.AIProvider, sid, locale, tz string, messages []ai.Message, interactive bool) string {
-	tools := companionToolDefs(provider.Capabilities(), interactive)
+	// The usable sets are read ONCE here, not per tool call: the band must be
+	// fixed for the whole round. A source going down mid-conversation that
+	// changed the band would let the model reference a tool that just vanished,
+	// and would rewrite the cached prefix in the middle of a turn.
+	tools := companionToolDefs(provider.Capabilities(), interactive, s.weatherIDs(), s.searchIDs())
 	var answer strings.Builder // accumulated assistant text, returned for persistence
 	appendAnswer := func(text string) {
 		if text == "" {
