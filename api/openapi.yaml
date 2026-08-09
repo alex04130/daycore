@@ -1237,6 +1237,46 @@ paths:
                   configPath: { type: string }
                   note: { type: string }
         '401': { description: No admin credential. }
+  /admin:
+    get:
+      operationId: consoleIndex
+      tags: [admin]
+      summary: The operations console (static, unauthenticated)
+      description: >
+        Not an API endpoint — it serves the console's static bundle, embedded in
+        the binary. It appears in this contract because everything this deployment
+        answers appears in this contract, and because "does this build carry a
+        console" is a real question with a real answer.
+
+
+        **Deliberately unauthenticated.** Static files are not secret; every byte
+        is in the public repository, and gating the HTML would only produce a
+        login page that cannot render its own login form. The credential check is
+        on `/api/admin/*`, where the data is.
+
+
+        ⚠️ The consequence, and it is a real constraint on the console: nothing in
+        that bundle may carry a secret, a deployment-specific value, or anything
+        the API would refuse to serve unauthenticated.
+
+
+        404 with an explanation when this build carries no console (`-tags lite`,
+        or a clone where web/console was never built).
+      responses:
+        '200': { description: The console HTML. }
+        '404': { description: This build carries no console. }
+  /admin/:
+    get:
+      operationId: consoleAsset
+      tags: [admin]
+      summary: Console assets and client-side routes
+      description: >
+        Real files are served as themselves; anything else falls through to
+        index.html, because an unknown path under /admin is a client-side route
+        rather than a missing file.
+      responses:
+        '200': { description: An asset, or index.html for a client-side route. }
+        '404': { description: This build carries no console. }
 
   # ─── meta ─────────────────────────────────────────────────────────────────
   /api/healthz:

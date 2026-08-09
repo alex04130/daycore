@@ -16,6 +16,8 @@
     "DELETE /api/rules/{id} deleteRule",
     "DELETE /api/themes/{id} deleteTheme",
     "DELETE /api/wishes/{id} deleteWish",
+    "GET /admin consoleIndex",
+    "GET /admin/ consoleAsset",
     "GET /api/admin/ailogs adminAILogs",
     "GET /api/admin/config adminConfigGet",
     "GET /api/admin/db/backup adminDBBackup",

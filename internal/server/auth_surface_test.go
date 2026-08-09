@@ -43,6 +43,17 @@ var publicRoutes = map[string]string{
 	// Own credential, not a session.
 	"POST /api/channels/{channel}/verify": "the binding token in the body IS the credential — " +
 		"the channel side (a bot) calls this, and it has no session by construction",
+	// Static files, not data. Every byte of the console bundle is in the public
+	// repository, so gating the HTML would only produce a login page that cannot
+	// render its own login form. The credential check is on /api/admin/*, where
+	// the data is.
+	//
+	// ⚠️ The consequence, and it is a real constraint on the console: nothing in
+	// that bundle may carry a secret, a deployment-specific value, or anything
+	// the API would refuse to serve unauthenticated.
+	"GET /admin":  "static console bundle; the credential check is on /api/admin/*",
+	"GET /admin/": "same",
+
 	"POST /api/import/canvas": "X-Import-Token (browser extension push)",
 	"POST /api/import/ics":    "X-Import-Token",
 

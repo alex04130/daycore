@@ -90,7 +90,13 @@ func (s *Server) DegradedReason() string {
 var degradedRoutes = []string{
 	"/api/healthz", // must answer, and answers 503
 	"/api/version", // contract negotiation; reads no rows
-	"/api/admin/",  // the console, including its login (F4a built it DB-free)
+	"/api/admin/",  // the console's API, including its login (F4a built it DB-free)
+	// The console's own HTML and assets (F5). This line was missing for as long
+	// as the console was only an API: the comment above said "the console" and
+	// meant the endpoints, so the day a page appeared at /admin it would have
+	// been refused with 503 — in the one state the whole degraded design exists
+	// to serve. Static files need no database, so there is nothing to weigh.
+	"/admin",
 }
 
 var keyDegraded = i18n.Reg("server.degraded", i18n.Text{
