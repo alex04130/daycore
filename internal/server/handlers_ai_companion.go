@@ -229,6 +229,10 @@ func (s *Server) companionSystemPrompt(ctx context.Context, sid, locale, tz, nam
 		MemoryFacts:        s.memoryFactsContext(ctx, sid),
 		AssignmentsContext: assignmentsCtx, RulesContext: rulesCtx,
 		MoodHistory: s.moodHistoryContext(ctx, sid),
+		// Built from the SAME usable set the tool band's enum came from, in the
+		// same round. A description naming a source the model cannot call is
+		// worse than no description: it invites a call that fails.
+		Sources: s.sourceLines(locale),
 	})
 	if err != nil {
 		return "", err

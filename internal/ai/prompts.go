@@ -260,6 +260,18 @@ type CompanionAgentData struct {
 	// Intentionally empty — L1 is a pure rule list with no template variables.
 }
 
+// SourceLine is one available capability source, as the model sees it.
+type SourceLine struct {
+	// Tool is the tool that reaches it ("get_weather", "web_search"), so the
+	// model can connect the description to the call it would make.
+	Tool string
+	// ID is what goes in the tool's `source` parameter.
+	ID string
+	// Text is the approved sentence, or the mechanical fallback. Never an
+	// adapter's own words.
+	Text string
+}
+
 // CompanionContextData feeds prompts/<locale>/companion_context.tmpl (L3 data
 // block, re-rendered per turn).
 type CompanionContextData struct {
@@ -272,6 +284,27 @@ type CompanionContextData struct {
 	AssignmentsContext            string // markdown/JSON summary of upcoming assignments
 	RulesContext                  string // JSON summary of schedule rules (with ids)
 	MoodHistory                   string // JSON
+	// Sources is the external capability sources available RIGHT NOW, each with
+	// the one sentence the operator approved for it — or a mechanical fallback.
+	//
+	// # Why this is L3 and not L1
+	//
+	// docs/specs/provider-protocol.md said companion_agent.tmpl (L1). That was
+	// the wrong home and the file itself says why: L1 is a pure rule list with
+	// no interpolation, deliberately, because it is the boundary block. This is
+	// DATA that changes between turns — a source going unhealthy removes a line.
+	// Rules that vary are not rules, and a boundary block that is re-rendered per
+	// turn is one nobody can reason about.
+	//
+	// L3 is already the per-turn data block, already carries WeatherSummary, and
+	// is already expected to differ every round. Nothing that was stable becomes
+	// unstable by putting it here.
+	//
+	// ⚠️ Every string in here has been through Source.PromptDescription, which is
+	// the approval gate. An adapter's own self-reported description NEVER reaches
+	// this field — see internal/adapters/source.go and the two gates that make
+	// removing that a deliberate act.
+	Sources []SourceLine
 }
 
 // ThemeGenData feeds prompts/<locale>/theme_gen.tmpl.

@@ -16,3 +16,14 @@
 - Upcoming assignments: {{.AssignmentsContext}}
 - Long-term / recurring rules (with ids): {{.RulesContext}}
 - Recent moods: {{.MoodHistory}}
+{{- if .Sources}}
+
+### Available external sources
+`get_weather` and `web_search` take an optional `source` — name one of these, or
+omit it and the backend picks in order. A named source that is unavailable
+FAILS rather than silently becoming a different one, so if that happens, say so
+or try another.
+{{- range .Sources}}
+- `{{.ID}}` for `{{.Tool}}`: {{.Text}}
+{{- end}}
+{{- end}}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"daycore/internal/ai"
 	"daycore/internal/domain"
 )
 
@@ -124,4 +125,42 @@ func (s *Server) searchIDs() []string {
 		return nil
 	}
 	return s.search.IDs()
+}
+
+// sourceLines is the per-turn description block for L3.
+//
+// # Everything here has been through the approval gate
+//
+// Source.PromptDescription returns the operator's text only when it has been
+// approved against a hash of those exact words, and otherwise a sentence built
+// from the id and format. An adapter's own self-reported description cannot
+// reach this function — see internal/adapters/source.go and the two structural
+// gates that make removing that separation something a person has to do on
+// purpose.
+//
+// # It is built from the same set as the tool enum, in the same round
+//
+// Describing a source the model cannot call is worse than describing nothing:
+// it invites a call that fails and spends a round trip on it. Both come from
+// IDs()/Describe() and both are read once per round.
+func (s *Server) sourceLines(locale string) []ai.SourceLine {
+	out := []ai.SourceLine{}
+	if s.weather != nil {
+		for _, d := range s.weather.Describe(locale) {
+			out = append(out, ai.SourceLine{Tool: "get_weather", ID: d[0], Text: d[1]})
+		}
+	}
+	if s.search != nil {
+		for _, d := range s.search.Describe(locale) {
+			out = append(out, ai.SourceLine{Tool: "web_search", ID: d[0], Text: d[1]})
+		}
+	}
+	// Nothing to say when a capability has one source: the model has no choice
+	// to make, the tool has no `source` parameter (companionToolDefs omits a
+	// single-element enum), and a line explaining a decision nobody can take is
+	// tokens spent on every turn of every conversation.
+	if len(out) < 2 {
+		return nil
+	}
+	return out
 }

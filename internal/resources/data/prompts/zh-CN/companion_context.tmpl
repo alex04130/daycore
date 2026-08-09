@@ -16,3 +16,12 @@
 - 临期作业：{{.AssignmentsContext}}
 - 长期/重复规则（带 id）：{{.RulesContext}}
 - 近期情绪：{{.MoodHistory}}
+{{- if .Sources}}
+
+### 可用的外部数据源
+调用 `get_weather` / `web_search` 时可以用 `source` 参数点名其中一个；不点名由后端按顺序挑。
+点名的源如果不可用会**直接报错，不会悄悄换一个** —— 那时如实告诉用户，或者换个源再试。
+{{- range .Sources}}
+- `{{.Tool}}` 的 `{{.ID}}`：{{.Text}}
+{{- end}}
+{{- end}}
