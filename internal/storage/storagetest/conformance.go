@@ -124,6 +124,7 @@ var cases = []suiteCase{
 	{"Attachment/DeleteByThreadTakesItsBytes", attachmentDeleteByThread},
 	{"Attachment/PruneReclaimsOnlyUnsentUploads", attachmentPruneUnbound},
 	{"Setting/OverrideRoundTripAndReset", settingRoundTrip},
+	{"ProviderOverride/TriStateEnabledAndApprovalRevoke", providerOverrideRoundTrip},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1866,5 +1867,116 @@ func settingRoundTrip(t *testing.T, h Harness) {
 	// An empty key is a row nothing can ever read back.
 	if err := s.Settings().Set(ctx, "", "x"); err == nil {
 		t.Error("an empty key was accepted")
+	}
+}
+
+// providerOverrideRoundTrip covers the console-editable half of a capability
+// source. Three properties, and each one is a behaviour a back end could
+// plausibly get wrong on its own:
+//
+//   - Enabled is TRI-state. nil ("no opinion, use the file"), false ("off") and
+//     true are three different answers, and a back end that stores a Go bool
+//     collapses the first two — which silently turns "I never touched this" into
+//     "I turned it off" for every source in a fresh deployment.
+//   - The key is composite. Two capabilities may each have a source called
+//     "primary"; a back end keyed on id alone lets one overwrite the other.
+//   - Editing a description must not carry its approval along. The hash is what
+//     approval was granted against, and the whole gate rests on the store
+//     round-tripping it faithfully.
+func providerOverrideRoundTrip(t *testing.T, h Harness) {
+	ctx := bg()
+	repo := h.Store().ProviderOverrides()
+
+	on, off := true, false
+	if err := repo.Set(ctx, domain.ProviderOverride{
+		Kind: "weather", ID: "primary", Enabled: &off,
+		Description:     map[string]string{"zh-CN": "内网天气", "en-US": "intranet weather"},
+		DescriptionHash: "h1", Approved: true,
+	}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	// Same id, different capability: must be a separate row.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "search", ID: "primary", Enabled: &on}); err != nil {
+		t.Fatalf("set second kind: %v", err)
+	}
+	// No opinion at all — neither on nor off.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "channel", ID: "qq"}); err != nil {
+		t.Fatalf("set third: %v", err)
+	}
+
+	all, err := repo.All(ctx)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("All returned %d rows, want 3 — (kind, id) is the key, so weather/primary and search/primary are different rows", len(all))
+	}
+	byKey := map[string]domain.ProviderOverride{}
+	for _, o := range all {
+		byKey[o.Kind+"/"+o.ID] = o
+	}
+
+	w := byKey["weather/primary"]
+	if w.Enabled == nil || *w.Enabled {
+		t.Errorf("weather/primary Enabled = %v, want an explicit false", w.Enabled)
+	}
+	if w.Description["zh-CN"] != "内网天气" || w.Description["en-US"] != "intranet weather" {
+		t.Errorf("description did not round-trip: %v", w.Description)
+	}
+	if w.DescriptionHash != "h1" || !w.Approved {
+		t.Errorf("approval did not round-trip: hash=%q approved=%v", w.DescriptionHash, w.Approved)
+	}
+	if e := byKey["search/primary"].Enabled; e == nil || !*e {
+		t.Errorf("search/primary Enabled = %v, want true", e)
+	}
+	if e := byKey["channel/qq"].Enabled; e != nil {
+		t.Errorf("channel/qq Enabled = %v, want nil — 'no opinion' and 'off' are different answers", *e)
+	}
+
+	// Editing the description must not carry the old approval with it. The store
+	// only has to persist what it is given, but a back end that ignores a field
+	// on update would leave a source approved against text nobody read.
+	if err := repo.Set(ctx, domain.ProviderOverride{
+		Kind: "weather", ID: "primary", Enabled: &off,
+		Description:     map[string]string{"zh-CN": "改过了", "en-US": "edited"},
+		DescriptionHash: "h2", Approved: false,
+	}); err != nil {
+		t.Fatalf("re-set: %v", err)
+	}
+	all, _ = repo.All(ctx)
+	if len(all) != 3 {
+		t.Errorf("re-setting an existing (kind, id) inserted a row instead of updating: %d rows", len(all))
+	}
+	for _, o := range all {
+		if o.Kind == "weather" && o.ID == "primary" {
+			if o.Approved || o.DescriptionHash != "h2" || o.Description["en-US"] != "edited" {
+				t.Errorf("the edit did not land: %+v", o)
+			}
+		}
+	}
+
+	// Clearing the opinion has to be expressible, or the console can never undo
+	// a change it made.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "search", ID: "primary"}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	all, _ = repo.All(ctx)
+	for _, o := range all {
+		if o.Kind == "search" && o.Enabled != nil {
+			t.Errorf("Enabled could not be cleared back to nil: %v", *o.Enabled)
+		}
+	}
+
+	if err := repo.Delete(ctx, "weather", "primary"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := repo.Delete(ctx, "weather", "primary"); err != nil {
+		t.Errorf("deleting an absent override is not idempotent: %v", err)
+	}
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "", ID: "x"}); err == nil {
+		t.Error("an override with no kind was accepted; it would be unreachable by every reader")
+	}
+	if all, _ = repo.All(ctx); len(all) != 2 {
+		t.Errorf("after one delete: %d rows, want 2", len(all))
 	}
 }

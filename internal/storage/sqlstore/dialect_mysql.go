@@ -337,6 +337,16 @@ func (mysqlDialect) Migrations() []string {
 			value TEXT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS provider_overrides (
+			kind VARCHAR(32) NOT NULL,
+			provider_id VARCHAR(128) NOT NULL,
+			enabled TINYINT(1),
+			description_json TEXT,
+			description_hash VARCHAR(64) NOT NULL DEFAULT '',
+			approved TINYINT(1) NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (kind, provider_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id VARCHAR(191) PRIMARY KEY,
 			session_id VARCHAR(191) NOT NULL,

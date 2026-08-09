@@ -45,6 +45,12 @@ type Store interface {
 	// setting.go and internal/config/layer.go.
 	Settings() SettingRepository
 
+	// ProviderOverrides is the console-editable half of an external capability
+	// source. The other half lives in config/providers.yaml and is boot-layer —
+	// see provider.go for the line between them and why the console never
+	// writes the file.
+	ProviderOverrides() ProviderOverrideRepository
+
 	// Attachments is the ownership half of the file bus: internal/blob maps refs
 	// to bytes and knows nothing about sessions, so these rows are what makes a
 	// ref safe to resolve. See attachment.go.

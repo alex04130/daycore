@@ -352,6 +352,16 @@ func (postgresDialect) Migrations() []string {
 			value TEXT NOT NULL DEFAULT '',
 			updated_at BIGINT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS provider_overrides (
+			kind TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			enabled BOOLEAN,
+			description_json TEXT NOT NULL DEFAULT '',
+			description_hash TEXT NOT NULL DEFAULT '',
+			approved BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (kind, provider_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
