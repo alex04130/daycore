@@ -145,13 +145,60 @@ v2 (beta)  ──小范围内测──▶  v2 继续改  ──公测──▶  
 
 ### θ F 系列
 
-~~F1 配置分层~~ → ~~**F4a 管理面鉴权改造 + 存储降级启动**~~ → ~~F4b 配置端点~~ ✅ → F4b 余下三段（模型 / OAuth / providers）→ F5 控制台 → F7 主题 family → F8b HTTP/子进程存储后端。
+~~F1 配置分层~~ → ~~**F4a 管理面鉴权改造 + 存储降级启动**~~ → ~~F4b 配置端点~~ ✅ → **F2-A 源即配置** → F5 控制台（含 F4b 余下三段）→ F2-B 外部适配层 → F7 主题 family → F8b HTTP/子进程存储后端。
+
+> ⚠️ **F2 此前不在这条链上**（2026-08-08 发现）。它只在 `docs/specs/provider-protocol.md:3` 和上面 F4b 那条里被顺带提到，于是「协议已定案、未实现」这个状态没有任何排期承接它。**F2 排在 F5 之前**：控制台的「模型 / OAuth / 服务配置」三个分区渲染的就是 providers 那套 manifest，形状不定就得为每个 provider 手写一遍卡片。
 
 - ✅ **F1 配置分层**（2026-08-07，见 [CONFIG.md](CONFIG.md)）—— 40 个旋钮全部标了启动期/运行时/是否密钥，`TestEveryConfigFieldIsClassified` 让**新加一个没分类的字段直接红**（两个方向都查）。它防的是配置界面最贵的那种 bug：一个被错标成运行时的旋钮 = 控制台改了、进程无视，「我明明关了它还在做」，而它看起来像功能正常。
 - ✅ **F4a 管理面鉴权改造 + 存储降级启动**（2026-08-07，见 [AUTH.md](AUTH.md) 与 [ARCHITECTURE.md](ARCHITECTURE.md)）—— 两半都完成。同批设计的价值当场兑现：降级模式下管理面登录能用，**因为鉴权那一半是按「一处都不碰数据库」做的**，有一条测试把两者钉在一起。
 - ✅ **F4b 配置那一段**（2026-08-07，见 [CONFIG.md](CONFIG.md) 与 [DATA.md](DATA.md)）—— `settings` 表 + `GET·PUT /api/admin/config`。F1 有意留下的那块（表的唯一消费者是控制台端点）在这里合上，两件事同批落地，所以本仓「写完、测过、没人调用」没有第七次。运行时快照走 `atomic.Pointer`，`TestRuntimeFieldsAreReadThroughTheSnapshot` 是 AST 闸门 —— 把一处 `s.runtime()` 改回 `s.cfg` 就红，否则覆盖会在下一次有人顺手改回去时静默失效。`APIMinor` 11 → 12。
 
   ⬜ **F4b 还剩三段：模型 / OAuth / providers**。它们**不是同一个形状**，所以没有跟着这一批做：配置端点写的是 `settings` 表里的标量，那三段编辑的是 YAML 文件（`models.yaml` / `oauth.yaml`），而 `providers.yaml` 属于 F2 且还没设计。硬凑成一个端点等于把两种生命周期不同的东西塞进一个契约。
+
+### F2 一分为二（2026-08-08 裁决）
+
+九路设计+对抗审查跑完（六维设计 / 三镜头对抗，50 条裁决、7 条致命、19 条严重）。**六个维度对同一批东西给出了互相排斥的批次边界** —— 这本身是最有价值的产出：不裁决就动手，等于让实现者在六份互相矛盾的论证里二选一，而每次选择都不留记录。
+
+分界线只有一条：**这台机器上能不能证伪。** 仓内外零个外部适配层，用 `httptest` 起一个假适配层再用我们自己写的 client 连上去，能证明的只有「帧和我们写下来的一致」—— 那是把规范抄了两遍然后比对，不是验证。
+
+**F2-A「源即配置」** —— 每一块都有真调用方、都能在本机跑：
+
+| 项 | 内容 |
+|---|---|
+| `config/providers.yaml` + 加载器 | 只有 `format: builtin`，绑已注册的内置实现 |
+| `internal/search` 注册表化 | tavily / duckduckgo 变子包 init 自注册，照 `internal/weather` 的形状；`search.New()` 不再自己 `os.Getenv` |
+| 删掉天气的跨源 chain | `weather.go` 的 primary→wttr.in 是**跨源**降级，正是要废掉的东西（`transport.md:159` 已裁决「没有东西可搬，chain 是删掉」）；它今天还把 primary 的错误静默吞掉，包里连 logger 都没有 |
+| 多源工具 | `get_weather(location, days, source?)` / `web_search(query, max_results, source?)`，enum = 配置里构造成功的源 |
+| 缓存键换成条目 id | 现在键的第一段是**实现**的 `Name()`（硬编码字符串），两个都配 qweather 的条目会串答案 |
+| `GET /api/admin/providers` | **只读** |
+| `WEATHER_PROVIDER` 保留 | 字段不删，语义改成「默认顺序第一位」 |
+
+**F2-B「外部适配层」** —— 与第一个真实 http 适配层同批，不早于它：`format: http` / `exec`、manifest 拉取、logo 校验、状态码映射、预算化重试、`X-Daycore-Deadline-Ms`、健康状态机（迟滞/半开/退避）、description 注入与批准门。
+
+### 七条致命裁决
+
+1. **`format: http` 不进第一批。** 它是第七次「写完、测过、零生产调用方」，而且在这台机器上无法被证伪。同批把 `transport.md` 与 `provider-protocol.md` 的 http **和** exec 两节一起标 ⬜ 未实现 —— 只标一半比不标更误导。
+2. **健康状态机不进第一批。** 第一批的可用集合 = 「配了、且 factory 构造出非 nil」，启动时算一次的**进程常量**。这正好让 `source` 的 enum 天然稳定、纯函数闸门天然成立、提示词缓存不被打断（工具带一变，`cache_control` 断点连同它后面整个四层 system prompt 一起重写）。可用性真的会变、且失败原因值得记录的，只有外部适配层那一种源。
+3. **`provider_overrides` 表不建。** `enabled` 就是 `providers.yaml` 里的一个布尔，与 `id`/`format` 同层、同样「改文件 + 重启」。等 F5 控制台真需要「不登机器就能关掉一个源」时再建，那时它的第一个消费者是一个存在的界面。
+4. **`/api/admin/providers` 只读。** 描述的唯一来源是 `providers.yaml`。它的正确类比是 `boundaries.json`（**有意没有 DB 层** —— 能从控制台改的边界等于能被删），不是 `prompt_overrides`。`PUT` 整体推到 F5。
+5. **`Config.WeatherProvider` 不删，只改语义。** 删它对既有部署是净损失：要同改 `install.go` 三个分支 + `.env.example`，还会在升级过的库里留下一条**控制台看不见、也删不掉**的 `settings` 覆盖行，每次 reload 打一条 Warn —— 正是 F1 存在的那类失败，从反方向来的。
+   ⬜ 由此新增一条通用规则待写：**「已删除的配置项留下的覆盖行怎么办」** 要进 `CONFIG.md`，F2 之后还会有第二次。
+6. **Set 的天气面签名必须先写死再动手**：`Lookup(ctx, id string, q WeatherQuery)`，`id` 为空 = 按默认顺序取第一个。`Deps.Weather` 从 `domain.WeatherProvider` 换成这个新类型，`domain.WeatherProvider` 本身不动（它仍是**单个源**的接口）。共享 cached 夹在 Set 与各 provider 之间，健康记账包在 cached **外**侧（缓存命中不该记成一次成功调用）。这一条不定，多源/缓存/健康三块没法同时写。
+7. **抽的是传输，不是能力。** 天气与搜索各留各的 typed 注册表（共用一个泛型注册表能省的是 23 行，代价是每个 provider 子包多一个类型参数，净亏）。新包 `internal/adapters` 只装对能力载荷一无所知的东西。判据是「字节一不一样」，不是「概念像不像」。
+
+### F2-A 明确不做的（写下来，免得被当成疏漏补齐）
+
+- **简报路径的天气文本仍然直接进 system prompt**（`worker.go:348` → `brief.tmpl` 的 `{{if .Weather}}`，以 `RoleSystem` 送出）。第一批的源全是四个内置实现打已知 API，所以这条**今天**的暴露面很窄；接第三方源的那一批（F2-B）必须同时堵它，而且不能照抄工具那条的包裹 —— **工具结果包一层就够，system prompt 里嵌一段不信任文本是另一回事**。
+- **半开探测（将来做的时候）只限交互式 agent 路径**，简报路径永远只取健康集合里的第一个、绝不当探针。否则一个死掉的源恢复检测的成本，由那个部署一天仅有的两次天气调用来支付。
+- **`manifest.description` 永不自动注入**（F2-B 的边界）。运维手抄进 `providers.yaml` 才算数。⚠️ 这条读起来像纯粹的冗余劳动，**修掉它只要一行、没有任何测试会红，而它一旦被修掉整道批准门当场归零** —— 落地时必须结构上分成两个字段名，让它们不能互相赋值。
+
+### 顺带核实出的既有问题
+
+- `docs/ARCHITECTURE.md`「多个搜索源各自注册成工具」与 `transport.md:148` 的「一种能力一个工具、源是参数」**直接冲突**，后者更新（2026-07-29 更正记录）。F2-A 同批修掉前者。
+- `docs/AI.md` 称「anthropic 支持 ServerSide 工具」——**这句是假的**：`formats/anthropic` 序列化 tools 时只输出 `{Name, Description, InputSchema}`，全仓 `ServerSide` 在 `formats/` 下零命中。
+- `transport.md:74` 规定健康端点是 `GET /v0/capabilities`，`provider-protocol.md:24` 用的是 `GET /v0/manifest` —— 共用规范与分册又一次打架（与该文件已记录的 `/v1/`→`/v0/` 同类）。
+- `TAVILY_API_KEY` / 三把模型 key **结构性地不在配置分类闸门的视野内**：闸门走 `reflect.TypeOf(Config{})` 的字段，而这些键根本不是 `Config` 字段。`CONFIG.md` 里没有一句说明「有一类环境变量本表不覆盖」。
+- **APIMinor 升位不是闸门守住的、是人守住的**。`AGENTS.md` 与 `DEVELOPING.md` 说「有测试盯着」——盯着的是路由↔openapi 双向与 bundle 新鲜度，不是版本号。
 
 F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** —— 行为套件已就位，第五个后端什么时候接，验收标准都是同一套行为套件。
 
