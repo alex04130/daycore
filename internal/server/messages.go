@@ -120,6 +120,7 @@ func init() {
 	i18n.Register("err.aICompanionAsync.too_many_attachments", i18n.Text{"zh-CN": "一条消息最多带 %d 个附件"})
 	i18n.Register("err.aICompanionAsync.attachment_internal", i18n.Text{"zh-CN": "读取附件失败"})
 	i18n.Register("err.sessionPreferences.bad_timezone", i18n.Text{"zh-CN": "时区名不认识 —— 需要 IANA 格式，比如 Asia/Shanghai"})
+	i18n.Register("err.adminHealth.unauthorized", i18n.Text{"zh-CN": "需要管理凭据"})
 	i18n.Register("err.adminModels.unauthorized", i18n.Text{"zh-CN": "需要管理凭据"})
 	i18n.Register("err.adminProviders.unauthorized", i18n.Text{"zh-CN": "需要管理凭据"})
 	i18n.Register("err.adminProviders.degraded", i18n.Text{"zh-CN": "存储不可用 —— 覆盖表在数据库里，改不了。这个页面仍然能读。"})

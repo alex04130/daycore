@@ -24,6 +24,7 @@
     "GET /api/admin/db/export adminDBExport",
     "GET /api/admin/db/table/{name} adminDBBrowse",
     "GET /api/admin/db/tables adminDBTables",
+    "GET /api/admin/health adminHealth",
     "GET /api/admin/models adminModelsGet",
     "GET /api/admin/oauth adminOAuthGet",
     "GET /api/admin/prompts adminListPrompts",

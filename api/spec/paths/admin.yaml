@@ -428,3 +428,61 @@
     responses:
       '200': { description: An asset, or index.html for a client-side route. }
       '404': { description: This build carries no console. }
+/api/admin/health:
+  get:
+    operationId: adminHealth
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: What the overview screen needs, in one call
+    description: >
+      `/api/healthz` is unauthenticated and therefore cannot say anything
+      useful: it reports that storage is unavailable and deliberately refuses to
+      say why, because a driver error routinely carries the DSN and a DSN
+      routinely carries a password. Its own comment promised that "the operator
+      gets the reason through the console" — and until this endpoint existed
+      that was true of no code at all. `DegradedReason()` had exactly one
+      caller: a log line in main.
+
+
+      Three things live here and nowhere else:
+
+      - `reason` — the actual driver error. The most useful string in a broken
+        deployment, and the one thing the public endpoint must not say.
+
+      - `uptimeSec` / `startedAt` — "did this just restart" is how an operator
+        tells a configuration problem from a crash loop.
+
+      - `instance` — health is per process by design, so two consoles behind a
+        load balancer legitimately disagree. Without a name attached that is an
+        unexplainable bug report rather than a fact.
+
+
+      Three states, not two: degraded (storage never opened), running with an
+      unreachable database (`dbReachable:false`), and healthy. The middle one is
+      invisible to a boolean.
+
+
+      ⚠️ Answers **200** in all three — the request to this server succeeded and
+      found something out. A 503 here would make the console show "the admin API
+      is broken" over what is, in fact, the answer.
+    responses:
+      '200':
+        description: The state of this process
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                degraded: { type: boolean, description: Storage never opened. One-way; the only exit is a restart. }
+                dbReachable: { type: boolean, description: Absent when degraded — there is no database to reach. }
+                reason: { type: string, description: The driver error. Present only when something is wrong. }
+                recovery: { type: string, description: Present when degraded, because there is no retry button and somebody will look for one. }
+                instance: { type: string }
+                startedAt: { type: string, format: date-time }
+                uptimeSec: { type: integer }
+                db: { type: string }
+                env: { type: string }
+                build: { type: string }
+                channel: { type: string }
+                console: { type: boolean, description: Whether this build carries the console bundle. }
+      '401': { description: No admin credential. }
