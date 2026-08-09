@@ -54,6 +54,11 @@ type Config struct {
 	// AI — model catalog + OAuth providers are loaded from these files by main.go.
 	ModelsConfigPath string
 	OAuthConfigPath  string
+	// ProvidersConfigPath declares external capability sources — weather,
+	// search, messaging channels. Boot-layer for the same reason as the two
+	// above: the process builds an HTTP client or looks up a registered factory
+	// out of every entry at startup.
+	ProvidersConfigPath string
 	// BlobStore selects the file-bus driver ("local", …; empty = no file bus).
 	// Every feature that needs one checks and degrades to saying so, because
 	// running without it is a supported configuration.
@@ -107,6 +112,7 @@ type Config struct {
 	// Weather — provider selection + keys. Empty keys fall back to the free
 	// default (open-meteo) with wttr.in as a chained fallback.
 	WeatherProvider   string
+	TavilyKey         string
 	QWeatherKey       string
 	OpenWeatherMapKey string
 
@@ -169,6 +175,7 @@ func Load() (*Config, error) {
 		PublicBaseURL:           getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		ModelsConfigPath:        getEnv("MODELS_CONFIG", "config/models.yaml"),
 		OAuthConfigPath:         getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
+		ProvidersConfigPath:     getEnv("PROVIDERS_CONFIG", "config/providers.yaml"),
 		PromptsDir:              getEnv("PROMPTS_DIR", ""),
 		BlobStore:               getEnv("BLOB_STORE", ""),
 		DataDir:                 getEnv("DATA_DIR", ""),
@@ -188,6 +195,7 @@ func Load() (*Config, error) {
 		OneBotToken:             getEnv("ONEBOT_TOKEN", ""),
 		WorkerDefaultTZ:         getEnv("WORKER_DEFAULT_TZ", "Asia/Shanghai"),
 		WeatherProvider:         getEnv("WEATHER_PROVIDER", "open-meteo"),
+		TavilyKey:               getEnv("TAVILY_API_KEY", ""),
 		QWeatherKey:             getEnv("QWEATHER_API_KEY", ""),
 		OpenWeatherMapKey:       getEnv("OPENWEATHERMAP_API_KEY", ""),
 	}

@@ -16,6 +16,7 @@ import (
 //go:embed data/prompts/boundaries.json
 //go:embed data/seed/models.yaml
 //go:embed data/seed/oauth.yaml
+//go:embed data/seed/providers.yaml
 var embedded embed.FS
 
 // Lite reports whether this binary was built with -tags lite.

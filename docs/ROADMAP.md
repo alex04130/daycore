@@ -165,16 +165,16 @@ v2 (beta)  ──小范围内测──▶  v2 继续改  ──公测──▶  
 
 | 项 | 内容 |
 |---|---|
-| `config/providers.yaml` + 加载器 | `format: builtin`（绑已注册的内置实现）+ `format: http`（外部适配层） |
-| 参考适配层 `tools/adapter-example/` | 独立进程说这套协议，e2e 用真子进程跑；同时是第三方的可运行示例 |
+| `config/providers.yaml` + 加载器 | ✅ `format: builtin`（绑已注册的内置实现）+ `format: http`（外部适配层） |
+| 参考适配层 `tools/adapter-example/` | ⬜ 还没写 |
 | `provider_overrides` 表 + `GET·PUT /api/admin/providers` | 只覆盖 `enabled` / `description` / `approved` 三项，见下「配置文件怎么改」 |
-| 健康状态机 | 迟滞 N=3、半开探测（只在交互式 agent 路径）、退避；工具带字节必须是纯函数输出 |
-| `internal/search` 注册表化 | tavily / duckduckgo 变子包 init 自注册，照 `internal/weather` 的形状；`search.New()` 不再自己 `os.Getenv` |
-| 删掉天气的跨源 chain | `weather.go` 的 primary→wttr.in 是**跨源**降级，正是要废掉的东西（`transport.md:159` 已裁决「没有东西可搬，chain 是删掉」）；它今天还把 primary 的错误静默吞掉，包里连 logger 都没有 |
-| 多源工具 | `get_weather(location, days, source?)` / `web_search(query, max_results, source?)`，enum = 配置里构造成功的源 |
-| 缓存键换成条目 id | 现在键的第一段是**实现**的 `Name()`（硬编码字符串），两个都配 qweather 的条目会串答案 |
-| `GET /api/admin/providers` | **只读** |
-| `WEATHER_PROVIDER` 保留 | 字段不删，语义改成「默认顺序第一位」 |
+| 健康状态机 | ✅ 迟滞 N=3、半开探测（只在交互式 agent 路径）、退避；工具带字节是纯函数输出。**缓存命中不算一次成功调用** —— 算了的话一个死掉的源会在整个 30 分钟 TTL 里保持「健康」，而那正是有人在查什么坏了的那半小时 |
+| `internal/search` 注册表化 | ✅ 拆成 `internal/websearch`（tavily / duckduckgo 两个子包 init 自注册）+ `internal/search`（只剩站内 FTS）。`TAVILY_API_KEY` 第一次进入配置分类表 —— 此前它根本不是 `Config` 字段，而闸门走的是 `reflect.TypeOf(Config{})` 的字段，所以**结构上看不见它** |
+| ✅ 删掉天气的跨源 chain | `weather.go` 的 primary→wttr.in 是**跨源**降级，正是要废掉的东西（`transport.md:159` 已裁决「没有东西可搬，chain 是删掉」）；它今天还把 primary 的错误静默吞掉，包里连 logger 都没有 |
+| 多源工具 | ✅ `get_weather(location, days, source?)` / `web_search(query, max_results, source?)`。**点名的源挂了是报错，不是换一个** —— 换一个就是跨源 chain 改了个名字，而模型看不出来 |
+| ✅ 缓存键换成条目 id | 现在键的第一段是**实现**的 `Name()`（硬编码字符串），两个都配 qweather 的条目会串答案 |
+| `GET·PUT /api/admin/providers` | ⬜ 端点本身还没写 |
+| `WEATHER_PROVIDER` 保留 | ✅ 字段不删，语义改成「无名查询优先取谁」。而且**它真的变热了** —— `Sources.SetDefault` 就是那个 setter，`ReloadSettings` 会推给它，所以它是第一个离开 `notHotYet` 名单的旋钮 |
 
 **F2-B「外部适配层」** —— 与第一个真实 http 适配层同批，不早于它：`format: http` / `exec`、manifest 拉取、logo 校验、状态码映射、预算化重试、`X-Daycore-Deadline-Ms`、健康状态机（迟滞/半开/退避）、description 注入与批准门。
 

@@ -25,12 +25,15 @@ import (
 	"daycore/internal/server"
 	"daycore/internal/storage"
 	"daycore/internal/version"
-	"daycore/internal/weather"
 
 	// Register AI wire formats (self-register via init()).
 	_ "daycore/internal/ai/formats/anthropic"
 	_ "daycore/internal/ai/formats/ollama"
 	_ "daycore/internal/ai/formats/openai"
+
+	// Register web search engines (self-register via init()).
+	_ "daycore/internal/websearch/duckduckgo"
+	_ "daycore/internal/websearch/tavily"
 
 	// Register weather providers (self-register via init()).
 	_ "daycore/internal/weather/openmeteo"
@@ -193,27 +196,38 @@ func run(logger *slog.Logger) error {
 		logger.Info("file bus enabled", "store", blobStore.Name(), "dir", cfg.DataDir)
 	}
 
-	// Weather provider (adapter): configured primary + wttr.in fallback + cache.
-	weatherProvider := weather.New(weather.Options{
-		Provider:          cfg.WeatherProvider,
-		QWeatherKey:       cfg.QWeatherKey,
-		OpenWeatherMapKey: cfg.OpenWeatherMapKey,
-	})
+	// External capability sources (F2-A).
+	//
+	// One place assembles them because the pieces come from three layers that
+	// only make sense together: config/providers.yaml declares identity and
+	// wiring, the provider_overrides table carries what the console may change,
+	// and the environment still supplies the credentials. Resolve merges them
+	// per source; see internal/adapters and docs/ROADMAP.md for why the line
+	// between file and table falls where it does.
+	weatherSources, searchSources, srcWarnings := buildSources(cfg, store, logger)
+	for _, w := range srcWarnings {
+		// A source that will not build is a warning, not a fatal: the others
+		// still work, and refusing to start over one misconfigured weather
+		// adapter would take down the whole deployment for a sentence in a
+		// morning brief.
+		logger.Warn("provider unavailable", "err", w)
+	}
 
 	srv := server.New(server.Deps{
-		Config:   cfg,
-		Store:    store,
-		Catalog:  catalog,
-		Vision:   ai.NewOrchestrator(catalog),
-		Prompts:  prompts,
-		Hasher:   auth.NewHasher(cfg.Pepper),
-		Tokens:   auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
-		Cookies:  auth.NewCookieSigner(cfg.CookieSecret),
-		OAuth:    oauthMgr,
-		Searcher: search.NewMaterialSearcher(store),
-		Weather:  weatherProvider,
-		Blobs:    blobStore,
-		Logger:   logger,
+		Config:    cfg,
+		Store:     store,
+		Catalog:   catalog,
+		Vision:    ai.NewOrchestrator(catalog),
+		Prompts:   prompts,
+		Hasher:    auth.NewHasher(cfg.Pepper),
+		Tokens:    auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
+		Cookies:   auth.NewCookieSigner(cfg.CookieSecret),
+		OAuth:     oauthMgr,
+		Searcher:  search.NewMaterialSearcher(store),
+		Weather:   weatherSources,
+		WebSearch: searchSources,
+		Blobs:     blobStore,
+		Logger:    logger,
 	})
 
 	if degradedReason != "" {

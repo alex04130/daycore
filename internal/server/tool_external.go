@@ -14,15 +14,26 @@ func (s *Server) toolGetWeather(ctx context.Context, sid, locale, rawArgs string
 	var args struct {
 		Location string `json:"location"`
 		Days     int    `json:"days"`
+		// Source is optional. Omitted means "pick for me", which walks the
+		// configured order and takes the first usable one. Named means exactly
+		// that one — a named source that is down is an ERROR, never a quiet
+		// substitution: answering with another source's data under the same
+		// question is the cross-source chain this batch deleted, and the model
+		// has no way to notice it happened.
+		Source string `json:"source"`
 	}
 	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil || strings.TrimSpace(args.Location) == "" {
 		return toolFail("location is required")
 	}
-	if s.weather == nil {
+	if s.weather == nil || !s.weather.Available() {
 		return toolFail("weather is not configured")
 	}
-	f, err := s.weather.Lookup(ctx, domain.WeatherQuery{Location: args.Location, Days: args.Days, Locale: locale})
+	f, err := s.weather.Lookup(ctx, args.Source, domain.WeatherQuery{Location: args.Location, Days: args.Days, Locale: locale})
 	if err != nil {
+		// The error text is the adapter package's model-facing one: source, kind
+		// and status, never the URL. An adapter's own words routinely quote the
+		// address it was called on, and a tool failure travels into the model's
+		// context and from there into what the assistant says out loud.
 		return toolFail("weather lookup failed: %v", err)
 	}
 	s.logOp(ctx, &domain.OperationLog{
@@ -35,6 +46,7 @@ func (s *Server) toolWebSearch(ctx context.Context, sid, rawArgs string) toolRes
 	var args struct {
 		Query      string `json:"query"`
 		MaxResults int    `json:"max_results"`
+		Source     string `json:"source"`
 	}
 	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil || strings.TrimSpace(args.Query) == "" {
 		return toolFail("query is required")
@@ -42,7 +54,10 @@ func (s *Server) toolWebSearch(ctx context.Context, sid, rawArgs string) toolRes
 	if args.MaxResults <= 0 {
 		args.MaxResults = 3
 	}
-	results, err := s.search.Search(ctx, args.Query, args.MaxResults)
+	if s.search == nil || !s.search.Available() {
+		return toolFail("web search is not configured")
+	}
+	results, err := s.search.Search(ctx, args.Source, args.Query, args.MaxResults)
 	if err != nil {
 		return toolFail("search failed: %v", err)
 	}

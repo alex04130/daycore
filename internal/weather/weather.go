@@ -1,20 +1,22 @@
-// Package weather selects and composes WeatherProvider implementations. Concrete
-// providers live in subpackages (openmeteo/qweather/openweathermap/wttrin) and
-// self-register via init(); New picks the configured primary and chains wttr.in
-// as a free fallback, wrapped in a 30-minute cache. The Server depends only on
-// domain.WeatherProvider (adapter pattern) — swapping providers is config-only.
+// Package weather resolves the configured weather sources and answers lookups
+// against a named one.
+//
+// Concrete providers live in subpackages (openmeteo / qweather /
+// openweathermap / wttrin) and self-register via init(); an external adapter is
+// reached over the protocol in docs/specs/provider-protocol.md. Both satisfy
+// domain.WeatherProvider, which still means exactly one source — the set lives
+// in Sources.
 package weather
 
 import (
-	"context"
-	"errors"
+	"fmt"
 	"net/http"
+	"os"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
+	"daycore/internal/adapters"
 	"daycore/internal/domain"
 )
 
@@ -33,13 +35,23 @@ var (
 )
 
 // Register adds a provider factory under a name (called from a provider init()).
+//
+// # Why this stayed its own registry rather than becoming a generic one
+//
+// A shared registry across weather, search and channels would save the twenty
+// lines below and cost a type parameter in every provider subpackage's init.
+// The test is not "do these look alike" but "are the bytes the same": a
+// forecast lookup and a web search share none. What IS shared — the transport,
+// the health machine, the config shape — lives in internal/adapters, which is
+// four capabilities' worth of identical detail and therefore worth abstracting.
 func Register(name string, f Factory) {
 	mu.Lock()
 	defer mu.Unlock()
 	factories[name] = f
 }
 
-// Providers lists the registered provider names (sorted), for diagnostics.
+// Providers lists the registered implementation names (sorted), for diagnostics
+// and for validating an entry's `impl` before the process starts serving.
 func Providers() []string {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -61,30 +73,55 @@ func build(name string, cfg Config) domain.WeatherProvider {
 	return f(cfg)
 }
 
-// Options configures New.
+// Options carries what a builtin provider needs that the entry does not say.
+//
+// The two keys are here rather than in providers.yaml for the reason every
+// credential is: that file is meant to be committed, and a key in it is a key
+// in the repository and in every clone. An http adapter names an environment
+// variable via token_env; a builtin one reads the variable the deployment has
+// always used.
 type Options struct {
-	Provider          string // "open-meteo" (default) | "qweather" | "openweathermap" | "wttr"
 	QWeatherKey       string
 	OpenWeatherMapKey string
+	// Timeout bounds one upstream call. Eight seconds is what this package has
+	// always used; it is short enough that a dead source does not hold up a
+	// conversation and long enough for a slow forecast API.
+	Timeout time.Duration
 }
 
-// New returns a WeatherProvider: the configured primary, chained to wttr.in as a
-// free fallback, wrapped in a 30-minute cache. Provider packages must be
-// (blank-)imported so they have registered.
-func New(o Options) domain.WeatherProvider {
-	httpc := &http.Client{Timeout: 8 * time.Second}
-	name := o.Provider
-	if name == "" {
-		name = "open-meteo"
+// buildProvider turns one resolved source into something that can answer.
+func buildProvider(src *adapters.Source, o Options) (domain.WeatherProvider, error) {
+	timeout := o.Timeout
+	if timeout == 0 {
+		timeout = 8 * time.Second
 	}
-	primary := build(name, Config{APIKey: keyFor(name, o), HTTP: httpc})
-	if primary == nil {
-		// Unknown provider or a keyed provider with no key → free default.
-		primary = build("open-meteo", Config{HTTP: httpc})
+	switch src.Entry.Format {
+	case adapters.FormatBuiltin:
+		p := build(src.Entry.Impl, Config{
+			APIKey: keyFor(src.Entry.Impl, o),
+			HTTP:   &http.Client{Timeout: timeout},
+		})
+		if p == nil {
+			// Named an implementation nothing registered. Refusing beats
+			// falling back to a free default: the old code did fall back, so a
+			// typo in WEATHER_PROVIDER produced working forecasts from a source
+			// nobody chose, and nothing said so.
+			return nil, fmt.Errorf("no built-in provider %q (registered: %v)", src.Entry.Impl, Providers())
+		}
+		if needsKey(src.Entry.Impl) && keyFor(src.Entry.Impl, o) == "" {
+			return nil, fmt.Errorf("%q needs an API key and none is configured", src.Entry.Impl)
+		}
+		return p, nil
+	case adapters.FormatHTTP:
+		return &httpProvider{
+			client: adapters.NewClient(src.Entry.ID, src.Entry.BaseURL, src.Entry.Token(), timeout),
+			id:     src.Entry.ID,
+		}, nil
 	}
-	fallback := build("wttr", Config{HTTP: httpc})
-	return newCached(&chain{primary: primary, fallback: fallback}, 30*time.Minute)
+	return nil, fmt.Errorf("unsupported format %q", src.Entry.Format)
 }
+
+func needsKey(impl string) bool { return impl == "qweather" || impl == "openweathermap" }
 
 func keyFor(name string, o Options) string {
 	switch name {
@@ -96,110 +133,36 @@ func keyFor(name string, o Options) string {
 	return ""
 }
 
-// ─── chain: primary → fallback ───────────────────────────────────────────────
-
-type chain struct {
-	primary  domain.WeatherProvider
-	fallback domain.WeatherProvider
-}
-
-func (c *chain) Name() string {
-	if c.primary != nil {
-		return c.primary.Name()
-	}
-	return "none"
-}
-
-func (c *chain) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
-	if c.primary != nil {
-		if fc, err := c.primary.Lookup(ctx, q); err == nil {
-			return fc, nil
-		}
-	}
-	if c.fallback != nil {
-		return c.fallback.Lookup(ctx, q)
-	}
-	return nil, errors.New("weather: no provider available")
-}
-
-// ─── cache wrapper (per provider|location|days|locale, 30 min) ───────────────
-
-// cacheMaxEntries bounds the map. The key contains a location that arrives as
-// free text from the model (toolGetWeather passes args.Location straight
-// through), so without a bound an agent asking about many places grows this
-// forever, each entry holding a multi-day forecast. It is a cache: dropping
-// entries costs one extra upstream call, never a wrong answer.
-const cacheMaxEntries = 512
-
-type cached struct {
-	inner domain.WeatherProvider
-	ttl   time.Duration
-	mu    sync.Mutex
-	m     map[string]cacheEntry
-}
-
-type cacheEntry struct {
-	fc  *domain.Forecast
-	exp time.Time
-}
-
-func newCached(inner domain.WeatherProvider, ttl time.Duration) *cached {
-	return &cached{inner: inner, ttl: ttl, m: map[string]cacheEntry{}}
-}
-
-func (c *cached) Name() string { return c.inner.Name() }
-
-// cacheKey namespaces by the wrapped provider.
+// DefaultEntries is what a deployment with no providers.yaml gets.
 //
-// Today that is nearly redundant — one provider is wrapped — but the moment a
-// source becomes something the caller picks (the planned `source` parameter on
-// get_weather), a shared key means one source serving another's answer: ask for
-// qweather, receive a half-hour-old open-meteo forecast under its name. Keying
-// on the provider costs one string concat and removes the whole class.
-func (c *cached) cacheKey(q domain.WeatherQuery) string {
-	return c.inner.Name() + "|" +
-		strings.ToLower(strings.TrimSpace(q.Location)) + "|" +
-		strconv.Itoa(q.Days) + "|" + q.Locale
-}
-
-func (c *cached) Lookup(ctx context.Context, q domain.WeatherQuery) (*domain.Forecast, error) {
-	key := c.cacheKey(q)
-	c.mu.Lock()
-	if e, ok := c.m[key]; ok && time.Now().Before(e.exp) {
-		c.mu.Unlock()
-		return e.fc, nil
-	}
-	c.mu.Unlock()
-
-	fc, err := c.inner.Lookup(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	c.mu.Lock()
-	if len(c.m) >= cacheMaxEntries {
-		c.evictLocked(now)
-	}
-	c.m[key] = cacheEntry{fc: fc, exp: now.Add(c.ttl)}
-	c.mu.Unlock()
-	return fc, nil
-}
-
-// evictLocked drops expired entries, and everything if that was not enough.
+// # Why there is a default at all
 //
-// Expired-first because those are free to lose. The wholesale drop after that is
-// deliberate rather than an LRU: an LRU here would need per-entry access
-// bookkeeping to protect a 30-minute cache of a call that takes one HTTP
-// request, and a bound that is never actually enforced is the real hazard — this
-// map previously had none at all and never removed an expired entry either.
-func (c *cached) evictLocked(now time.Time) {
-	for k, e := range c.m {
-		if !now.Before(e.exp) {
-			delete(c.m, k)
-		}
+// Every deployment that predates providers.yaml has WEATHER_PROVIDER and maybe
+// a key, and their behaviour must not change on upgrade. So the absence of the
+// file synthesises the same set the old code had access to: the free source,
+// the free fallback, and whichever keyed source has a key.
+//
+// ⚠️ This is NOT the old chain. The old code tried the primary and silently
+// answered from wttr.in when it failed. These are simply two sources; the model
+// picks, and a failure is reported as a failure.
+func DefaultEntries(o Options) []adapters.Entry {
+	out := []adapters.Entry{
+		{ID: "open-meteo", Format: adapters.FormatBuiltin, Impl: "open-meteo"},
+		{ID: "wttr", Format: adapters.FormatBuiltin, Impl: "wttr"},
 	}
-	if len(c.m) >= cacheMaxEntries {
-		c.m = make(map[string]cacheEntry, cacheMaxEntries/2)
+	if o.QWeatherKey != "" {
+		out = append(out, adapters.Entry{ID: "qweather", Format: adapters.FormatBuiltin, Impl: "qweather"})
+	}
+	if o.OpenWeatherMapKey != "" {
+		out = append(out, adapters.Entry{ID: "openweathermap", Format: adapters.FormatBuiltin, Impl: "openweathermap"})
+	}
+	return out
+}
+
+// OptionsFromEnv reads the two keys a builtin provider may need.
+func OptionsFromEnv() Options {
+	return Options{
+		QWeatherKey:       os.Getenv("QWEATHER_API_KEY"),
+		OpenWeatherMapKey: os.Getenv("OPENWEATHERMAP_API_KEY"),
 	}
 }

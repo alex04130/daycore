@@ -17,7 +17,8 @@ import (
 	"daycore/internal/config"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
-	"daycore/internal/search"
+	"daycore/internal/weather"
+	"daycore/internal/websearch"
 )
 
 // Deps are the constructed dependencies the server needs.
@@ -32,7 +33,14 @@ type Deps struct {
 	Cookies  *auth.CookieSigner
 	OAuth    *auth.OAuthManager
 	Searcher domain.Searcher
-	Weather  domain.WeatherProvider
+	// Weather and WebSearch are SETS of sources, not single providers.
+	//
+	// domain.WeatherProvider is untouched and still means one source — the four
+	// built-in ones implement it exactly as before. What changed is that the
+	// server holds the set, because a shared cache has to receive (id, query)
+	// together to key correctly and Lookup(ctx, q) cannot express that.
+	Weather   *weather.Sources
+	WebSearch *websearch.Sources
 	// Blobs is the file bus. nil is a supported configuration — every feature
 	// that needs bytes checks and says so.
 	Blobs  blob.Store
@@ -53,9 +61,9 @@ type Server struct {
 	log         *slog.Logger
 	limiter     *rateLimiter
 	authLimiter *rateLimiter
-	weather     domain.WeatherProvider
+	weather     *weather.Sources
 	blobs       blob.Store
-	search      *search.Client
+	search      *websearch.Sources
 	searcher    domain.Searcher
 	decisions   *decisionRegistry
 	worker      *Worker // set by main.go after construction
@@ -179,6 +187,13 @@ func (s *Server) ReloadSettings(ctx context.Context) error {
 		s.log.Warn("ignoring a stored setting", "err", p)
 	}
 	s.runtimeCfg.Store(next)
+	// A runtime knob with a setter must actually be pushed to whatever holds it,
+	// or it is a console setting the process ignores — the exact failure the
+	// classification table exists to prevent. WEATHER_PROVIDER is the first
+	// entry to leave the notHotYet list, and this line is why it could.
+	if s.weather != nil {
+		s.weather.SetDefault(next.WeatherProvider)
+	}
 	return nil
 }
 
@@ -193,7 +208,7 @@ func New(d Deps) *Server {
 		prompts: d.Prompts, hasher: d.Hasher, tokens: d.Tokens, cookies: d.Cookies,
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
-		weather:     d.Weather, blobs: d.Blobs, search: search.New(), searcher: d.Searcher,
+		weather:     d.Weather, blobs: d.Blobs, search: d.WebSearch, searcher: d.Searcher,
 		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,

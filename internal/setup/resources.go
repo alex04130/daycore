@@ -35,6 +35,16 @@ func CatalogSeedBytes() ([]byte, error) { return resources.Read("seed/models.yam
 // that fails.
 func OAuthSeedBytes() ([]byte, error) { return resources.Read("seed/oauth.yaml") }
 
+// ProvidersSeedBytes is the annotated starter providers.yaml.
+//
+// Written even though the file is optional — with none, the defaults are
+// synthesised from the environment and everything works. It is written for
+// discoverability: holding one binary, there is no way to learn that weather
+// and search are configurable at all, that an external adapter is a supported
+// shape, or that a description needs approving before it reaches the model. A
+// capability nobody can find is the same as one that does not exist.
+func ProvidersSeedBytes() ([]byte, error) { return resources.Read("seed/providers.yaml") }
+
 // Preflight fails before the first question when the resources this run needs
 // are not reachable.
 //
@@ -45,7 +55,7 @@ func OAuthSeedBytes() ([]byte, error) { return resources.Read("seed/oauth.yaml")
 // deployment produced by a command that had everything it needed to refuse in
 // its first second.
 func Preflight() error {
-	for _, name := range []string{"seed/models.yaml", "seed/oauth.yaml", "prompts/boundaries.json"} {
+	for _, name := range []string{"seed/models.yaml", "seed/oauth.yaml", "seed/providers.yaml", "prompts/boundaries.json"} {
 		if _, err := resources.Read(name); err != nil {
 			return err
 		}

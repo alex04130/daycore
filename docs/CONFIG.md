@@ -43,6 +43,7 @@
 | `LOCALES_DIR` | `LocalesDir` |  | language packs are loaded into the catalog at startup |
 | `MODELS_CONFIG` | `ModelsConfigPath` |  | the catalog is parsed once into provider instances |
 | `OAUTH_CONFIG` | `OAuthConfigPath` |  | providers are constructed once, with their redirect URIs baked in |
+| `PROVIDERS_CONFIG` | `ProvidersConfigPath` |  | every entry becomes an HTTP client or a registered factory at startup. The console CAN change enabled/description/approved per source — those live in provider_overrides, not here, because they are read fresh at each use. base_url deliberately cannot: it is the SSRF entrance, and requiring shell access to change it is the whole defence |
 | `DB_TYPE` | `DBType` |  | the handle is open |
 | `DB_DSN` | `DBDSN` | 🔑 | the handle is open, and a DSN carries a password |
 | `JWT_SECRET` | `JWTSecret` | 🔑 | — |
@@ -55,6 +56,7 @@
 | `ALLOWED_ORIGINS` | `AllowedOrigins` |  | a security boundary. It is read per request and COULD be hot, which is exactly why it is listed here with a reason: editable CORS from the console means one compromised console opens the API to any origin |
 | `TRUST_PROXY_HEADERS` | `TrustProxyHeaders` |  | wrongly true lets any client forge its IP and escape rate limiting |
 | `PUBLIC_BASE_URL` | `PublicBaseURL` |  | OAuth redirect URIs are built from it at load and registered with the provider |
+| `TAVILY_API_KEY` | `TavilyKey` | 🔑 | the engine is built once. It only became a Config field in F2-A — before that internal/search read it straight from the environment, which meant this table, and the gate that walks Config's fields, could not see it at all |
 | `QWEATHER_API_KEY` | `QWeatherKey` | 🔑 | — |
 | `OPENWEATHERMAP_API_KEY` | `OpenWeatherMapKey` | 🔑 | — |
 | `ONEBOT_TOKEN` | `OneBotToken` | 🔑 | — |
@@ -67,7 +69,7 @@
 | `DEFAULT_CHAT_MODEL` | `DefaultChatModel` |  | ⚠️ runtime by nature — it only selects among already-constructed catalog entries — but NOT hot yet: LoadCatalog bakes the choice in at startup. Making it hot means a setter on the Catalog. Classified by nature rather than by today's wiring, because the console needs to know which it is |
 | `DEFAULT_VISION_MODEL` | `DefaultVisionModel` |  | same |
 | `DEFAULT_PLANNER_MODEL` | `DefaultPlannerModel` |  | same |
-| `WEATHER_PROVIDER` | `WeatherProvider` |  | ⚠️ same shape: weather.New builds the chain once at startup, so a change needs a restart until that gains a setter |
+| `WEATHER_PROVIDER` | `WeatherProvider` |  | the id a lookup with no source prefers. NOT a fallback chain — F2-A deleted that, and its removal is the point: the old chain answered from a different source under the primary's name, silently, with the primary's error discarded. Genuinely hot now: Sources.SetDefault is the setter and ReloadSettings calls it |
 | `AI_REQUEST_TIMEOUT` | `AIRequestTimeout` |  | — |
 | `AI_RATE_LIMIT_PER_MIN` | `RateLimitPerMin` |  | ⚠️ the limiter is constructed in New with this value baked in — runtime by nature, NOT hot yet. Making it so means a setter on rateLimiter |
 | `AUTH_RATE_LIMIT_PER_MIN` | `AuthRateLimitPerMin` |  | same |

@@ -10,6 +10,7 @@ import (
 	"daycore/internal/ai"
 	"daycore/internal/auth"
 	"daycore/internal/config"
+	"daycore/internal/weather"
 )
 
 func adminServer(t *testing.T) *Server {
@@ -23,6 +24,11 @@ func adminServer(t *testing.T) *Server {
 		t.Fatal(err)
 	}
 	s.prompts = ps
+	// A weather set, because the "a hot knob reaches its holder" assertion needs
+	// a holder. Without one that test skips, and a skipped assertion reads
+	// exactly like a passing one in the output.
+	ws, _ := weather.NewSources(nil, weather.Options{})
+	s.weather = ws
 	return s
 }
 

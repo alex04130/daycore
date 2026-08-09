@@ -88,6 +88,8 @@ var Settings = []Setting{
 		Why: "the catalog is parsed once into provider instances"},
 	{Env: "OAUTH_CONFIG", Field: "OAuthConfigPath", Layer: LayerBoot,
 		Why: "providers are constructed once, with their redirect URIs baked in"},
+	{Env: "PROVIDERS_CONFIG", Field: "ProvidersConfigPath", Layer: LayerBoot,
+		Why: "every entry becomes an HTTP client or a registered factory at startup. The console CAN change enabled/description/approved per source — those live in provider_overrides, not here, because they are read fresh at each use. base_url deliberately cannot: it is the SSRF entrance, and requiring shell access to change it is the whole defence"},
 
 	// ── the database ──
 	{Env: "DB_TYPE", Field: "DBType", Layer: LayerBoot,
@@ -115,6 +117,8 @@ var Settings = []Setting{
 		Why: "OAuth redirect URIs are built from it at load and registered with the provider"},
 
 	// ── external credentials ──
+	{Env: "TAVILY_API_KEY", Field: "TavilyKey", Layer: LayerBoot, Secret: true,
+		Why: "the engine is built once. It only became a Config field in F2-A — before that internal/search read it straight from the environment, which meant this table, and the gate that walks Config's fields, could not see it at all"},
 	{Env: "QWEATHER_API_KEY", Field: "QWeatherKey", Layer: LayerBoot, Secret: true},
 	{Env: "OPENWEATHERMAP_API_KEY", Field: "OpenWeatherMapKey", Layer: LayerBoot, Secret: true},
 	{Env: "ONEBOT_TOKEN", Field: "OneBotToken", Layer: LayerBoot, Secret: true},
@@ -127,7 +131,7 @@ var Settings = []Setting{
 	{Env: "DEFAULT_VISION_MODEL", Field: "DefaultVisionModel", Layer: LayerRuntime, Why: "same"},
 	{Env: "DEFAULT_PLANNER_MODEL", Field: "DefaultPlannerModel", Layer: LayerRuntime, Why: "same"},
 	{Env: "WEATHER_PROVIDER", Field: "WeatherProvider", Layer: LayerRuntime,
-		Why: "⚠️ same shape: weather.New builds the chain once at startup, so a change needs a restart until that gains a setter"},
+		Why: "the id a lookup with no source prefers. NOT a fallback chain — F2-A deleted that, and its removal is the point: the old chain answered from a different source under the primary's name, silently, with the primary's error discarded. Genuinely hot now: Sources.SetDefault is the setter and ReloadSettings calls it"},
 	{Env: "AI_REQUEST_TIMEOUT", Field: "AIRequestTimeout", Layer: LayerRuntime},
 	{Env: "AI_RATE_LIMIT_PER_MIN", Field: "RateLimitPerMin", Layer: LayerRuntime,
 		Why: "⚠️ the limiter is constructed in New with this value baked in — runtime by nature, NOT hot yet. Making it so means a setter on rateLimiter"},

@@ -45,6 +45,7 @@ func Sections() []Section {
 		{Name: "keys", TitleKey: keySecKeys, Keys: []string{"DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}, Run: runKeys},
 		{Name: "weather", TitleKey: keySecWeather, Keys: []string{"WEATHER_PROVIDER", "QWEATHER_API_KEY", "OPENWEATHERMAP_API_KEY"}, Run: runWeather},
 		{Name: "oauth", TitleKey: keySecOAuth, Keys: []string{"OAUTH_CONFIG"}, Run: runOAuth},
+		{Name: "providers", TitleKey: keySecProviders, Keys: []string{"PROVIDERS_CONFIG"}, Run: runProviders},
 		{Name: "channels", TitleKey: keySecChannels, Keys: []string{"ONEBOT_WS_URL", "ONEBOT_TOKEN"}, Run: runChannels},
 		{Name: "server", TitleKey: keySecServer, Keys: []string{"APP_ENV", "HOST", "PORT", "PUBLIC_BASE_URL", "SECURE_COOKIES"}, Run: runServer},
 		{Name: "secrets", TitleKey: keySecSecrets, Keys: []string{"ADMIN_TOKEN", "JWT_SECRET", "COOKIE_SECRET"}, Run: runSecrets},
@@ -269,6 +270,31 @@ func runOAuth(s *Session) error {
 		return err
 	}
 	s.Done(keyOAuthWrote, len(enabled))
+	return nil
+}
+
+// ─── external capability sources ─────────────────────────────────────────────
+
+// runProviders writes the starter providers.yaml and points the env at it.
+//
+// It asks nothing. Every question worth asking here — which weather source,
+// which search engine, where an external adapter lives — is better answered by
+// reading the annotated file than by a prompt that has to explain the same
+// thing in one line and cannot show the alternatives. The file is optional
+// anyway: with none, the defaults come from the environment, which is what
+// every deployment predating it already has.
+func runProviders(s *Session) error {
+	path := filepath.Join(s.Dir, "config", "providers.yaml")
+	s.Env.SetIn("Paths", "PROVIDERS_CONFIG", path, "")
+	seed, err := ProvidersSeedBytes()
+	if err != nil {
+		return err
+	}
+	if err := writeFile(path, seed, s.Force); err != nil {
+		return err
+	}
+	s.Done(keyProvidersWrote)
+	s.Hint(keyProvidersNote)
 	return nil
 }
 

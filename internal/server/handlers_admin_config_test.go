@@ -241,3 +241,31 @@ func TestOneBadRowDoesNotPoisonTheRest(t *testing.T) {
 		t.Error("an unparseable value changed the field")
 	}
 }
+
+// A runtime knob that left notHotYet must actually be pushed to whatever holds
+// it. Otherwise the console reports the change as live and the process keeps
+// using the old value — the exact failure the classification table exists to
+// prevent, arriving through the one door the table cannot see.
+//
+// WEATHER_PROVIDER is the first knob to leave that list (F2-A gave it a real
+// setter, Sources.SetDefault). This asserts the wiring, not the classification.
+func TestAHotKnobIsPushedToItsHolder(t *testing.T) {
+	s := adminServer(t)
+	if notHotYet["WeatherProvider"] {
+		t.Fatal("WeatherProvider is back in notHotYet; either restore the restart notice or keep the setter")
+	}
+	if s.weather == nil {
+		t.Skip("this server has no weather sources")
+	}
+	if code, body := putConfig(t, s, `{"settings":{"WeatherProvider":"qweather"}}`); code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", code, body)
+	}
+	if got := s.runtime().WeatherProvider; got != "qweather" {
+		t.Fatalf("the snapshot did not take the override: %q", got)
+	}
+	// And the holder saw it. Without this the test would pass on a snapshot that
+	// nothing reads.
+	if got := s.weather.Default(); got != "qweather" {
+		t.Errorf("weather sources still prefer %q — the console reported a change the process ignored", got)
+	}
+}

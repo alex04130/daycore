@@ -216,6 +216,19 @@ var (
 		"en-US": "config/oauth.yaml — placeholder entries, inert until client_id is filled in",
 	})
 
+	// ── providers ──
+	keySecProviders = i18n.Reg("setup.providers.title", i18n.Text{
+		"zh-CN": "外部能力源", "en-US": "External Capability Sources",
+	})
+	keyProvidersWrote = i18n.Reg("setup.providers.wrote", i18n.Text{
+		"zh-CN": "config/providers.yaml —— 天气 / 搜索 / 消息通道的声明",
+		"en-US": "config/providers.yaml — where weather, search and channels are declared",
+	})
+	keyProvidersNote = i18n.Reg("setup.providers.note", i18n.Text{
+		"zh-CN": "可以删掉：没有它就按环境变量取默认源。里面写清了怎么接一个外部适配层。",
+		"en-US": "Safe to delete: without it the default sources come from the environment. It documents how to attach an external adapter.",
+	})
+
 	// ── channels ──
 	keySecChannels = i18n.Reg("setup.channels.title", i18n.Text{
 		"zh-CN": "消息通道（可选）", "en-US": "Messaging Channels (optional)",

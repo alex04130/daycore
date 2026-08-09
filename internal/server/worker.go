@@ -681,12 +681,35 @@ func parseBlockTime(dateStr, timeStr string, loc *time.Location) (time.Time, err
 	return time.Date(y, mo, d, h, m, 0, 0, loc), nil
 }
 
-// lookupWeather tries to get a 2-day forecast for Beijing (future: session setting).
+// lookupWeather gets a 2-day forecast for the brief.
+//
+// # This path never picks a source and never probes
+//
+// It passes an empty id, which takes the first source that is currently usable,
+// and it is the ONE weather caller that cannot ask the model to choose: the
+// brief is a Chat with no Tools attached, so the model never sees a tool band
+// at all. Any "let the model decide" story is simply false here, and inventing
+// a fallback chain for it would re-introduce exactly what this batch deleted.
+//
+// It must also never act as a half-open probe. A deployment nobody is chatting
+// with makes exactly two weather calls a day; paying the cost of discovering
+// that a dead source recovered out of those two means a probe timeout delays a
+// brief that was otherwise ready to send. Recovery is discovered by somebody's
+// conversation — see adapters.Health.ShouldProbe.
+//
+// No source available means the brief simply has no weather line. That has
+// always been the behaviour and it is the right one: a missing sentence beats a
+// brief that arrives late or not at all.
+//
+// ⚠️ The location is still hardcoded to 北京 — a pre-existing defect this batch
+// did not fix. Every session gets Beijing's weather regardless of where they
+// are. Fixing it needs a place on the session, which is a different change; the
+// per-session TIMEZONE landed in ζ-4 but a location did not.
 func (w *Worker) lookupWeather(ctx context.Context, locale string) string {
 	if w.s.weather == nil {
 		return ""
 	}
-	fc, err := w.s.weather.Lookup(ctx, domain.WeatherQuery{Location: "北京", Days: 2, Locale: locale})
+	fc, err := w.s.weather.Lookup(ctx, "", domain.WeatherQuery{Location: "北京", Days: 2, Locale: locale})
 	if err != nil {
 		return ""
 	}

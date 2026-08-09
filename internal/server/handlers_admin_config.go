@@ -67,7 +67,6 @@ var notHotYet = map[string]bool{
 	"DefaultChatModel":    true, // LoadCatalog resolves these once
 	"DefaultVisionModel":  true,
 	"DefaultPlannerModel": true,
-	"WeatherProvider":     true, // weather.New builds the chain once
 }
 
 var (
