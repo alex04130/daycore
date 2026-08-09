@@ -1,4 +1,5 @@
-# Example AI model catalog. Copy to config/models.yaml and edit.
+# AI model catalog. `daycore install` writes this file to config/models.yaml;
+# edit it in place. The server refuses to start without it.
 #
 # Supported `format` values are whatever wire-format packages are registered
 # (built-in: openai, anthropic, ollama). Add a new format = implement it under

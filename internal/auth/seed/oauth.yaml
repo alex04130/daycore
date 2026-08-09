@@ -1,4 +1,6 @@
-# OAuth providers — copy to config/oauth.yaml and fill in client credentials.
+# OAuth providers. `daycore install` writes this file to config/oauth.yaml;
+# fill in client credentials to enable social login. Entries with an empty
+# client_id are skipped, so this file does nothing until you edit it.
 # "google" and "github" are presets: only client_id/client_secret are required;
 # their URLs and field mappings are filled automatically. Any other provider can
 # be added by supplying all fields (auth_url/token_url/userinfo_url/scopes + the

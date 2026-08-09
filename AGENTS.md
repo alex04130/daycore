@@ -22,7 +22,7 @@ docs/                  实时项目文档（架构/认证/Agent/数据/AI/路由
 docs/specs/            对外协议：transport / storage-protocol / provider-protocol / frontend-manifest
 extension/             Chrome MV3 插件（抓 Canvas → POST /api/import/canvas），无打包器
 deploy/                Dockerfile（纯 API 镜像）/ docker-compose.yml / nginx.conf
-config/                models.yaml（AI 模型目录，加模型零代码）/ oauth.example.yaml
+config/                models.yaml（AI 模型目录，加模型零代码）—— 种子在 internal/{ai,auth}/seed/，由 `daycore install` 解压
 locales/               <locale>.json 语言包目录（加语言零代码）；目前只有 README.md
 testdata/              canvas-export.sample.json / sample.ics（端到端冒烟夹具）
 tools/wirelog/         日志反代：看发给 provider 的原始请求（make wirelog）

@@ -98,6 +98,16 @@ type Server struct {
 	// this process serves only what needs no database.
 	degraded degraded
 
+	// staticRoot is the frontend directory this process is ACTUALLY serving,
+	// which is not the same as the one configured: staticHandler returns nil
+	// when the directory has no index.html, and STATIC_DIR keeps its default
+	// whether or not anything was ever built there. Logging cfg.StaticDir
+	// instead announced "static: web/frontend/dist" on every API-only
+	// deployment — a startup line naming a directory that does not exist, in
+	// the one deployment shape (front and back deployed separately) the project
+	// is moving towards.
+	staticRoot string
+
 	// Leader election for the background worker (see leader.go). instanceID is
 	// generated on first use rather than in New so that the zero value keeps
 	// working and so that it can never come from configuration.
@@ -219,6 +229,7 @@ func (s *Server) Handler() http.Handler {
 	// goes in.
 	if h := s.staticHandler(); h != nil {
 		mux.Handle("/", h)
+		s.staticRoot = s.cfg.StaticDir
 	}
 
 	// middleware chain (outermost first)

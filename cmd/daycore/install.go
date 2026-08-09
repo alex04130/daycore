@@ -5,13 +5,43 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"daycore/internal/ai"
+	"daycore/internal/auth"
 )
+
+// `daycore install` — turn one binary into a running deployment.
+//
+// # What it is for
+//
+// The distribution unit is a single static binary (zero cgo; the frontend
+// deploys separately, so the server is API-only). Everything else a deployment
+// needs — prompt templates, the L1 boundary block, a model catalog, secrets —
+// either rides inside the binary or is generated here. Nothing requires the
+// source tree, a Go toolchain, or a package manager.
+//
+// # The rule this file has to keep
+//
+// **Whatever install writes must be enough to boot.** It was not: it created an
+// empty config/ and never wrote config/models.yaml, which LoadCatalog treats as
+// fatal, so following the Quick Start it printed gave `exit 1`. That is the
+// worst shape a setup command can have — it reports success and hands you a
+// directory that cannot start. installFileSet + TestInstalledTreeBoots exist to
+// make that specific failure impossible to reintroduce.
+//
+// # Boundary
+//
+// Install writes files; it does not talk to anything. No network call, no
+// database connection, no validation of the API keys it collects. A setup step
+// that needs the internet cannot be used to set up an air-gapped deployment,
+// and one that connects to the database turns "I typed the DSN wrong" into a
+// failure before there is anything to read the error from. Wrong values surface
+// at first boot, where the server can explain them.
 
 // ── terminal helpers ──────────────────────────────────────────────────────
 
@@ -39,9 +69,29 @@ func readLine(s *bufio.Scanner) string {
 
 // ── install ────────────────────────────────────────────────────────────────
 
+// installFileSet is every file install must leave behind, and what each one is
+// for. It is a list rather than prose because it is checked: the test walks it
+// and boots the result, so adding a required file without extracting it fails.
+var installFileSet = []struct {
+	Path     string // relative to the install dir
+	Required bool   // true = the server will not start without it
+}{
+	{"config/models.yaml", true},       // LoadCatalog returns an error → exit 1
+	{"config/oauth.yaml", false},       // missing = no social login, not an error
+	{"prompts/boundaries.json", false}, // overlays the embedded L1 block
+	{".env", true},                     // secrets; nothing else generates them
+}
+
 func runInstall(dir string, force bool) error {
+	return install(dir, force, os.Stdin)
+}
+
+// install takes its input as a reader so the whole flow can be exercised by a
+// test. Reading os.Stdin directly is what kept this command untested while it
+// was producing a directory that could not boot.
+func install(dir string, force bool, in io.Reader) error {
 	dir = filepath.Clean(dir)
-	scanner := bufio.NewScanner(os.Stdin)
+	scanner := bufio.NewScanner(in)
 
 	fmt.Println()
 	fmt.Printf("  %s╔══════════════════════════════════════════════╗%s\n", cCyan, cReset)
@@ -115,6 +165,19 @@ func runInstall(dir string, force bool) error {
 		return nil
 	})
 	done(fmt.Sprintf("%d template files → %s/prompts/", count, dir))
+	fmt.Println()
+
+	// ═══ Step 2b: Config seeds ═══
+	heading("Step 2b — Config Files")
+	fmt.Println()
+	if err := writeSeed(filepath.Join(dir, "config", "models.yaml"), ai.CatalogSeed(), force); err != nil {
+		return err
+	}
+	done("config/models.yaml — the model catalog (required; edit the API base URLs and ids)")
+	if err := writeSeed(filepath.Join(dir, "config", "oauth.yaml"), auth.OAuthSeed(), force); err != nil {
+		return err
+	}
+	done("config/oauth.yaml — social login (optional; inert until you fill in client_id)")
 	fmt.Println()
 
 	// ═══ Step 3: API Keys ═══
@@ -224,8 +287,25 @@ func runInstall(dir string, force bool) error {
 	// Only keys the server actually reads. DATA_DIR used to be written here and
 	// nothing ever read it, which is a quiet way to make an operator believe they
 	// configured something.
+	//
+	// Written even where they match config.Load's defaults, because those
+	// defaults are relative to the working directory, not to the install dir.
+	// `cd /somewhere && /opt/daycore/daycore` would otherwise look for
+	// ./config/models.yaml and exit 1 — a failure whose message names a path the
+	// operator never chose.
 	sb.WriteString("# Edited templates here override the embedded ones, file by file.\n")
 	sb.WriteString(fmt.Sprintf("PROMPTS_DIR=%s/prompts\n", dir))
+	sb.WriteString(fmt.Sprintf("MODELS_CONFIG=%s/config/models.yaml\n", dir))
+	sb.WriteString(fmt.Sprintf("OAUTH_CONFIG=%s/config/oauth.yaml\n\n", dir))
+	sb.WriteString("# ─── Frontend ───\n")
+	// Commented, not empty. getEnv treats a set-but-empty variable as unset
+	// (config.go), so `STATIC_DIR=` cannot express "serve nothing" — it would
+	// silently keep the default. API-only is what happens anyway when the
+	// directory has no index.html, and the startup line now reports what is
+	// actually being served rather than what is configured.
+	sb.WriteString("# The frontend deploys separately. Point this at a build directory\n")
+	sb.WriteString("# to have this binary serve one too; leave it commented for API-only.\n")
+	sb.WriteString("# STATIC_DIR=/srv/daycore-web/dist\n")
 
 	envPath := filepath.Join(dir, ".env")
 	if err := os.WriteFile(envPath, []byte(sb.String()), 0600); err != nil {
@@ -242,14 +322,48 @@ func runInstall(dir string, force bool) error {
 	fmt.Println()
 	fmt.Printf("  %sQuick Start%s\n", cBold+cWhite, cReset)
 	fmt.Println()
-	fmt.Printf("  source %s/.env && ./daycore\n", dir)
+	fmt.Printf("  set -a; . %s/.env; set +a\n", dir)
+	fmt.Println("  ./daycore")
 	fmt.Println()
-	fmt.Printf("  %sLite Build%s (no embedded files, smaller binary)\n", cBold+cWhite, cReset)
+	hint("  .env is not read by the server — export it first, or let your")
+	hint("  service manager do it (systemd: EnvironmentFile=" + filepath.Join(dir, ".env") + ").")
 	fmt.Println()
-	fmt.Println("  go build -tags lite -o daycore-lite ./cmd/daycore")
-	fmt.Printf("  source %s/.env && ./daycore-lite\n", dir)
+	fmt.Printf("  %sNext%s\n", cBold+cWhite, cReset)
+	fmt.Println()
+	hint("  • Edit " + filepath.Join(dir, "config", "models.yaml") + " — the seeded")
+	hint("    upstream model names go stale; check your vendor's current list.")
+	hint("  • This binary serves the API only. The frontend deploys separately.")
+	hint("  • Admin console: send the token above as X-Admin-Token, or")
+	hint("    POST /api/admin/session to trade it for a short-lived cookie.")
 	fmt.Println()
 	fmt.Printf("  %sSetup complete!%s\n\n", cGreen+cBold, cReset)
+	return nil
+}
+
+// writeSeed extracts one embedded config file.
+//
+// Never overwrites without -force, the same rule the templates follow, and for
+// a sharper reason here: config/models.yaml is where the operator's own API
+// base URLs and model ids live. Re-running install after adding a model — which
+// people do, to regenerate a lost admin token — must not silently take it back.
+//
+// The write is reported as an error rather than swallowed. The template loop
+// above ignores its write errors, which is survivable there (a missing template
+// falls back to the embedded one); a missing models.yaml is exit 1 at first
+// boot, far away from the command that caused it.
+func writeSeed(path string, content []byte, force bool) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
+	}
+	if !force {
+		if _, err := os.Stat(path); err == nil {
+			hint("  " + path + " exists — kept (use -force to overwrite)")
+			return nil
+		}
+	}
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 

@@ -11,6 +11,11 @@ import (
 // fallback: unknown non-file paths get index.html so client-side routing
 // works. Returns nil when no build is present — the server then runs API-only
 // (e.g. during frontend development behind the Vite dev server).
+// StaticRoot is the frontend directory this process is serving, or "" when it
+// is running API-only. Reported at startup instead of the configured path so
+// the line says what is true — see the staticRoot field in server.go.
+func (s *Server) StaticRoot() string { return s.staticRoot }
+
 func (s *Server) staticHandler() http.Handler {
 	dir := s.cfg.StaticDir
 	if dir == "" {

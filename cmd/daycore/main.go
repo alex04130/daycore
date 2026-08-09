@@ -352,7 +352,7 @@ func run(logger *slog.Logger) error {
 	go func() {
 		logger.Info("listening",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
-			"static", cfg.StaticDir, "models", len(catalog.List()), "vision", catalog.HasVision(),
+			"static", srv.StaticRoot(), "models", len(catalog.List()), "vision", catalog.HasVision(),
 			"oauth", oauthMgr.Providers())
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
