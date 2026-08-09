@@ -52,10 +52,13 @@ make wirelog                  # 日志反代（看发给 provider 的原始请�
 # 前端
 cd web/frontend && npm install && npm run dev     # :5173，/api 代理到 :8080
 cd web/frontend && npm run build                  # 产出 dist/，Go 用 STATIC_DIR 托管
-node web/frontend/scripts/check-i18n.mjs          # zh-CN/en-US key 对齐校验（CI 门禁）
+node web/frontend/scripts/check-i18n.mjs          # zh-CN/en-US key 对齐校验
 
-# 改动后的必跑项：gofmt -l . 必须为空（CI 有门禁，直接红）
+# 改动后的必跑项（CI 已删除，验证全在本机）
+gofmt -l .                                        # 必须为空
 go build ./... && go vet ./... && go test ./...
+go build -tags lite ./... && go test -tags lite ./internal/resources/ ./internal/setup/
+go test -race ./internal/adapters/ ./internal/weather/
 ```
 
 ## 运行时架构
@@ -110,7 +113,7 @@ go build ./... && go vet ./... && go test ./...
 - **`dialect_parity_test.go` 是静态比对**：三方言表集合/列集合/索引集合相同、MySQL TEXT 不带字面 DEFAULT、索引名 ≤63 字节、ColumnMigration 不出现「NOT NULL 无 DEFAULT」、仓库 SQL 引用的每张表都有建表语句。**失败时改 schema，不要放宽检查**。它不能替代真机（静态比对看不出 DDL 是否合法）。
 - **`routes_test.go` 双向核对**：路由 ↔ `api/openapi.yaml`（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复、每条带方法；`api/spec/bundle` 测试断言签入的 openapi.yaml 与 shard 一致（契约过期是唯一没有别的症状的失败）。
 - **`auth_surface_test.go` 强制公开端点名单**：对不在名单上的每条路由发无凭证请求必须 401，反向也查。
-- **CI 四个 job**（`.github/workflows/ci.yml`）：backend（gofmt 门禁 + openapi 解析与 Go struct 字段核对 + vet + test，带 mongo:8/postgres:16/mysql:8 三个 service，并**断言套件没有静默 skip** + 静态二进制产物）、frontend（check-i18n + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像，不推送）。
+- **没有 CI**（2026-08-09 删除）。验证全在本机，且比原来那四个 job 更强 —— 多了 `-tags lite`、`-race` 与子进程 e2e。**丢掉的**：没有东西检查这台机器没跑过的分支，前端构建与插件 zip 只有人跑才跑。
 - **其他测试网**：`bson_test.go`（免真机序列化往返）、`phase_test.go` + `api/testdata/petrify-vectors.json`（DST 行为表驱动，将来 TS 侧 vendored 同一份）、`livemodel_test.go`（`make test-models`，花钱）、`handlers_ops_test.go`（撤销注册表非空/重复 panic）、`locales_test.go`（三层接线）。
 
 ## 部署

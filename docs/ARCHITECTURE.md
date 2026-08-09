@@ -10,7 +10,7 @@
 | `internal/domain/` | 纯数据结构 + Repository 接口，零外部依赖 |
 | `internal/server/` | HTTP 路由、中间件、全部 handler、agent loop、cron Worker |
 | `internal/storage/sqlstore/` | SQL 三方言（SQLite/PostgreSQL/MySQL），每实体一文件 |
-| `internal/storage/mongostore/` | MongoDB 实现，每实体一 repo 文件；`bson_test.go` + 真机行为一致性套件（`make test-mongo`，CI 带 mongo:8） |
+| `internal/storage/mongostore/` | MongoDB 实现，每实体一 repo 文件；`bson_test.go` + 真机行为一致性套件（`make test-mongo`） |
 | `internal/ai/` | AIProvider 抽象、Catalog、PromptService（embed+DB override）、流式协议、vision 管线 |
 | `internal/auth/` | 密码(argon2id)/OAuth/JWT(token.go)/签名 cookie(session.go) |
 | `internal/channels/` | 通道插件框架（Registry + OneBot 11 适配器） |
@@ -65,7 +65,9 @@ lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回
 
 **pg 与 MySQL 是第一次真机执行**（此前只有 `dialect_parity_test.go` 的静态比对，而静态比对只能看出三份 DDL 互相不一致、看不出其中任何一份是否合法 —— 这个洞放跑过三次真事故）。原生索引那一列也是第一次验：不只断言 `condApplied` 为真，还真发一次查询，因为索引建起来不等于查询语法对，而查询语法错只在有人搜索时才报。
 
-CI 的 backend job 起 mongo:8 + postgres:16 + mysql:8 三个 service，并有一步**断言它们没有静默 skip**（跳过的套件读起来和通过的一样，而 DSN 环境变量正是那种会悄悄不再被设置的东西）。本机跑：`make test-mongo` + `make test-sql`，各用例自建自删 schema/数据库。
+本机跑：`make test-mongo` + `make test-sql`，各用例自建自删 schema/数据库。
+
+⚠️ **CI 于 2026-08-09 删除**，此前它起 mongo:8 + postgres:16 + mysql:8 三个 service，并有一步**断言它们没有静默 skip**。那一步的理由现在落到人身上，而它当时是对的：**跳过的套件读起来和通过的一样**（`ok  daycore/internal/storage/mongostore`，无论跑了 44 例还是 0 例），而 DSN 环境变量正是那种会悄悄不再被设置的东西。跑真机套件时**看用例数**，别看那行 ok。
 
 ## 存储的第五种后端：HTTP / 子进程转换层
 
@@ -247,7 +249,7 @@ EXPERIENCE_CORE §5 + 共识 28：**只看连续清醒时长，与任何日界�
 
 两道闸门守着它，因为「一个仍然带着模板的 lite 二进制」从外面和从里面看都和不带的一模一样：
 - `TestLiteBuildEmbedsNothingOutsideTheFullFile` 走源码树，`//go:embed` 只允许出现在 `resources_full.go`（按行首匹配 —— 一个分不清指令和散文的闸门会对着解释它为什么存在的那段注释开火）。
-- CI 从 `boundaries.json` **算出**一条探针，断言它在完整二进制里**在**、在 lite 里**不在**。两个方向都查：只查一边的话，探针字符串哪天漂走了，`grep -q` 什么都找不到，检查从此永远通过、永远什么也没断言。
+- 一条从 `boundaries.json` **算出**探针的检查（此前在 CI 里，2026-08-09 随 CI 一起删；判据仍然成立，重新加时照这个形状）：断言它在完整二进制里**在**、在 lite 里**不在**。两个方向都查 —— 只查一边的话，探针字符串哪天漂走了，`grep -q` 什么都找不到，检查从此永远通过、永远什么也没断言。
 
 ### lite 的数据从哪来：三条路，同一个二进制
 
@@ -566,7 +568,7 @@ recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → 
 
 `Mux` 是个只有 `HandleFunc` 的接口，不是 `*http.ServeMux`：注册打散之后就没有任何一处能读到完整 HTTP 面了，而 `*http.ServeMux` 无法枚举自己收了什么。换成接口，`RouteTable(*Server)` 就能拿一个记录器把注册重放一遍，把那份清单还回来 —— 传 `&Server{}` 即可，闭包只取方法值不调用，所以**读路由表不需要数据库**。
 
-于此之上三条测试（`routes_test.go`）：pattern 不重复（ServeMux 撞了是 panic，但要等到起服务才炸）、每条都带方法、以及**与 `api/openapi.yaml` 双向核对** —— 服务了没写进契约、写进契约没人服务，两个方向都报错。这是实时文档铁律里「加了路由就改 openapi」那一条第一次真正由 CI 兜住。
+于此之上三条测试（`routes_test.go`）：pattern 不重复（ServeMux 撞了是 panic，但要等到起服务才炸）、每条都带方法、以及**与 `api/openapi.yaml` 双向核对** —— 服务了没写进契约、写进契约没人服务，两个方向都报错。这是实时文档铁律里「加了路由就改 openapi」那一条第一次真正由测试兜住（不是 CI —— CI 已删，这三条在 `go test ./...` 里）。
 
 路由→handler 文件映射见 API_SURFACE.md，REST 细节以 `api/openapi.yaml` 为准。
 

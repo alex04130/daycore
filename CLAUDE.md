@@ -49,5 +49,17 @@
 - 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。**L1 硬边界是唯一例外**：`internal/ai/prompts/boundaries.json`，只有磁盘（`PROMPTS_DIR/boundaries.json`）+ 内嵌两层，**不要给它加 DB 覆盖或 admin 端点** —— 能从控制台改的边界等于能被删。
 - **Go 里的用户可见文案一律 `i18n.Register` 注册 key + `i18n.T`/`Tf` 取用**，不要写 `if HasPrefix(locale,"en")`，也**不要直接 `i18n.Pick`**（会绕开 DB/文件两层，让这条字符串变成不可翻译的）。语言包三层：DB → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US；**加一门语言是丢一个翻译文件，不是改代码也不是发版**。主副语言由用户自己在设置页选，配置只给默认值。详见 `docs/DATA.md`「多语言机制」。
 - 许可证：LGPL-3.0-or-later（`COPYING.LESSER` + `COPYING`）。引入新依赖前确认其协议兼容（Apache-2.0 / MIT / BSD / MPL-2.0 可以；GPL-only、SSPL、专有协议不行）。
-- CI：`.github/workflows/ci.yml` 四个 job —— backend（gofmt 门禁 + vet + test + **MongoDB / PostgreSQL / MySQL 三个真机 service，跑存储行为一致性套件**，并断言它没有静默 skip + 静态二进制）、frontend（i18n 校验 + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像）。**改动后本地先跑 `gofmt -l .` 确认为空**，否则 CI 直接红。
+- **验证全部在本机**（2026-08-09 起：CI 已删除，此前是 `.github/workflows/ci.yml` 四个 job）。一条也不少，而且比 CI 那份**更强** —— 它包含 CI 从来没有的 `-tags lite`、`-race` 与子进程 e2e：
+
+  ```bash
+  gofmt -l .                                        # 必须为空
+  go build ./... && go vet ./... && go test ./...
+  go build -tags lite ./... && go test -tags lite ./internal/resources/ ./internal/setup/
+  go test -race ./internal/adapters/ ./internal/weather/
+  make test-mongo                                   # 真机 MongoDB
+  make test-sql                                     # 真机 PostgreSQL + MySQL
+  node web/frontend/scripts/check-i18n.mjs
+  ```
+
+  ⚠️ **丢掉的是什么，写清楚免得有人以为还有人在看**：没有任何东西检查这台机器没跑过的分支；前端 `vite build` 与插件 zip 现在只有人跑才跑。别人来提交之前要把它加回去。
 - 历史：v1（Next.js + Eazo SDK）已于建库时移除，可从首个 commit 取回。代码中出现的 `v2` 字样如无特别说明均指外部 API 版本号（如 Google OAuth、QWeather），不要当作目录路径改写。
