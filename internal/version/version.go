@@ -30,15 +30,15 @@
 // This is the part that is easy to get wrong, because the string looks like
 // semver and is not being used as semver:
 //
-//	2.2 → 2.3 is not "some features were added". It means A WHOLE PLAN was
-//	implemented — the vNext roadmap's batches, end to end.
+//		2.2 → 2.3 is not "some features were added". It means A WHOLE PLAN was
+//		implemented — the vNext roadmap's batches, end to end.
 //
-//   - Format: 2.<minor>.<patch>, Channel "beta" → displayed as "v2.3.0-beta".
-//   - minor +1 when a planned body of work is COMPLETE; patch +1 for fixes
-//     shipped between those.
-//   - The -beta suffix stays until public beta. The release plan is
-//     v2 (beta) → 小范围内测 → v2 continues → 公测 → v3 正式版, so v3 is a
-//     product milestone rather than a breaking-change marker.
+//	  - Format: 2.<minor>.<patch>, Channel "beta" → displayed as "v2.3.0-beta".
+//	  - minor +1 when a planned body of work is COMPLETE; patch +1 for fixes
+//	    shipped between those.
+//	  - The -beta suffix stays until public beta. The release plan is
+//	    v2 (beta) → 小范围内测 → v2 continues → 公测 → v3 正式版, so v3 is a
+//	    product milestone rather than a breaking-change marker.
 package version
 
 import "strconv"

@@ -101,7 +101,7 @@ go build ./... && go vet ./... && go test ./...
 - **Go 里的用户可见文案一律 `i18n.Register` + `i18n.T`/`Tf`**，不要写 `if HasPrefix(locale,"en")`，也**不要直接 `i18n.Pick`**（绕开 DB/文件两层，让字符串变成不可翻译的）。同一 key 注册两次会 panic。带 `%` 动词的条目新语言必须保留同样的动词与顺序。
 - **存储层取舍规则**：凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段**必须是列**；其余可以进 JSON blob。需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，三方言都支持）。`NormalizeDSN` 模式：代码依赖的连接参数（SQLite `busy_timeout`+WAL、MySQL `clientFoundRows`）由方言自己补，不写进文档等运维抄全。
 - **给已有表加列走 `ColumnMigration`**（`sqlstore/dialect.go` 的 `sessionColumnMigrations`，实际覆盖六张表），同时改三方言建表 DDL 与 mongostore doc struct；MySQL 的 TEXT 一律可空、读侧 COALESCE；新表不要用需要引号的列名。
-- **实时文档铁律**：任何代码改动必须在同一批修改中更新 `docs/` 对应文件；加/删路由连着改 `api/spec/paths/<tag>.yaml` → `make api-bundle` → 升 `APIMinor` → `make api-surface`，三样都有测试盯着，漏一样就红。
+- **实时文档铁律**：任何代码改动必须在同一批修改中更新 `docs/` 对应文件；加/删路由连着改 `api/spec/paths/<tag>.yaml` → `make api-bundle` → 升 `internal/version/version.go` 的 `Version` → `make api-surface`。⚠️ 路由↔openapi 双向核对与 bundle 新鲜度**有测试盯着**，版本号那一步**没有** —— 那是人守的。
 - **设计约束也要进 docs，不只是事实**（2026-08-06 补）：**边界**（什么有意不做、什么绝对不能加）、**取舍**（选了什么、放弃了什么、代价多少）、**它防的哪个具体失败**。判据是「改这块代码的人不该需要先读一遍代码才知道哪些是有意为之」——**代码注释与 commit message 不算数**，它们不可检索也不随代码演进。这类约束被当成疏漏顺手「修掉」，是本仓最贵的一种回归。
 
 ## 测试策略
