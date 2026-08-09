@@ -205,6 +205,30 @@ components:
         lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
         lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
+    ModelDetail:
+      type: object
+      properties:
+        id: { type: string, description: OUR stable name — what DEFAULT_CHAT_MODEL and the database reference. }
+        format: { type: string }
+        baseUrl: { type: string, description: Where requests go. "Which gateway is this actually hitting" is the second question after "is the key set". }
+        model: { type: string, description: The vendor's name — the perishable half. Shown next to id because that pair is the whole point of having two fields. }
+        apiKeyEnv: { type: string, description: The variable NAME. Not a credential. }
+        keySet: { type: boolean, description: Whether a key was resolved at all. The value never appears. }
+        caps: { type: object, additionalProperties: true }
+        roles:
+          type: array
+          items: { type: string, enum: [chat, vision, planner] }
+          description: The default slots this entry currently fills. Derived, so it cannot disagree with what the process is doing — planner reports where it actually lands, including its fallback to the chat model.
+
+    OAuthProviderView:
+      type: object
+      properties:
+        name: { type: string }
+        clientId: { type: string, description: Not a secret — it travels in the authorize URL of every login. }
+        secretSet: { type: boolean, description: The only thing said about the secret. An id with no secret fails at the token exchange, after the user has already left and come back. }
+        redirectUri: { type: string, description: The callback the vendor must have registered. Built by the same function the login flow uses. }
+        preset: { type: boolean, description: URLs and field mappings came from a built-in template, which is why a two-line entry works. }
+
     ProviderView:
       type: object
       properties:

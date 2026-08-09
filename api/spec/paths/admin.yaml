@@ -272,3 +272,119 @@
       '400': { description: Unknown source, or a description that is not in both locales. }
       '401': { description: No admin credential. }
       '503': { description: Degraded — the override table is in the database. }
+/api/admin/models:
+  get:
+    operationId: adminModelsGet
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: The model catalog as it is actually loaded
+    description: >
+      Read-only, and that is a decision rather than an omission. Every field
+      here is boot-layer: an entry became a constructed provider with its base
+      URL and key baked in, so a new value cannot change the thing already
+      built. Which model fills which role IS editable — through
+      `PUT /api/admin/config` (DEFAULT_CHAT_MODEL and friends); a second door to
+      the same setting would be a second door that can disagree.
+
+
+      Disabling an entry was considered and not built: it is the one write that
+      can take a deployment down from a web page with no obvious way back — turn
+      off the entry DEFAULT_CHAT_MODEL points at and every AI feature fails, on
+      a screen whose next likely action is to turn off another one. The recovery
+      that already exists is better, and leaves the broken entry visible rather
+      than hidden.
+
+
+      Served from the loaded catalog, not by re-reading models.yaml: a screen
+      built from the file would describe a file that may have changed since
+      boot, i.e. a process that does not exist.
+
+
+      No key appears. `apiKeyEnv` is the variable NAME and `keySet` says whether
+      a key was resolved at all.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                models: { type: array, items: { $ref: '#/components/schemas/ModelDetail' } }
+                configPath: { type: string, description: The file to edit, since nothing here is writable. }
+      '401': { description: No admin credential. }
+/api/admin/models/{id}/test:
+  post:
+    operationId: adminModelTest
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Actually call the model once
+    description: >
+      "Is the key set" and "is the key VALID" are different questions and only
+      the second matters. Nothing about a correct-looking configuration reveals
+      a revoked key, a moved gateway or an exhausted account — and without this,
+      the only way to find out is to use the app and watch a feature fail, which
+      reports the failure to a user instead of an operator.
+
+
+      One tiny call with max_tokens 1, and the reply is discarded. A console
+      that could send arbitrary prompts on the deployment's key would be a way
+      to spend somebody's money from a web page.
+
+
+      ⚠️ A failed call answers **200 with ok:false**, not an error status: the
+      request to this server succeeded and found something out. A 502 would make
+      the console show "the admin API is broken" over what is, in fact, the
+      answer.
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    responses:
+      '200':
+        description: The result of the attempt, successful or not
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ok: { type: boolean }
+                model: { type: string }
+                elapsedMs: { type: integer }
+                message: { type: string }
+      '400': { description: No such model in the catalog. }
+      '401': { description: No admin credential. }
+/api/admin/oauth:
+  get:
+    operationId: adminOAuthGet
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Configured social logins, with the callback URL to register
+    description: >
+      Read-only for the same reason as the models screen: credentials live in
+      config/oauth.yaml and the flow was constructed from them at startup.
+
+
+      `redirectUri` is the point of this screen. A mismatch there is the most
+      common OAuth setup failure, the vendor's error says nothing useful, and
+      the value is derived from PUBLIC_BASE_URL — which an operator cannot see
+      from a browser. It is produced by the same function the login flow uses,
+      so it cannot drift into being merely plausible.
+
+
+      `clientId` appears because it is not a secret: it travels in the authorize
+      URL of every login. `clientSecret` never appears in any form.
+
+
+      ⚠️ Providers with an empty client_id are skipped at startup and are
+      genuinely absent here — the manager has no memory of them.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                providers: { type: array, items: { $ref: '#/components/schemas/OAuthProviderView' } }
+                configPath: { type: string }
+                note: { type: string }
+      '401': { description: No admin credential. }

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -209,6 +210,17 @@ func NewState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// hasPreset reports whether applyPreset knows this provider.
+//
+// Derived from the same switch rather than a second list: two lists of "which
+// providers are presets" is one list that will be wrong, and the wrong one is
+// always the one the console reads.
+func hasPreset(name string) bool {
+	probe := OAuthProviderConfig{Name: name}
+	applyPreset(&probe)
+	return probe.AuthURL != ""
+}
+
 func applyPreset(p *OAuthProviderConfig) {
 	switch p.Name {
 	case "google":
@@ -288,4 +300,54 @@ func boolField(m map[string]any, key string) bool {
 
 func domainUnknownProvider(name string) error {
 	return fmt.Errorf("unknown oauth provider: %q", name)
+}
+
+// ProviderView is what the console shows about one OAuth provider.
+//
+// # Boundary: no client secret, and nothing standing in for one
+//
+// ClientID appears because it is not a secret — it travels in the authorize URL
+// of every login and is visible to any user who starts one. ClientSecret never
+// does, in any form: not masked, not a length, not a prefix.
+type ProviderView struct {
+	Name     string `json:"name"`
+	ClientID string `json:"clientId,omitempty"`
+	// SecretSet is the only thing said about the secret, and it is what the
+	// operator is actually asking: "is this half-configured?" A provider with an
+	// id and no secret fails at the token exchange — the last step, after the
+	// user has already left for the vendor and come back.
+	SecretSet bool `json:"secretSet"`
+	// RedirectURI is the callback that must be registered with the vendor,
+	// built from PUBLIC_BASE_URL exactly as the login flow builds it.
+	//
+	// This is the single most useful field on the screen: a mismatch here is the
+	// most common OAuth setup failure, the error the vendor shows says nothing
+	// useful, and the value is derived from a config a person cannot see from
+	// the browser. Deriving it through the same function the flow uses means it
+	// cannot drift into being merely plausible.
+	RedirectURI string `json:"redirectUri"`
+	// Preset says the URLs and field mappings were filled in from a built-in
+	// template rather than the file, which explains why a two-line entry works.
+	Preset bool `json:"preset,omitempty"`
+}
+
+// Views lists every ENABLED provider for the console, sorted.
+//
+// Providers whose client_id is empty were skipped at load and are genuinely not
+// there — the manager has no memory of them. That is a real limitation of this
+// screen, and it is written down rather than worked around: showing entries the
+// process discarded would mean re-reading the file, and a screen built from a
+// file that may have changed since boot describes a process that does not exist.
+func (m *OAuthManager) Views() []ProviderView {
+	names := m.Providers()
+	sort.Strings(names)
+	out := make([]ProviderView, 0, len(names))
+	for _, n := range names {
+		p := m.providers[n]
+		out = append(out, ProviderView{
+			Name: n, ClientID: p.ClientID, SecretSet: p.ClientSecret != "",
+			RedirectURI: m.redirectURI(n), Preset: hasPreset(n),
+		})
+	}
+	return out
 }

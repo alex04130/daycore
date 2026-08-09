@@ -369,10 +369,28 @@ func WriteLock(root string, bundled []byte) error {
 //
 // ⚠️ The two numbers it compares are now DERIVED from the build version
 // (2026-08-09): there is one number to move, in internal/version/version.go.
-// The rule itself is unchanged — a contract surface that grew or shrank since
-// the last freeze must be accompanied by a version that moved — but the advice
-// in the messages below points at the build version, because that is the only
-// place left to edit.
+//
+// # What this gate means BEFORE the contract is frozen, which is today
+//
+// Merging the contract version into the build version created a tension worth
+// naming, because the obvious reading of this gate is wrong right now:
+//
+//	the build version is a BATCH MARKER — it moves when a whole plan is done
+//	this gate wants a bump whenever an operation is added
+//
+// Taken together those would move the version several times per batch, which
+// spends the only marker there is for "that plan is finished" on a Tuesday.
+//
+// So before η SPEC-FREEZE the correct action when this fires is **`make
+// api-lock`**, not a version bump. The gate's job in this period is narrow and
+// still worth having: *did you remember to update the openapi shard?* — and the
+// bidirectional route↔spec check in internal/server/routes_test.go already
+// answers that, so this is the belt to its braces.
+//
+// AFTER the freeze the same code becomes a ratchet: the lock stops being
+// refreshed casually, and a surface change then genuinely does require the
+// version to move, because at that point somebody is negotiating against it.
+// Nothing here changes on that day except the habit.
 func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
 	added, removed := diffOps(lock.Operations, current)
 

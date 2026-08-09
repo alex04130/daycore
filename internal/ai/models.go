@@ -35,6 +35,34 @@ type ModelInfo struct {
 	Caps Capabilities `json:"caps"`
 }
 
+// ModelDetail is everything the console shows about one catalog entry.
+//
+// # Boundary: no key, and nothing standing in for one
+//
+// APIKeyEnv is the variable NAME, which is not a credential and is exactly what
+// an operator needs to see when a model will not answer. KeySet says whether a
+// key was resolved at all — from the environment, or from an inline api_key,
+// which the file discourages but permits. The value never appears: a masked
+// key still says how long it is and whether it changed between two reads.
+type ModelDetail struct {
+	ID     string `json:"id"`
+	Format string `json:"format"`
+	// BaseURL is where requests go. Shown because "which gateway is this
+	// actually hitting" is the second question after "is the key set", and
+	// today the only way to answer it is to read the YAML on the server.
+	BaseURL string `json:"baseUrl,omitempty"`
+	// Model is the vendor's name — the perishable half. Shown next to ID
+	// because that pair is the whole point of having two fields.
+	Model     string       `json:"model"`
+	APIKeyEnv string       `json:"apiKeyEnv,omitempty"`
+	KeySet    bool         `json:"keySet"`
+	Caps      Capabilities `json:"caps"`
+	// Roles are the default slots this entry currently fills: "chat", "vision",
+	// "planner". Derived rather than stored, so it cannot disagree with what the
+	// process is actually doing.
+	Roles []string `json:"roles,omitempty"`
+}
+
 // Catalog holds the constructed providers keyed by model id, plus the chosen
 // default chat and vision models.
 type Catalog struct {
@@ -43,6 +71,12 @@ type Catalog struct {
 	defaultChatID string
 	visionID      string // "" when no vision model is available
 	plannerID     string // "" → planner falls back to the default chat model
+	// details is the descriptive half, kept from the file at load.
+	//
+	// Kept rather than re-read: re-reading models.yaml to answer a console
+	// request would report a file that may have changed since boot, i.e. a
+	// screen describing a process that does not exist. This is what IS running.
+	details map[string]ModelDetail
 }
 
 // LoadCatalog reads the YAML catalog, resolves API keys from env, builds a
@@ -89,6 +123,17 @@ func LoadCatalog(path, defaultChat, defaultVision, defaultPlanner string) (*Cata
 		}
 		c.providers[m.ID] = p
 		c.order = append(c.order, m.ID)
+		if c.details == nil {
+			c.details = map[string]ModelDetail{}
+		}
+		c.details[m.ID] = ModelDetail{
+			ID: m.ID, Format: m.Format, BaseURL: m.BaseURL,
+			Model: p.Model(), APIKeyEnv: m.APIKeyEnv,
+			// True for an inline api_key too: the question the console is
+			// answering is "does this entry have a key", not "where from".
+			KeySet: key != "",
+			Caps:   p.Capabilities(),
+		}
 	}
 
 	if _, ok := c.providers[defaultChat]; !ok {
@@ -204,6 +249,29 @@ func (c *Catalog) Embedder() (Embedder, bool) {
 	}
 	e, _ := AsEmbedder(p)
 	return e, true
+}
+
+// Details returns the full console view of every model, in catalog order, with
+// the roles each currently fills.
+func (c *Catalog) Details() []ModelDetail {
+	out := make([]ModelDetail, 0, len(c.order))
+	for _, id := range c.order {
+		d := c.details[id]
+		d.Roles = nil
+		if id == c.defaultChatID {
+			d.Roles = append(d.Roles, "chat")
+		}
+		if id == c.visionID {
+			d.Roles = append(d.Roles, "vision")
+		}
+		// The planner falls back to the chat model when unset, so report the
+		// role where it actually lands rather than only where it was named.
+		if id == c.plannerID || (c.plannerID == "" && id == c.defaultChatID) {
+			d.Roles = append(d.Roles, "planner")
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // List returns a summary of every model in catalog order.
