@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -60,13 +59,11 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	// "install" subcommand: extract defaults, generate config, print admin token.
-	if len(os.Args) > 1 && os.Args[1] == "install" {
-		fs := flag.NewFlagSet("install", flag.ExitOnError)
-		dir := fs.String("dir", "./data", "target directory for extracted files")
-		force := fs.Bool("force", false, "overwrite existing files")
-		fs.Parse(os.Args[2:])
-		return runInstall(*dir, *force)
+	// `install` / `config` never reach config.Load: they exist to WRITE the
+	// configuration, so requiring a valid one first would make the command
+	// unusable in exactly the situation it is for.
+	if handled, err := runSetup(os.Args[1:]); handled {
+		return err
 	}
 
 	cfg, err := config.Load()

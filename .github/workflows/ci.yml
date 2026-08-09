@@ -180,6 +180,43 @@ jobs:
       - name: Build static binary
         run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/daycore ./cmd/daycore
 
+      # The lite build ships as a real artifact, so it is built AND tested here.
+      # The previous -tags lite was never compiled by CI, which is how it stayed
+      # broken: its accessor returned nil, `daycore install` under it extracted
+      # zero files, and nothing anywhere would have gone red.
+      - name: Build and test lite variant
+        run: |
+          go vet -tags lite ./...
+          go test -tags lite ./internal/resources/ ./internal/setup/
+          CGO_ENABLED=0 go build -tags lite -ldflags="-s -w" -o bin/daycore-lite ./cmd/daycore
+
+      # A lite binary that still carries the templates looks identical to one
+      # that does not, from the outside and from the inside. This is the only
+      # check that can tell them apart.
+      - name: Assert the lite binary embeds nothing
+        run: |
+          # Derived from the source, never hardcoded: a literal probe that drifts
+          # out of the file stops matching, `grep -q` finds nothing, and the check
+          # passes forever while asserting nothing.
+          probe=$(python3 -c "import json,sys
+d=json.load(open('internal/resources/data/prompts/boundaries.json'))
+def walk(o):
+    if isinstance(o,str) and len(o)>25: yield o
+    elif isinstance(o,dict):
+        for v in o.values(): yield from walk(v)
+    elif isinstance(o,list):
+        for v in o: yield from walk(v)
+print(next(walk(d))[:40])")
+          if [ ${#probe} -lt 20 ]; then echo "::error::probe too short; this check would assert nothing"; exit 1; fi
+          if ! grep -aqF "$probe" bin/daycore; then
+            echo "::error::the full binary does not contain the boundary text — the probe is wrong, not the build"; exit 1
+          fi
+          if grep -aqF "$probe" bin/daycore-lite; then
+            echo "::error::-tags lite still embeds the boundary text"; exit 1
+          fi
+            echo "::error::the full binary does NOT embed the boundary text — the probe is wrong"; exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: daycore-linux-amd64

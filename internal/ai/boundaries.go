@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"daycore/internal/i18n"
+	"daycore/internal/resources"
 )
 
 // BoundaryFile is the name the loader looks for under PROMPTS_DIR.
@@ -71,7 +72,7 @@ type Boundaries struct {
 // are held to and for a stronger reason: a locale with no boundary block would
 // serve a persona with nothing after it.
 func NewBoundaries() (*Boundaries, error) {
-	raw, err := promptFS.ReadFile("prompts/" + BoundaryFile)
+	raw, err := resources.Read("prompts/" + BoundaryFile)
 	if err != nil {
 		return nil, fmt.Errorf("read embedded %s: %w", BoundaryFile, err)
 	}

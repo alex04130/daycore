@@ -49,6 +49,8 @@ cd ../.. && go run ./cmd/daycore      # STATIC_DIR 默认 web/frontend/dist，�
 
 **分发单位是一个二进制。** 零 CGO（`modernc.org/sqlite` 是纯 Go），所以 `go build` 出来的就是静态单文件；提示词模板、L1 硬边界、模型目录种子都在它肚子里。**不需要源码树、不需要 Go 工具链、不需要包管理器。**
 
+> 另有 **lite 构建**（`make build-lite`）：什么都不内嵌，全部从磁盘读，产出 `dist/daycore-lite` + `dist/daycore-data-<版本>.tar.gz`。**pack 不是可选包装，是这个产物的另一半。** 体积只省 31 KB —— 它的意义是内容只有一个真源、可编辑可 diff 可进配置管理，缺文件是带路径的错误而不是静默回落。取数据三条路：解开 pack 放二进制旁边 / `DAYCORE_DATA_DIR` 指向完整版装过的目录 / `daycore install -fetch`。
+
 ```bash
 # 在任意一台机器上构建（可交叉编译：GOOS=linux GOARCH=arm64 …）
 CGO_ENABLED=0 go build -ldflags="-s -w" -o daycore ./cmd/daycore   # 23.5 MB
@@ -57,7 +59,11 @@ CGO_ENABLED=0 go build -ldflags="-s -w" -o daycore ./cmd/daycore   # 23.5 MB
 ./daycore install -dir /opt/daycore
 ```
 
-`install` 交互式问八个问题（数据库、三个 AI key、天气 key、OneBot），然后写出一个**能直接启动的目录**：
+`install` 分八段问完后端配置（数据库 / 模型目录 / AI key / 天气 / 第三方登录 / 消息通道 / 服务器 / 密钥），然后写出一个**能直接启动的目录**。装完之后要改其中一段，用 `daycore config <段名>` —— 同一份问题，不用重跑全部，也不用手改 `.env`。
+
+CLI 跟着系统语言走（`-lang` 覆盖），语言包就是服务端那套 `LOCALES_DIR/<locale>.json` —— **丢一个 `ja-JP.json` 进去，安装器和 API 一起变成日语**，不用改代码也不用发版。
+
+它写出来的东西：
 
 | 它写什么 | 为什么 |
 |---|---|

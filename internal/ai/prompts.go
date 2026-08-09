@@ -2,7 +2,6 @@ package ai
 
 import (
 	"context"
-	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,11 +11,8 @@ import (
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
+	"daycore/internal/resources"
 )
-
-//go:embed prompts/*/*.tmpl
-//go:embed prompts/boundaries.json
-var promptFS embed.FS
 
 // Known prompt keys (one editable template each, per locale).
 const (
@@ -68,7 +64,7 @@ func NewPromptService(repo domain.PromptRepository) (*PromptService, error) {
 	for _, locale := range i18n.Embedded {
 		s.defaults[locale] = map[string]string{}
 		for _, key := range promptKeys {
-			b, err := promptFS.ReadFile("prompts/" + locale + "/" + key + ".tmpl")
+			b, err := resources.Read("prompts/" + locale + "/" + key + ".tmpl")
 			if err != nil {
 				return nil, fmt.Errorf("load default prompt %q (%s): %w", key, locale, err)
 			}

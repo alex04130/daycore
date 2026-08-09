@@ -1,6 +1,7 @@
-.PHONY: help run build test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
+VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -10,6 +11,18 @@ run: ## Run the server (SQLite by default)
 
 build: ## Build a static binary into bin/
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN) ./cmd/daycore
+
+build-lite: ## Build the lite binary + its data pack into dist/
+	@# The lite binary embeds nothing, so the pack is not optional packaging —
+	@# it is half the artifact. Shipping one without the other produces a binary
+	@# that cannot start, which is the failure this whole build target exists to
+	@# make impossible to do by accident.
+	CGO_ENABLED=0 go build -tags lite -ldflags="-s -w" -o dist/daycore-lite ./cmd/daycore
+	rm -rf dist/data && mkdir -p dist/data
+	cp -r internal/resources/data/prompts internal/resources/data/seed dist/data/
+	tar czf dist/daycore-data-$(VERSION).tar.gz -C dist/data .
+	@echo "dist/daycore-lite + dist/daycore-data-$(VERSION).tar.gz"
+	@echo "unpack the pack next to the binary, or point DAYCORE_DATA_DIR at it"
 
 test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
 	@echo "needs a postgres on :5432 and a mysql on :3306 — each case creates and drops its own schema/database"
