@@ -1020,6 +1020,107 @@ paths:
     post: { operationId: adminDBImport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
   /api/admin/db/backup:
     get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/providers:
+    get:
+      operationId: adminProvidersGet
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: External capability sources, with health
+      description: >
+        Every configured weather / search source, including disabled and unhealthy
+        ones — those are usually the ones being asked about.
+
+
+        Only three fields are writable (enabled, description, approved);
+        `editable` lists them. Identity and wiring — id, format, base_url,
+        token_env — live in config/providers.yaml and are file-only. That is F1's
+        rule applied per field: the process built an HTTP client out of base_url at
+        startup, so a new value cannot change the thing already built. base_url has
+        a second reason — it is the SSRF entrance, and requiring shell access to
+        change it is the whole defence.
+
+
+        `health` is PER PROCESS by design and never persisted: an adapter is often
+        same-host, so what one instance cannot reach another may reach fine. Two
+        consoles legitimately disagree, which is why `instance` names which one
+        answered.
+
+
+        No secret appears. `tokenEnv` is the variable NAME and `tokenSet` says
+        whether it currently holds anything — never the value, a prefix, or a
+        length.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers: { type: array, items: { $ref: '#/components/schemas/ProviderView' } }
+                  configPath: { type: string, description: The file to edit for the fields this screen cannot touch. }
+                  instance: { type: string }
+        '401': { description: No admin credential. }
+    put:
+      operationId: adminProvidersPut
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Set enabled / description / approved on one or more sources
+      description: >
+        A sparse patch: a field the console does not send keeps what it had. The
+        whole request is validated before any of it is written, because there is no
+        transaction and a partial apply leaves the operator with some edits in
+        place and no way to tell which.
+
+
+        `approved` means "an operator has read this text", and it is recorded
+        against a HASH of the description being approved — so editing the
+        description revokes its approval automatically. Without that the gate would
+        be one edit away from decorative and nothing anywhere would go red. An
+        unapproved source still works; the model is told about it in a sentence the
+        backend builds from its id and format rather than in the operator's words.
+
+
+        An adapter's own self-reported description is NEVER injected and the server
+        has no path that promotes it into this field. It appears separately as
+        `manifestDescription` so an operator can read it and choose to adopt it,
+        which records an approval like any other.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [providers]
+              properties:
+                providers:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [weather, search, channel] }
+                      id: { type: string }
+                      enabled: { type: boolean }
+                      description:
+                        type: object
+                        additionalProperties: { type: string }
+                        description: Per locale. Both zh-CN and en-US are required — one language only vanishes for half the users.
+                      approved: { type: boolean }
+      responses:
+        '200':
+          description: OK, with the refreshed list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  providers: { type: array, items: { $ref: '#/components/schemas/ProviderView' } }
+        '400': { description: Unknown source, or a description that is not in both locales. }
+        '401': { description: No admin credential. }
+        '503': { description: Degraded — the override table is in the database. }
 
   # ─── meta ─────────────────────────────────────────────────────────────────
   /api/healthz:
@@ -1263,6 +1364,35 @@ components:
         lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
         lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
+    ProviderView:
+      type: object
+      properties:
+        kind: { type: string, enum: [weather, search, channel] }
+        id: { type: string }
+        format: { type: string, enum: [builtin, http] }
+        impl: { type: string, description: 'For format builtin: the compiled-in implementation.' }
+        baseUrl: { type: string, description: For format http. File-only — it is the SSRF entrance. }
+        tokenEnv: { type: string, description: The environment variable NAME. Not a credential. }
+        tokenSet: { type: boolean, description: Whether that variable currently holds anything. The value never appears. }
+        displayName: { type: string }
+        logo: { type: string, description: A raster data URI or empty. SVG is refused — it can carry script, and channel logos render in ordinary user clients. }
+        enabled: { type: boolean }
+        editable: { type: array, items: { type: string }, description: Precomputed so the console does not re-derive a rule that lives on the server. }
+        description: { type: object, additionalProperties: { type: string } }
+        manifestDescription:
+          type: object
+          additionalProperties: { type: string }
+          description: What the ADAPTER says about itself. Shown as a suggestion; never injected into a prompt and never merged into description.
+        approved: { type: boolean }
+        health:
+          type: object
+          properties:
+            up: { type: boolean }
+            reason: { type: string }
+            lastChecked: { type: string, format: date-time }
+            failures: { type: integer }
+            backoffUntil: { type: string, format: date-time }
+        instance: { type: string, description: Which process answered. Health is per process. }
     Session:
       type: object
       properties:

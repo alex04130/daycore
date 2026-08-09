@@ -205,6 +205,35 @@ components:
         lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
         lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
+    ProviderView:
+      type: object
+      properties:
+        kind: { type: string, enum: [weather, search, channel] }
+        id: { type: string }
+        format: { type: string, enum: [builtin, http] }
+        impl: { type: string, description: 'For format builtin: the compiled-in implementation.' }
+        baseUrl: { type: string, description: For format http. File-only — it is the SSRF entrance. }
+        tokenEnv: { type: string, description: The environment variable NAME. Not a credential. }
+        tokenSet: { type: boolean, description: Whether that variable currently holds anything. The value never appears. }
+        displayName: { type: string }
+        logo: { type: string, description: A raster data URI or empty. SVG is refused — it can carry script, and channel logos render in ordinary user clients. }
+        enabled: { type: boolean }
+        editable: { type: array, items: { type: string }, description: Precomputed so the console does not re-derive a rule that lives on the server. }
+        description: { type: object, additionalProperties: { type: string } }
+        manifestDescription:
+          type: object
+          additionalProperties: { type: string }
+          description: What the ADAPTER says about itself. Shown as a suggestion; never injected into a prompt and never merged into description.
+        approved: { type: boolean }
+        health:
+          type: object
+          properties:
+            up: { type: boolean }
+            reason: { type: string }
+            lastChecked: { type: string, format: date-time }
+            failures: { type: integer }
+            backoffUntil: { type: string, format: date-time }
+        instance: { type: string, description: Which process answered. Health is per process. }
     Session:
       type: object
       properties:

@@ -238,6 +238,12 @@ func run(logger *slog.Logger) error {
 	// the locale overrides are: a database that cannot be read is a deployment
 	// already in trouble, and refusing to start over it would take away the
 	// console that could fix it. The environment seeds are still correct.
+	// The override table into the live sources, same shape as ReloadSettings and
+	// for the same reason: a row nothing reads is a console setting the process
+	// ignores. Best-effort — the file's values are still correct.
+	if err := srv.ReloadProviders(context.Background()); err != nil {
+		logger.Warn("could not load provider overrides; using providers.yaml as-is", "err", err)
+	}
 	if err := srv.ReloadSettings(context.Background()); err != nil {
 		logger.Warn("could not load runtime settings; using the environment seeds", "err", err)
 	}

@@ -167,13 +167,12 @@ v2 (beta)  ──小范围内测──▶  v2 继续改  ──公测──▶  
 |---|---|
 | `config/providers.yaml` + 加载器 | ✅ `format: builtin`（绑已注册的内置实现）+ `format: http`（外部适配层） |
 | 参考适配层 `tools/adapter-example/` | ⬜ 还没写 |
-| `provider_overrides` 表 + `GET·PUT /api/admin/providers` | 只覆盖 `enabled` / `description` / `approved` 三项，见下「配置文件怎么改」 |
+| `provider_overrides` 表 + `GET·PUT /api/admin/providers` | ✅ 只覆盖 `enabled` / `description` / `approved` 三项，见下「配置文件怎么改」。写完**立即推给正在跑的进程**（`ReloadProviders`），并在原对象上就地更新 —— 重建会连 `Health` 一起丢掉，于是「打开一个描述」会顺手把一个已知死掉的源标成健康 |
 | 健康状态机 | ✅ 迟滞 N=3、半开探测（只在交互式 agent 路径）、退避；工具带字节是纯函数输出。**缓存命中不算一次成功调用** —— 算了的话一个死掉的源会在整个 30 分钟 TTL 里保持「健康」，而那正是有人在查什么坏了的那半小时 |
 | `internal/search` 注册表化 | ✅ 拆成 `internal/websearch`（tavily / duckduckgo 两个子包 init 自注册）+ `internal/search`（只剩站内 FTS）。`TAVILY_API_KEY` 第一次进入配置分类表 —— 此前它根本不是 `Config` 字段，而闸门走的是 `reflect.TypeOf(Config{})` 的字段，所以**结构上看不见它** |
 | ✅ 删掉天气的跨源 chain | `weather.go` 的 primary→wttr.in 是**跨源**降级，正是要废掉的东西（`transport.md:159` 已裁决「没有东西可搬，chain 是删掉」）；它今天还把 primary 的错误静默吞掉，包里连 logger 都没有 |
 | 多源工具 | ✅ `get_weather(location, days, source?)` / `web_search(query, max_results, source?)`。**点名的源挂了是报错，不是换一个** —— 换一个就是跨源 chain 改了个名字，而模型看不出来 |
 | ✅ 缓存键换成条目 id | 现在键的第一段是**实现**的 `Name()`（硬编码字符串），两个都配 qweather 的条目会串答案 |
-| `GET·PUT /api/admin/providers` | ⬜ 端点本身还没写 |
 | `WEATHER_PROVIDER` 保留 | ✅ 字段不删，语义改成「无名查询优先取谁」。而且**它真的变热了** —— `Sources.SetDefault` 就是那个 setter，`ReloadSettings` 会推给它，所以它是第一个离开 `notHotYet` 名单的旋钮 |
 
 **F2-B「外部适配层」** —— 与第一个真实 http 适配层同批，不早于它：`format: http` / `exec`、manifest 拉取、logo 校验、状态码映射、预算化重试、`X-Daycore-Deadline-Ms`、健康状态机（迟滞/半开/退避）、description 注入与批准门。
@@ -277,6 +276,16 @@ F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** �
 - **打分 / 排名 / 完成率 / streak 的呈现** —— 反羞耻底色明令禁止（`EXPERIENCE_CORE.md` 底色一条）。内部用于门控的分数（胆量系数、心情 valence）不受此限，但**不得出现在契约里**。
 - **意图显影**（输入时的分类预览）—— 共识 16，注意力税 + 两颗脑子。
 - **computer use / 代码执行** —— 与产品语义无交集。
+
+## 文案统一收口（2026-08-08 作者裁决）
+
+**做完再集中改文案。** 期间一律「先修机制，后写文案」—— 与 δ 的论证同一条：先写文案再修机制，中间写出来的每一条按构造就是不可翻译的，还得有人回头再过一遍。
+
+积着的：
+- ⬜ 助手该在什么时机主动问一句「你在哪个城市」（`set_home_location` 有了，但主动问那句话没有）
+- ⬜ 工具描述**全是硬编码 zh-CN** —— 英文用户的模型读的也是中文工具带
+- ⬜ en-US 消息目录 241 条未翻（δ 留下的数字，`TestReportCatalogCoverage` 会打印）
+- ⬜ `companion_agent.tmpl` 用 `{{range}}` 列出可用源及其描述（机制先做，文案后定；两个 locale 同批）
 
 ## 待拍板
 

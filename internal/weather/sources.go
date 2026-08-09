@@ -215,6 +215,15 @@ func (s *Sources) usableLocked() []string {
 	return out
 }
 
+// AllIDs is every configured id, including disabled and unhealthy ones —
+// unlike IDs, which is the tool enum. A reload has to reach the disabled ones
+// too: they are exactly the ones an operator is about to turn back on.
+func (s *Sources) AllIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]string(nil), s.order...)
+}
+
 // Views renders every source for the console, including disabled and unhealthy
 // ones — the operator's question is usually about one of those.
 func (s *Sources) Views(instance string) []adapters.AdminView {

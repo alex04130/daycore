@@ -17,6 +17,10 @@ func adminServer(t *testing.T) *Server {
 	t.Helper()
 	s, _ := newAgentTestServer(t)
 	s.cfg.AdminToken = "the-real-token"
+	// config.Load supplies this in production; the test config is built directly.
+	// The providers screen reports it so the operator knows which file holds the
+	// fields that screen cannot edit.
+	s.cfg.ProvidersConfigPath = "config/providers.yaml"
 	s.tokens = auth.NewTokenIssuer("admin-test-secret", time.Hour)
 	// The admin endpoint used below needs one; the gate under test does not.
 	ps, err := ai.NewPromptService(nil)

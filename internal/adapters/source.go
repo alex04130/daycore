@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"sync"
 	"time"
 
 	"daycore/internal/domain"
@@ -27,6 +28,11 @@ import (
 // PromptDescription is the only accessor that injection may call, and
 // TestOnlyApprovedTextReachesThePrompt asserts it never returns the manifest's.
 type Source struct {
+	// mu guards the three console-editable fields and the manifest. A source is
+	// read from every conversation round and written from the admin endpoint,
+	// so those are genuinely concurrent.
+	mu sync.RWMutex
+
 	Kind  Kind
 	Entry Entry
 
@@ -54,11 +60,20 @@ type Source struct {
 }
 
 // Enabled reports whether this source may be used at all.
-func (s *Source) Enabled() bool { return s.enabled }
+func (s *Source) Enabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enabled
+}
 
 // Usable is Enabled and healthy — the predicate that decides whether an id
 // appears in a tool's `source` enum.
-func (s *Source) Usable() bool { return s.enabled && (s.Health == nil || s.Health.Up()) }
+func (s *Source) Usable() bool {
+	s.mu.RLock()
+	enabled := s.enabled
+	s.mu.RUnlock()
+	return enabled && (s.Health == nil || s.Health.Up())
+}
 
 // PromptDescription is the ONLY text from a source that may enter a prompt.
 //
@@ -67,6 +82,8 @@ func (s *Source) Usable() bool { return s.enabled && (s.Health == nil || s.Healt
 // manifest's — see the Source comment for why that is a field this function
 // cannot reach by accident.
 func (s *Source) PromptDescription(locale string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.Approved {
 		if t := s.Description[locale]; t != "" {
 			return t
@@ -183,6 +200,8 @@ type AdminView struct {
 
 // View renders a source for the console.
 func (s *Source) View(instance string) AdminView {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	v := AdminView{
 		Kind: s.Kind, ID: s.Entry.ID, Format: s.Entry.Format, Impl: s.Entry.Impl,
 		BaseURL: s.Entry.BaseURL, TokenEnv: s.Entry.TokenEnv, TokenSet: s.Entry.Token() != "",
@@ -201,4 +220,54 @@ func (s *Source) View(instance string) AdminView {
 		v.Health = Snapshot{Up: true, LastChecked: time.Time{}}
 	}
 	return v
+}
+
+// ApplyOverride updates the three console-editable fields in place.
+//
+// # Why in place, rather than rebuilding the Source
+//
+// Rebuilding would construct a new HTTP client and, more importantly, a new
+// Health — throwing away everything this process has learned about whether the
+// source answers. Turning a description on would silently mark a known-dead
+// source healthy again, and the operator would see it rejoin the tool band for
+// no reason connected to what they did.
+//
+// The three fields here are exactly the ones read fresh at each use. Everything
+// else on Entry was used at startup to build something, which is why the
+// console cannot reach it at all.
+func (s *Source) ApplyOverride(o *domain.ProviderOverride) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.enabled = s.Entry.Enabled == nil || *s.Entry.Enabled
+	s.Description = s.Entry.Description
+	s.Approved = false
+	if o == nil {
+		return
+	}
+	if o.Enabled != nil {
+		s.enabled = *o.Enabled
+	}
+	if len(o.Description) > 0 {
+		s.Description = o.Description
+	}
+	s.Approved = o.Approved && o.DescriptionHash != "" &&
+		o.DescriptionHash == DescriptionHash(s.Description)
+}
+
+// SetManifest records what an adapter said about itself.
+//
+// ⚠️ It writes ManifestDescription and never Description. That separation is
+// the approval gate — see the type comment, and the two gates in gate_test.go
+// that make removing it something a person has to do on purpose.
+func (s *Source) SetManifest(m *Manifest) {
+	if m == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if m.DisplayName != "" {
+		s.DisplayName = m.DisplayName
+	}
+	s.Logo = m.Logo
+	s.ManifestDescription = m.Description
 }

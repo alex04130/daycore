@@ -67,7 +67,7 @@ func (m *Manifest) sanitize() error {
 	}
 	sort.Strings(m.Capabilities)
 	for l, v := range m.Description {
-		m.Description[l] = clip(v, maxDescriptionRunes)
+		m.Description[l] = clip(v, MaxDescriptionRunes)
 	}
 	return nil
 }
@@ -75,7 +75,7 @@ func (m *Manifest) sanitize() error {
 // maxDescriptionRunes bounds text that may reach a prompt. 4 KiB from
 // docs/specs/provider-protocol.md — enough for a real explanation, small enough
 // that it cannot be a vehicle for a page of instructions.
-const maxDescriptionRunes = 4096
+const MaxDescriptionRunes = 4096
 
 func clip(s string, n int) string {
 	s = strings.TrimSpace(s)
