@@ -175,7 +175,13 @@ func (c *Client) Do(ctx context.Context, path string, body, out any) error {
 		// Bounded read: an adapter answering an error with a gigabyte of HTML
 		// should not cost this process the memory to hold it.
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
-		return c.fail(kindForStatus(resp.StatusCode), resp.StatusCode, strings.TrimSpace(string(msg)), nil)
+		// The URL goes in the DETAIL, always — including on a status-coded
+		// failure, where the first version carried only the adapter's own words.
+		// "location is required" with no address in it is not something anybody
+		// can act on when three sources are configured. Detail() is log-only, so
+		// this is the one place a URL is safe to keep.
+		return c.fail(kindForStatus(resp.StatusCode), resp.StatusCode,
+			u+": "+strings.TrimSpace(string(msg)), nil)
 	}
 	if out == nil {
 		return nil

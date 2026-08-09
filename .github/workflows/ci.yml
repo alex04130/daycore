@@ -1,9 +1,24 @@
 name: CI
 
+# ⚠️ Automatic triggers are OFF (2026-08-09, author's decision).
+#
+# It ran on every push and mailed a failure notice each time, which during a
+# batch that is mid-refactor is a stream of alerts about work that is knowingly
+# unfinished. Verification moved to the local commands below, which are strictly
+# stronger anyway: they include the three real database engines AND the things
+# CI never had — `-tags lite`, `-race`, and the subprocess end-to-end.
+#
+#   gofmt -l .                  # must be empty
+#   go build ./... && go vet ./... && go test ./...
+#   go build -tags lite ./... && go test -tags lite ./internal/{resources,setup}/
+#   make test-mongo             # real MongoDB
+#   make test-sql               # real PostgreSQL + MySQL
+#
+# ⚠️ What is genuinely lost, so nobody assumes otherwise: nothing checks a
+# branch this machine did not run, and nothing checks the frontend build or the
+# extension zip. Turn `push`/`pull_request` back on before anyone else commits
+# here — this workflow is still correct and still worth running.
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 permissions:

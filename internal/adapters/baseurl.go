@@ -21,13 +21,22 @@ import (
 // # Why loopback and link-local are refused anyway
 //
 //   - 169.254.169.254 and friends are cloud metadata endpoints. An adapter
-//     pointed there returns credentials, and the response body travels
-//     days[].text → the model → the user's chat window. That is a complete read
-//     and exfiltration path built out of two config lines.
-//   - A private-range address is legitimate and common (an adapter on the same
-//     intranet), so it is ALLOWED. Refusing it would break the deployments this
-//     project cares most about. Loopback is the exception: an adapter on
-//     127.0.0.1 is indistinguishable from the backend's own admin surface.
+//     pointed there returns credentials with no authentication at all, and the
+//     response body travels days[].text → the model → the user's chat window.
+//     That is a complete read-and-exfiltrate path built out of two config lines,
+//     and nothing legitimate lives at that address.
+//   - Private ranges and LOOPBACK are allowed. Both are legitimate and common:
+//     an adapter on the same intranet, or on the same host — which is the normal
+//     shape for `exec` and a perfectly ordinary one for `http`.
+//
+// ⚠️ Loopback was banned in the first version of this file, on the grounds that
+// an adapter at 127.0.0.1 is indistinguishable from this server's own admin
+// surface. That reasoning does not survive contact with the threat model:
+// anybody who can edit providers.yaml already has shell access and can simply
+// read ADMIN_TOKEN out of .env. The ban bought nothing and broke the case that
+// matters most — running the reference adapter, and every same-host deployment.
+// The end-to-end test found it on its first run, which is the kind of thing an
+// httptest server inside this package could never have told us.
 //
 // The check is on the literal host in the config. Resolution-time rebinding is
 // not covered here and cannot be — the honest answer is that the redirect
@@ -54,15 +63,11 @@ func validateBaseURL(raw string) error {
 	host := u.Hostname()
 	if ip := net.ParseIP(host); ip != nil {
 		switch {
-		case ip.IsLoopback():
-			return errors.New("base_url must not be loopback: an adapter there is indistinguishable from this server's own admin surface")
 		case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast():
 			return errors.New("base_url must not be link-local: that range holds cloud metadata endpoints, and an adapter's response reaches the model and then the user")
 		case ip.IsUnspecified():
 			return errors.New("base_url must name a real address")
 		}
-	} else if host == "localhost" {
-		return errors.New("base_url must not be localhost: an adapter there is indistinguishable from this server's own admin surface")
 	}
 	return nil
 }

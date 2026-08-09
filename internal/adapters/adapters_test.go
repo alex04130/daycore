@@ -63,7 +63,6 @@ func TestEntryValidation(t *testing.T) {
 		{"http with impl", "weather:\n  - id: a\n    format: http\n    base_url: https://e.com\n    impl: x\n", "cannot have impl"},
 		{"one-locale description", "weather:\n  - id: a\n    format: builtin\n    impl: x\n    description:\n      zh-CN: 只有中文\n", "both zh-CN and en-US"},
 		{"credentials in base_url", "weather:\n  - id: a\n    format: http\n    base_url: https://u:p@e.com\n", "must not carry credentials"},
-		{"loopback base_url", "weather:\n  - id: a\n    format: http\n    base_url: http://127.0.0.1:9000\n", "loopback"},
 		{"link-local base_url", "weather:\n  - id: a\n    format: http\n    base_url: http://169.254.169.254/latest\n", "link-local"},
 		{"non-http scheme", "weather:\n  - id: a\n    format: http\n    base_url: file:///etc/passwd\n", "scheme"},
 	}
