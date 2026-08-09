@@ -113,6 +113,8 @@ func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, c
 		return s.toolAssignmentUpsert(ctx, sid, call.Arguments)
 	case "wish_add":
 		return s.toolWishAdd(ctx, sid, call.Arguments)
+	case "set_home_location":
+		return s.toolSetHomeLocation(ctx, sid, call.Arguments)
 	case "mood_record":
 		return s.toolMoodRecord(ctx, sid, tz, call.Arguments)
 	case "material_add":
@@ -277,6 +279,19 @@ func companionToolDefs(caps ai.Capabilities, interactive bool, weatherIDs, searc
 			// about.
 			params["source"] = schemaEnum("数据源；不填由后端按默认顺序挑。指定了就用那个，那个不可用会直接报错、不会悄悄换一个。", weatherIDs)
 		}
+		// Offered alongside get_weather, and only then: without a weather source
+		// there is nothing a stored home would be used FOR, and a tool that
+		// records something nothing reads is a promise the product does not keep.
+		tools = append(tools, ai.ToolDef{
+			Name: "set_home_location",
+			Description: "记住用户**常住**的城市（早晚简报查天气用它，简报里没有模型可以问）。" +
+				"只在用户说清了自己住哪 / 长期在哪时才用。" +
+				"⚠️ 出差、旅行、\"我这周在东京\" 这类**不要**用它 —— 那种情况直接 get_weather(location=\"东京\") 查一次就行。" +
+				"把临时去处存成常住，用户接下来一个月每天早上都会收到错的城市的天气。",
+			Parameters: schemaObj(map[string]any{
+				"location": schemaStr("城市名，如\"上海\"、\"Cambridge, MA\""),
+			}, "location"),
+		})
 		tools = append(tools, ai.ToolDef{
 			Name:        "get_weather",
 			Description: "查询某地未来几天的天气预报（用户问天气、安排户外活动、或商量出行计划时主动查）。",
