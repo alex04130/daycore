@@ -98,7 +98,7 @@
 
 - `apiVersion` = API 契约大版本，只在破坏性变更时 +1，**独立于构建版本**。客户端硬编码自己期望的值，不等 → 硬阻断并提示升级（web 前端把它存 `state.apiMismatch`）。
 - `apiMinor` = 新增性变更（加端点/字段）+1；客户端可据此对可选功能降级。
-- `build`/`channel` = 构建版本展示用（"2.2.0-beta"）；`minClient` = 服务器认为兼容的最老客户端构建（提示更新用，不阻断）。
+- `build`/`channel` = 构建版本展示用（"2.3.0-beta"）。⚠️ `apiVersion`/`apiMinor` 现在**从它推导**（2026-08-09 合并，此前是独立的一层）—— 字段和比对方式都没变，只是不会再单独于构建版本移动了；`minClient` = 服务器认为兼容的最老客户端构建（提示更新用，不阻断）。
 - `locales` = `{available, defaultPrimary, defaultSecondary}`（2026-07-26 加）。`available` 是**这个安装能渲染的全部语言**，**不是编译期列表** —— 只有 zh-CN / en-US 编进二进制，丢一个 `<locale>.json` 进 `LOCALES_DIR` 或从控制台加一份就会多出来，所以前端必须读它而不是写死自己以为存在的那几种。后两个是**新用户的默认**一主一副。
 - 老后端没有此端点 → 前端回退 `GET /api/healthz` 读 version/channel。老后端没有 `locales` 字段 → 按单语言处理，隐藏开关。
 

@@ -366,6 +366,13 @@ func WriteLock(root string, bundled []byte) error {
 // CheckVersion applies the bump rule. It lives in the tool rather than only in
 // the test so `-check` enforces it too — the rule is part of what the contract
 // is, not a property someone remembered to test.
+//
+// ⚠️ The two numbers it compares are now DERIVED from the build version
+// (2026-08-09): there is one number to move, in internal/version/version.go.
+// The rule itself is unchanged — a contract surface that grew or shrank since
+// the last freeze must be accompanied by a version that moved — but the advice
+// in the messages below points at the build version, because that is the only
+// place left to edit.
 func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
 	added, removed := diffOps(lock.Operations, current)
 
@@ -382,13 +389,13 @@ func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
 		// generated client's function is gone, which a client cannot tell apart
 		// from removal.
 		if apiVersion <= lock.APIVersion {
-			return fmt.Errorf("these operations disappeared since contract %d.%d, which is breaking — bump version.APIVersion to %d:\n  %s",
+			return fmt.Errorf("these operations disappeared since contract %d.%d, which is breaking — raise the MAJOR in internal/version/version.go (to %d.x) and run `make api-lock`:\n  %s",
 				lock.APIVersion, lock.APIMinor, lock.APIVersion+1, strings.Join(removed, "\n  "))
 		}
 	case len(added) > 0:
 		if apiVersion == lock.APIVersion && apiMinor == lock.APIMinor {
-			return fmt.Errorf("%d new operations since contract %d.%d — bump version.APIMinor to %d (once per batch, not once per change):\n  %s",
-				len(added), lock.APIVersion, lock.APIMinor, lock.APIMinor+1, strings.Join(added, "\n  "))
+			return fmt.Errorf("%d new operations since contract %d.%d — raise the MINOR in internal/version/version.go (to %d.%d) and run `make api-lock`. Once per batch, not once per change:\n  %s",
+				len(added), lock.APIVersion, lock.APIMinor, lock.APIVersion, lock.APIMinor+1, strings.Join(added, "\n  "))
 		}
 	}
 	// Surface unchanged deliberately does NOT mean "no bump allowed": additive

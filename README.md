@@ -1,6 +1,6 @@
 # Daycore v2 — AI 自主规划日程助手 / AI Autonomous Day Planner
 
-**v2.2.0-beta（v2 测试版 / v2 beta）**
+**v2.3.0-beta（v2 测试版 / v2 beta）**
 
 [中文](#中文) · [English](#english)
 
@@ -134,13 +134,11 @@ server {
 
 ### 版本
 
-版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)。**同一个文件里有三层，不要混**：
+版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)，**只有一个数字**（2026-08-09 从三层合并而来）。
 
-| 层 | 常量 | 谁在用 |
-|---|---|---|
-| 构建版本 | `Version` + `Channel`（`2.<minor>.<patch>` + `beta`；minor=功能里程碑，patch=修复） | `GET /api/healthz`、设置页显示「Daycore v2.2.0-beta」 |
-| **API 契约版本** | `APIVersion` / `APIMinor` | `GET /api/version`；**各前端握手用的是这个** —— breaking 升 major，additive 升 minor |
-| 各前端自己的版本 | 不在本仓 | 独立迭代，与上面两层解耦 |
+`APIVersion` / `APIMinor` 仍由 `GET /api/version` 报出、仍是客户端比对的字段，但**从 `Version` 推导** —— 握手形状没变，只是数字来源变了。代价是「契约至少这么新」和「构建至少这么新」不能再分开讲，这在没有任何前端协商的今天不花钱。
+
+⚠️ **它是「第几个修改批次」不是发布号**：`2.2 → 2.3` 的意思是一整份规划从头到尾实现完了。
 
 契约面变了就必须升版，这条由 `api/spec/contract-lock.json` + `go test ./...` 强制（详见 [`api/spec/README.md`](api/spec/README.md)）。
 
