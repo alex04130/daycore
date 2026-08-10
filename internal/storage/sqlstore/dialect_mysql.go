@@ -150,6 +150,17 @@ func (mysqlDialect) Migrations() []string {
 			signals INT NOT NULL DEFAULT 0,
 			PRIMARY KEY (session_id, day)
 		)`,
+		`CREATE TABLE IF NOT EXISTS ai_usage_daily (
+			day VARCHAR(10) NOT NULL,
+			model VARCHAR(191) NOT NULL,
+			endpoint VARCHAR(64) NOT NULL,
+			calls BIGINT NOT NULL DEFAULT 0,
+			errors BIGINT NOT NULL DEFAULT 0,
+			prompt_tokens BIGINT NOT NULL DEFAULT 0,
+			comp_tokens BIGINT NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (day, model, endpoint)
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key VARCHAR(191) NOT NULL,
 			locale VARCHAR(64) NOT NULL,

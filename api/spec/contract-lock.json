@@ -35,6 +35,7 @@
     "GET /api/admin/roles adminRoles",
     "GET /api/admin/session adminWhoAmI",
     "GET /api/admin/stats adminStats",
+    "GET /api/admin/usage adminUsage",
     "GET /api/admin/users adminUsers",
     "GET /api/assignments listAssignments",
     "GET /api/auth/oauth/{provider} oauthStart",

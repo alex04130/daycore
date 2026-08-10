@@ -207,50 +207,105 @@ const (
 	JobRunPruneEvery = 6 * time.Hour
 )
 
-// StartAILogPrune keeps ai_call_logs from growing without bound.
+// StartAILogRollUp folds closed days into the spend rollup and then prunes the
+// ledger.
 //
-// It is the fastest-growing table in the database — one row per model call, and
-// an active user generates several per conversation turn — and until now
-// NOTHING deleted from it. That is the same shape of hole proposals had: a
-// table whose growth is invisible because no screen ever shows its size, on a
-// deployment nobody is watching.
+// # ⚠️ The order inside this function is the point of this function
 //
-// Leader-gated for the same reason as job_runs: N instances deleting the same
-// rows is N−1 wasted round trips, not an error.
-func (s *Server) StartAILogPrune() {
-	s.everyTick("ai log prune", AILogPruneEvery, func(parent context.Context) {
+// The prune deletes the rows the fold is computed from. Roll up first and a
+// day's history is permanent; prune first and that day is gone forever, with
+// no error anywhere and the only symptom being a total that is lower than it
+// was yesterday. They are one job rather than two precisely so that nobody can
+// schedule them in the other order, and a conformance case
+// (AIUsage/FoldsSurviveThePrune) pins the outcome.
+//
+// ai_call_logs is the fastest-growing table in the database — one row per model
+// call, several per conversation turn — and until this landed NOTHING deleted
+// from it. Same shape of hole proposals had: growth nobody can see because no
+// screen shows a table's size.
+//
+// Leader-gated like the job_runs prune: N instances doing the same delete is
+// N−1 wasted round trips, not an error. For the fold it matters more than that
+// — two instances folding the same day would both DELETE-then-INSERT it, and
+// while the result is still correct (the fold is idempotent), one of them would
+// be reading a day the other had momentarily emptied.
+func (s *Server) StartAILogRollUp() {
+	s.everyTick("ai usage rollup", AILogPruneEvery, func(parent context.Context) {
 		if !s.LeadsWorker() {
 			return
 		}
-		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 		defer cancel()
-		n, err := s.store.AILogs().Prune(ctx, time.Now().Add(-AILogRetention))
-		if err != nil {
-			s.log.Warn("ai log prune failed", "err", err)
-			return
-		}
-		if n > 0 {
-			s.log.Info("pruned ai call logs", "count", n)
-		}
+		s.foldAndPruneAILogs(ctx, domain.UTCDay(time.Now()), time.Now().Add(-AILogRetention))
 	})
 }
 
-// Retention for ai_call_logs.
+// alignToDay moves an instant back to the start of the UTC day containing it.
 //
-// ⚠️ Ninety days is a DECISION with two costs, and both should be said out
-// loud because the console will make the second one visible:
+// ⚠️ THE PRUNE BOUNDARY MUST BE DAY-ALIGNED, and this is where that is made
+// true. `now - 90 days` lands in the middle of a day, so an unaligned prune
+// leaves that day HALF present — and the fold, which re-folds the newest day
+// while the ledger still has rows for it, would then recompute it from the
+// survivors and write a smaller number over the right one. Silently, and once.
 //
-//   - AdminStats counts and sums this table, so "AI 调用" and "Token 消耗" on
-//     the overview are ninety-day figures, not all-time ones. They will appear
-//     to go DOWN. That is honest — an all-time counter that only rises is a
-//     number nobody can act on — but it has to be labelled on the screen.
-//   - Ninety days is long enough to answer "what did this deployment cost last
-//     quarter", which is the question a hosted tier is billed from, and short
-//     enough that the table does not outgrow the data it is about.
+// Aligning makes the invariant statable: a day is either wholly in the ledger
+// or wholly gone, so anything the fold can see, it can see all of.
+func alignToDay(t time.Time) time.Time {
+	start, err := domain.StartOfUTCDay(domain.UTCDay(t))
+	if err != nil {
+		// UTCDay always produces a parseable key; this is unreachable, and
+		// returning t unchanged is the conservative direction (prune less).
+		return t
+	}
+	return start
+}
+
+// foldAndPruneAILogs is the job body, with its two moments passed in.
 //
-// If billing ever needs a longer horizon, the answer is a rolled-up monthly
-// aggregate written before the prune — not a longer retention. Keeping every
-// row forever to compute a sum is the expensive way to store a number.
+// Split out and parameterised for one reason: the ORDER is the whole point of
+// this job, and an order living only inside a ticker callback is an order no
+// test can see. TestTheJobFoldsBeforeItPrunes calls this directly and would go
+// red if the two statements were ever swapped — which, before the split, they
+// could be with the entire suite staying green.
+func (s *Server) foldAndPruneAILogs(ctx context.Context, today string, pruneBefore time.Time) {
+	days, err := s.store.AILogs().RollUpUsage(ctx, today)
+	if err != nil {
+		// ⚠️ Return, do NOT fall through to the prune. A fold that failed leaves
+		// days unaccounted for, and pruning after it would delete the rows a
+		// later fold needs. Skipping one prune costs disk; skipping the fold
+		// costs the history, permanently.
+		s.log.Warn("ai usage rollup failed; skipping the prune so its rows survive", "err", err)
+		return
+	}
+	if days > 0 {
+		s.log.Info("folded ai usage days", "days", days)
+	}
+
+	n, err := s.store.AILogs().Prune(ctx, alignToDay(pruneBefore))
+	if err != nil {
+		s.log.Warn("ai log prune failed", "err", err)
+		return
+	}
+	if n > 0 {
+		s.log.Info("pruned ai call logs", "count", n)
+	}
+}
+
+// Retention for ai_call_logs — the RAW rows only.
+//
+// Ninety days because that is how long "what happened on that morning" stays a
+// question anybody asks of individual calls. The TOTALS are not affected: they
+// live in ai_usage_daily, which is folded before the prune and kept forever.
+//
+// That separation is the whole reason this number can stay short. Before the
+// rollup existed, AdminStats counted and summed this table, so shortening
+// retention shortened history — the console's "AI 调用" was a ninety-day figure
+// wearing the label of a total, and it went DOWN as the window slid. Now the
+// window bounds only the detail.
+//
+// ⚠️ Raising it is cheap and lowering it is not: a day whose ledger rows are
+// gone can never be re-folded, so lowering retention below a gap in the fold
+// (a leader that was down for a week) loses those days permanently.
 const (
 	AILogRetention  = 90 * 24 * time.Hour
 	AILogPruneEvery = 12 * time.Hour

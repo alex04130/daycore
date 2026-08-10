@@ -246,3 +246,6 @@ button.chip { background: none; color: var(--fg); cursor: pointer; }
 .table-card.locked { border-style: dashed; }
 .table-name { font-family: var(--mono); font-size: .82rem; }
 .table-rows { font-size: .74rem; color: var(--dim); }
+.spark { display: flex; gap: 2px; align-items: flex-end; height: 3.5rem; margin: .6rem 0 1rem; }
+.spark-bar { flex: 1 1 0; min-width: 3px; background: var(--accent); opacity: .65; border-radius: 2px 2px 0 0; }
+.spark-bar:hover { opacity: 1; }

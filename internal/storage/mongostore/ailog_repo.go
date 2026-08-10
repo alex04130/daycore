@@ -2,6 +2,7 @@ package mongostore
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"daycore/internal/domain"
@@ -138,3 +139,238 @@ func (r aiLogRepo) Stats(ctx context.Context) (*domain.AdminStats, error) {
 
 func nowMillis() int64              { return time.Now().UnixMilli() }
 func fromMillis(ms int64) time.Time { return time.UnixMilli(ms) }
+
+// ── the daily rollup ────────────────────────────────────────────────────────
+
+// RollUpUsage folds each closed day with an aggregation pipeline ending in
+// $merge, so the documents never leave the database.
+//
+// $merge is Mongo's equivalent of `INSERT … SELECT`: the pipeline's output is
+// written straight into another collection by the server. It is available on a
+// self-hosted mongod from 4.2, which matters — the triggers that would have
+// been the other way to do this server-side are an Atlas-only product, so a
+// trigger-based design would have had no implementation here at all.
+//
+// The shape mirrors the SQL side exactly, including DELETE-then-write and the
+// millisecond range instead of a date operator. See sqlstore/ailog.go and
+// domain/ai_usage.go for why each of those is what it is.
+func (r aiLogRepo) RollUpUsage(ctx context.Context, today string) (int, error) {
+	// ⚠️ Start at the newest folded day, clamped to the ledger's oldest row.
+	// The two failures this balances — a partially written day being skipped
+	// forever, and a pruned day being overwritten with zero — are argued in
+	// sqlstore/ailog.go. This back end is where the first one is REAL: $merge
+	// writes documents one at a time, so a fold killed midway genuinely leaves a
+	// day half-written.
+	var oldest struct {
+		CreatedAt int64 `bson:"created_at"`
+	}
+	lerr := r.c("ai_call_logs").FindOne(ctx, bson.M{},
+		options.FindOne().SetSort(bson.D{{Key: "created_at", Value: 1}})).Decode(&oldest)
+	if errors.Is(lerr, mongo.ErrNoDocuments) {
+		return 0, nil // nothing has ever been logged, or all of it is pruned
+	}
+	if lerr != nil {
+		return 0, lerr
+	}
+	start := domain.UTCDay(fromMillis(oldest.CreatedAt))
+
+	var newest struct {
+		Day string `bson:"day"`
+	}
+	nerr := r.c("ai_usage_daily").FindOne(ctx, bson.M{},
+		options.FindOne().SetSort(bson.D{{Key: "day", Value: -1}})).Decode(&newest)
+	switch {
+	case nerr == nil:
+		if newest.Day > start {
+			start = newest.Day
+		}
+	case errors.Is(nerr, mongo.ErrNoDocuments):
+		// Nothing folded yet; start where the ledger starts.
+	default:
+		return 0, nerr
+	}
+
+	from, err := domain.StartOfUTCDay(start)
+	if err != nil {
+		return 0, err
+	}
+	end, err := domain.StartOfUTCDay(today)
+	if err != nil {
+		return 0, err
+	}
+
+	written := 0
+	for d := from; d.Before(end); d = d.AddDate(0, 0, 1) {
+		day := domain.UTCDay(d)
+		lo, hi := d.UnixMilli(), d.AddDate(0, 0, 1).UnixMilli()
+		// Load-bearing now that the newest day is re-folded: $merge only
+		// touches keys the new aggregate produces, so a group that has stopped
+		// appearing (its ledger rows pruned) would otherwise linger and be
+		// counted forever.
+		if _, err := r.c("ai_usage_daily").DeleteMany(ctx, bson.M{"day": day}); err != nil {
+			return written, err
+		}
+		pipe := mongo.Pipeline{
+			{{Key: "$match", Value: bson.M{"created_at": bson.M{"$gte": lo, "$lt": hi}}}},
+			{{Key: "$group", Value: bson.D{
+				{Key: "_id", Value: bson.D{{Key: "model", Value: "$model"}, {Key: "endpoint", Value: "$endpoint"}}},
+				{Key: "calls", Value: bson.M{"$sum": 1}},
+				{Key: "errors", Value: bson.M{"$sum": bson.M{"$cond": bson.A{
+					bson.M{"$eq": bson.A{"$status", domain.AICallStatusError}}, 1, 0,
+				}}}},
+				{Key: "prompt_tokens", Value: bson.M{"$sum": "$prompt_tokens"}},
+				{Key: "comp_tokens", Value: bson.M{"$sum": "$comp_tokens"}},
+			}}},
+			// The _id is rebuilt as the composite key so $merge's `on` has
+			// something to match, and so a re-run overwrites rather than
+			// duplicates. The SQL side gets this from its PRIMARY KEY.
+			{{Key: "$project", Value: bson.M{
+				"_id":           bson.M{"$concat": bson.A{day, "|", "$_id.model", "|", "$_id.endpoint"}},
+				"day":           day,
+				"model":         "$_id.model",
+				"endpoint":      "$_id.endpoint",
+				"calls":         1,
+				"errors":        1,
+				"prompt_tokens": 1,
+				"comp_tokens":   1,
+				"updated_at":    nowMillis(),
+			}}},
+			{{Key: "$merge", Value: bson.M{
+				"into":           "ai_usage_daily",
+				"on":             "_id",
+				"whenMatched":    "replace",
+				"whenNotMatched": "insert",
+			}}},
+		}
+		cur, err := r.c("ai_call_logs").Aggregate(ctx, pipe)
+		if err != nil {
+			return written, err
+		}
+		// $merge yields no documents, but the cursor still has to be drained
+		// and closed or the pipeline may not have run to completion.
+		for cur.Next(ctx) { //nolint:revive // draining is the point
+		}
+		cerr := cur.Err()
+		cur.Close(ctx)
+		if cerr != nil {
+			return written, cerr
+		}
+		written++
+	}
+	return written, nil
+}
+
+func aiUsageWindowDoc(from, to string) bson.M {
+	q := bson.M{}
+	rng := bson.M{}
+	if from != "" {
+		rng["$gte"] = from
+	}
+	if to != "" {
+		rng["$lte"] = to
+	}
+	if len(rng) > 0 {
+		q["day"] = rng
+	}
+	return q
+}
+
+func (r aiLogRepo) UsageTotals(ctx context.Context, from, to string) (*domain.AIUsageTotals, error) {
+	pipe := mongo.Pipeline{
+		{{Key: "$match", Value: aiUsageWindowDoc(from, to)}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: nil},
+			{Key: "calls", Value: bson.M{"$sum": "$calls"}},
+			{Key: "errors", Value: bson.M{"$sum": "$errors"}},
+			{Key: "prompt_tokens", Value: bson.M{"$sum": "$prompt_tokens"}},
+			{Key: "comp_tokens", Value: bson.M{"$sum": "$comp_tokens"}},
+			{Key: "first_day", Value: bson.M{"$min": "$day"}},
+		}}},
+	}
+	cur, err := r.c("ai_usage_daily").Aggregate(ctx, pipe)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := &domain.AIUsageTotals{}
+	if cur.Next(ctx) {
+		var d struct {
+			Calls        int64  `bson:"calls"`
+			Errors       int64  `bson:"errors"`
+			PromptTokens int64  `bson:"prompt_tokens"`
+			CompTokens   int64  `bson:"comp_tokens"`
+			FirstDay     string `bson:"first_day"`
+		}
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		out.Calls, out.Errors = d.Calls, d.Errors
+		out.PromptTokens, out.CompTokens = d.PromptTokens, d.CompTokens
+		out.FirstDay = d.FirstDay
+	}
+	return out, cur.Err()
+}
+
+func (r aiLogRepo) UsageDays(ctx context.Context, from, to string, limit int) ([]domain.AIUsageDay, error) {
+	limit = domain.ListLimit(limit, domain.UsageDaysDefault, domain.UsageDaysMax)
+	return r.usageFold(ctx, from, to, "$day", bson.D{{Key: "_id", Value: -1}}, int64(limit), func(id string, d *domain.AIUsageDay) {
+		d.Day = id
+	})
+}
+
+func (r aiLogRepo) UsageByModel(ctx context.Context, from, to string) ([]domain.AIUsageDay, error) {
+	return r.usageFold(ctx, from, to, "$model",
+		bson.D{{Key: "tokens", Value: -1}, {Key: "_id", Value: 1}}, 0, func(id string, d *domain.AIUsageDay) {
+			d.Model = id
+		})
+}
+
+// usageFold is the one grouping pipeline both folds use.
+//
+// ⚠️ `by` is a field path chosen by THIS package from two literals, never by a
+// caller. The same rule as the table browser: a group key is an identifier, and
+// an identifier that came in from outside is the thing this codebase does not
+// let happen.
+func (r aiLogRepo) usageFold(ctx context.Context, from, to, by string, sort bson.D, limit int64,
+	assign func(string, *domain.AIUsageDay)) ([]domain.AIUsageDay, error) {
+	pipe := mongo.Pipeline{
+		{{Key: "$match", Value: aiUsageWindowDoc(from, to)}},
+		{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: by},
+			{Key: "calls", Value: bson.M{"$sum": "$calls"}},
+			{Key: "errors", Value: bson.M{"$sum": "$errors"}},
+			{Key: "prompt_tokens", Value: bson.M{"$sum": "$prompt_tokens"}},
+			{Key: "comp_tokens", Value: bson.M{"$sum": "$comp_tokens"}},
+			{Key: "tokens", Value: bson.M{"$sum": bson.M{"$add": bson.A{"$prompt_tokens", "$comp_tokens"}}}},
+		}}},
+		{{Key: "$sort", Value: sort}},
+	}
+	if limit > 0 {
+		pipe = append(pipe, bson.D{{Key: "$limit", Value: limit}})
+	}
+	cur, err := r.c("ai_usage_daily").Aggregate(ctx, pipe)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []domain.AIUsageDay{}
+	for cur.Next(ctx) {
+		var d struct {
+			ID           string `bson:"_id"`
+			Calls        int64  `bson:"calls"`
+			Errors       int64  `bson:"errors"`
+			PromptTokens int64  `bson:"prompt_tokens"`
+			CompTokens   int64  `bson:"comp_tokens"`
+		}
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		row := domain.AIUsageDay{
+			Calls: d.Calls, Errors: d.Errors,
+			PromptTokens: d.PromptTokens, CompTokens: d.CompTokens,
+		}
+		assign(d.ID, &row)
+		out = append(out, row)
+	}
+	return out, cur.Err()
+}

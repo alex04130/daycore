@@ -282,7 +282,7 @@ func run(logger *slog.Logger) error {
 	// order of any of this.
 	srv.StartWorkerLease()
 	srv.StartJobRunPrune()
-	srv.StartAILogPrune()
+	srv.StartAILogRollUp()
 	// Proposal lifecycle. Its first pass runs at boot, which is what settles the
 	// decision cards orphaned by the process that died — they are already lapsed
 	// (a decision card's TTL is the agent's own wait budget), so they need

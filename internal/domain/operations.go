@@ -108,6 +108,17 @@ type AICallLog struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+// The two values AICallLog.Status takes.
+//
+// Constants because the rollup counts errors with a comparison inside a SQL
+// aggregate and the console filters on the same strings: three copies of "error"
+// spelled by hand is a filter that silently matches nothing on the day one of
+// them is typed "err".
+const (
+	AICallStatusOK    = "ok"
+	AICallStatusError = "error"
+)
+
 // AdminStats is an admin stats snapshot (read-only, no persistence).
 type AdminStats struct {
 	Users          int   `json:"users"`

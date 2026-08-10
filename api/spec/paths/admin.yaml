@@ -229,6 +229,50 @@
                 nextBeforeId: { type: string }
       '400': { description: Bad status, since, or half a cursor. }
       '403': { $ref: '#/components/responses/Error' }
+/api/admin/usage:
+  get:
+    operationId: adminUsage
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Model spend history — per day and per model, kept forever.
+    description: >-
+      Read from `ai_usage_daily`, a rollup folded server-side (one
+      `INSERT … SELECT … GROUP BY` per closed day on SQL, one aggregation
+      pipeline ending in `$merge` on Mongo). The raw ledger is pruned at ninety
+      days; this is not, so the figures are history rather than a window.
+
+      ⚠️ TODAY IS NOT INCLUDED, in either fold. A day is folded only once it can
+      no longer receive rows, so the rollup stops at `throughDay`.
+      `GET /api/admin/stats` is the one place that adds today's live ledger rows
+      on top — one implementation of "history plus today" rather than two that
+      can drift.
+
+      Two folds in one response because neither is actionable alone: the day
+      series says spend doubled, the model fold says which model did it.
+
+      ⚠️ Same permission as the ledger (ailogs.read), deliberately NOT
+      overview.read — a cost breakdown is not "is it up", and overview.read is
+      the permission everybody gets.
+
+      Rows in `byModel` carry no `day`; they are a fold ACROSS days.
+    parameters:
+      - { name: from, in: query, schema: { type: string }, description: 'YYYY-MM-DD, UTC, inclusive.' }
+      - { name: to, in: query, schema: { type: string }, description: 'YYYY-MM-DD, UTC, inclusive.' }
+      - { name: limit, in: query, schema: { type: integer, default: 90, maximum: 800 }, description: Days in the series. }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                totals: { $ref: '#/components/schemas/AIUsageTotals' }
+                days: { type: array, items: { $ref: '#/components/schemas/AIUsageDay' } }
+                byModel: { type: array, items: { $ref: '#/components/schemas/AIUsageDay' } }
+                throughDay: { type: string, description: Newest day the rollup can cover. }
+      '400': { description: from or to is not YYYY-MM-DD. }
+      '403': { $ref: '#/components/responses/Error' }
 /api/admin/users:
   get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
 /api/admin/users/{id}:

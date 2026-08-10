@@ -158,6 +158,17 @@ func (postgresDialect) Migrations() []string {
 			signals INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (session_id, day)
 		)`,
+		`CREATE TABLE IF NOT EXISTS ai_usage_daily (
+			day TEXT NOT NULL,
+			model TEXT NOT NULL,
+			endpoint TEXT NOT NULL,
+			calls BIGINT NOT NULL DEFAULT 0,
+			errors BIGINT NOT NULL DEFAULT 0,
+			prompt_tokens BIGINT NOT NULL DEFAULT 0,
+			comp_tokens BIGINT NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (day, model, endpoint)
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key TEXT NOT NULL,
 			locale TEXT NOT NULL,

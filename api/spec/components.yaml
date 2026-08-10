@@ -580,6 +580,35 @@ components:
         error: { type: string, description: Truncated to 300 characters. }
         requestId: { type: string }
         createdAt: { type: string, format: date-time }
+    AIUsageDay:
+      type: object
+      description: >-
+        One fold of the spend rollup. In the day series `model` and `endpoint`
+        are empty (summed across them); in the model fold `day` is empty
+        (summed across days).
+      properties:
+        day: { type: string, description: 'YYYY-MM-DD, UTC.' }
+        model: { type: string }
+        endpoint: { type: string }
+        calls: { type: integer }
+        errors: { type: integer }
+        promptTokens: { type: integer }
+        compTokens: { type: integer }
+    AIUsageTotals:
+      type: object
+      properties:
+        calls: { type: integer }
+        errors: { type: integer }
+        promptTokens: { type: integer }
+        compTokens: { type: integer }
+        firstDay:
+          type: string
+          description: >-
+            The oldest day the rollup actually holds. ⚠️ Render it. The rollup
+            can only be built from ledger rows that still exist, so on a
+            deployment upgrading into this feature the total begins where the
+            ledger began — not at the beginning of time. A figure shown without
+            this date is the same lie the rollup exists to fix, one level up.
     AdminDBTable:
       type: object
       description: >-

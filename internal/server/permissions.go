@@ -273,6 +273,10 @@ var routePermissions = map[string]string{
 	"PUT /api/admin/prompts/{key}": PermPromptsWrite,
 
 	"GET /api/admin/ailogs": PermAILogsRead,
+	// The spend rollup. Same permission as the ledger it is folded from: it is
+	// the same data, summed. ⚠️ Deliberately NOT overview.read — that is the one
+	// permission everybody gets, and a cost breakdown is not "is it up".
+	"GET /api/admin/usage": PermAILogsRead,
 
 	"GET /api/admin/users":         PermUsersRead,
 	"DELETE /api/admin/users/{id}": PermUsersDelete,

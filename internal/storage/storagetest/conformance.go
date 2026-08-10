@@ -146,6 +146,9 @@ var cases = []suiteCase{
 	{"AILog/PruneIsByAgeAndReportsCount", aiLogPrune},
 	{"Browser/PagesRedactsAndRefusesUnknownTables", browserPagesAndRedacts},
 	{"Browser/DeleteIsByKeyAndRefusesCompositeTables", browserDelete},
+	{"AIUsage/RollUpIsIdempotentAndSkipsToday", aiUsageRollUp},
+	{"AIUsage/FoldsSurviveThePrune", aiUsageSurvivesPrune},
+	{"AIUsage/ConcurrentFoldsDoNotCollide", aiUsageConcurrentFold},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -2630,5 +2633,302 @@ func browserDelete(t *testing.T, h Harness) {
 	// a deleted permission set the moment the name is reused.
 	if tb, _ := domain.TableByName("roles"); tb.Deletable() {
 		t.Error("roles became deletable from the browser; that bypasses the delete-both invariant in domain/role.go")
+	}
+}
+
+// ── the AI spend rollup ─────────────────────────────────────────────────────
+
+// Folding closed days, leaving today alone, and producing the same rows when
+// run again.
+//
+// Idempotence is the property the whole design rests on: there is no "have I
+// already counted this day" bookkeeping anywhere, so if a second run
+// double-counted, every figure on the console would drift upward by however
+// many times the job happened to fire. Nothing would report that.
+func aiUsageRollUp(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.AILogs()
+	ctx := bg()
+
+	// Two closed days and one open one. Add stamps created_at itself, so the
+	// rows are written now and then moved — the same trick the paging case uses,
+	// for the same reason.
+	write := func(sid, endpoint, model, status string) *domain.AICallLog {
+		l := aiLog(sid, endpoint, model, status)
+		l.PromptTokens, l.CompTokens = 10, 3
+		if err := repo.Add(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	now := time.Now().UTC()
+	todayKey := domain.UTCDay(now)
+	d1 := now.AddDate(0, 0, -2)
+	d2 := now.AddDate(0, 0, -1)
+
+	write("day1", "companion", "glm-5", "ok")
+	write("day1", "companion", "glm-5", "error")
+	write("day1", "brief", "glm-5", "ok")
+	h.ForceAILogCreatedAt(t, "day1", d1)
+
+	write("day2", "companion", "deepseek-v4", "ok")
+	h.ForceAILogCreatedAt(t, "day2", d2)
+
+	// Today's row stays where it is.
+	write("today", "companion", "glm-5", "ok")
+
+	n, err := repo.RollUpUsage(ctx, todayKey)
+	if err != nil {
+		t.Fatalf("roll up: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("folded %d days, want 2 (the two closed ones)", n)
+	}
+
+	byModel := func(rows []domain.AIUsageDay, model string) *domain.AIUsageDay {
+		for i := range rows {
+			if rows[i].Model == model {
+				return &rows[i]
+			}
+		}
+		return nil
+	}
+
+	// Today is NOT in the rollup. If it were, the console would double-count it
+	// against the live figure it adds on top — and only on days somebody
+	// happened to look after the job ran.
+	days, err := repo.UsageDays(ctx, "", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range days {
+		if d.Day == todayKey {
+			t.Errorf("today (%s) was folded; only closed days may be", todayKey)
+		}
+	}
+	if len(days) != 2 {
+		t.Fatalf("the rollup has %d days, want 2: %+v", len(days), days)
+	}
+
+	// The counters are right, per day and across the fold.
+	first := domain.UTCDay(d1)
+	for _, d := range days {
+		if d.Day != first {
+			continue
+		}
+		if d.Calls != 3 || d.Errors != 1 || d.PromptTokens != 30 || d.CompTokens != 9 {
+			t.Errorf("%s folded to %+v, want 3 calls / 1 error / 30 prompt / 9 comp", d.Day, d)
+		}
+	}
+
+	totals, err := repo.UsageTotals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Calls != 4 || totals.Errors != 1 || totals.PromptTokens != 40 || totals.CompTokens != 12 {
+		t.Errorf("totals = %+v, want 4 calls / 1 error / 40 prompt / 12 comp", totals)
+	}
+	// FirstDay is what keeps the figure honest on screen: it says where the
+	// number actually starts rather than implying "all time".
+	if totals.FirstDay != first {
+		t.Errorf("FirstDay = %q, want %q", totals.FirstDay, first)
+	}
+
+	// Per-model, folded ACROSS days.
+	models, err := repo.UsageByModel(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("per-model fold returned %d rows, want 2: %+v", len(models), models)
+	}
+	if m := byModel(models, "glm-5"); m == nil || m.Calls != 3 {
+		t.Errorf("glm-5 folded to %+v, want 3 calls", m)
+	}
+	if m := byModel(models, "deepseek-v4"); m == nil || m.Calls != 1 {
+		t.Errorf("deepseek-v4 folded to %+v, want 1 call", m)
+	}
+
+	// ── run it again ────────────────────────────────────────────────────────
+	//
+	// Every figure is unchanged. A second fold that ADDED to the counters would
+	// inflate the console by however often the job happened to fire, silently —
+	// which is why there is no incrementing anywhere in this design.
+	again, err := repo.RollUpUsage(ctx, todayKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exactly ONE day is rewritten: the newest folded one, deliberately revisited
+	// every run so a partially-written day cannot be skipped forever. Everything
+	// older is left alone.
+	if again != 1 {
+		t.Errorf("a second fold wrote %d days; it must rewrite exactly the newest one", again)
+	}
+	after, err := repo.UsageTotals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Calls != totals.Calls || after.CompTokens != totals.CompTokens {
+		t.Errorf("running the fold twice changed the totals: %+v then %+v", totals, after)
+	}
+
+	// A window narrows, and both bounds are inclusive.
+	win, err := repo.UsageTotals(ctx, first, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if win.Calls != 3 {
+		t.Errorf("one-day window = %d calls, want 3 — the bounds must be inclusive", win.Calls)
+	}
+	if empty, _ := repo.UsageTotals(ctx, "2000-01-01", "2000-01-02"); empty.Calls != 0 || empty.FirstDay != "" {
+		t.Errorf("an empty window returned %+v, want zeroes and no first day", empty)
+	}
+}
+
+// A day survives the prune that deletes the rows it was folded from.
+//
+// ⚠️ This is the assertion behind the ordering rule. Roll up first, then prune:
+// the prune deletes the ledger rows the fold reads, so a prune that ran first
+// would silently drop a day from history forever, and the only symptom would be
+// a total that is lower than it was yesterday.
+func aiUsageSurvivesPrune(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.AILogs()
+	ctx := bg()
+
+	old := aiLog("old", "companion", "glm-5", "ok")
+	old.PromptTokens, old.CompTokens = 7, 5
+	if err := repo.Add(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	longAgo := now.AddDate(0, 0, -100)
+	h.ForceAILogCreatedAt(t, "old", longAgo)
+
+	if _, err := repo.RollUpUsage(ctx, domain.UTCDay(now)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repo.UsageTotals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Calls != 1 {
+		t.Fatalf("the day was not folded before the prune: %+v", before)
+	}
+
+	// ⚠️ A row is left behind on a LATER day, deliberately. A live deployment
+	// always has recent calls, and an empty ledger takes a short-circuit that
+	// hides the case this is really about: the rollup's newest day being OLDER
+	// than the ledger's oldest surviving row. Without the clamp to the ledger,
+	// the fold would revisit that day, recompute it from rows that no longer
+	// exist, and write zero over real history.
+	recent := aiLog("recent", "companion", "glm-5", "ok")
+	if err := repo.Add(ctx, recent); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.Prune(ctx, now.AddDate(0, 0, -90)); err != nil {
+		t.Fatal(err)
+	}
+	// The old ledger row is gone and only the recent one is left…
+	rows, _ := repo.List(ctx, domain.AILogFilter{}, 0)
+	if len(rows) != 1 {
+		t.Fatalf("the prune left %d ledger rows, want just the recent one", len(rows))
+	}
+	// …and the history is not.
+	after, err := repo.UsageTotals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Calls != 1 || after.PromptTokens != 7 || after.CompTokens != 5 {
+		t.Errorf("pruning the ledger took the folded history with it: %+v", after)
+	}
+	// And a fold after the prune does not resurrect or zero that day — the loop
+	// starts after the newest folded day, so a day whose rows are gone is never
+	// revisited.
+	if _, err := repo.RollUpUsage(ctx, domain.UTCDay(now)); err != nil {
+		t.Fatalf("fold after prune: %v", err)
+	}
+	final, _ := repo.UsageTotals(ctx, "", "")
+	if final.Calls != 1 || final.PromptTokens != 7 || final.CompTokens != 5 {
+		t.Errorf("a fold run after the prune changed a day whose rows are gone: %+v", final)
+	}
+}
+
+// Two instances folding the same day at the same moment.
+//
+// The lease means this should not happen, and the lease rests on clocks — which
+// is exactly the reasoning leader.go already applies to every other job: nothing
+// whose correctness matters may rest on the lease alone.
+//
+// # What is guaranteed, and what is not
+//
+// GUARANTEED: the day ends up correct, and it is never left empty. Whichever
+// interleaving happens, the last INSERT to succeed wrote the whole day from the
+// ledger, and the ledger did not change while they ran.
+//
+// NOT guaranteed: that both calls return nil. DELETE-then-INSERT is two
+// statements, so on an engine with real write concurrency the two can interleave
+// as DELETE/DELETE/INSERT/INSERT and the loser hits the primary key. ⚠️ Measured
+// on real Postgres — SQLite serialises writers and hides it entirely, which is
+// what this suite exists to stop.
+//
+// A losing fold is NOISY, NOT WRONG: it returns an error, and the job's
+// fail-stop then skips the prune, so the day is simply refolded on the next run.
+// Making both succeed would need a per-dialect upsert (three spellings of ON
+// CONFLICT) to remove a collision the lease already makes vanishingly rare —
+// paying a permanent complexity cost for a transient log line.
+
+func aiUsageConcurrentFold(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.AILogs()
+	ctx := bg()
+
+	for i := 0; i < 4; i++ {
+		l := aiLog("race", "companion", "glm-5", "ok")
+		l.PromptTokens, l.CompTokens = 6, 2
+		if err := repo.Add(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	yesterday := time.Now().UTC().AddDate(0, 0, -1)
+	h.ForceAILogCreatedAt(t, "race", yesterday)
+	today := domain.UTCDay(time.Now())
+
+	errs := make(chan error, 2)
+	start := make(chan struct{})
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			_, err := repo.RollUpUsage(ctx, today)
+			errs <- err
+		}()
+	}
+	close(start)
+	failed := 0
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			failed++
+		}
+	}
+	// At most one may lose. Both failing would mean neither wrote the day, and
+	// the fail-stop would then keep skipping the prune forever.
+	if failed > 1 {
+		t.Errorf("both concurrent folds failed; nobody wrote the day")
+	}
+
+	// And the answer is right — not doubled, not missing, not empty — whichever
+	// of them won. Idempotence is what makes "both ran" harmless; without it the
+	// totals would depend on how many instances happened to be up.
+	totals, err := repo.UsageTotals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Calls != 4 || totals.PromptTokens != 24 || totals.CompTokens != 8 {
+		t.Errorf("after two concurrent folds: %+v, want 4 calls / 24 prompt / 8 comp", totals)
+	}
+	days, _ := repo.UsageDays(ctx, "", "", 0)
+	if len(days) != 1 {
+		t.Errorf("two folds produced %d day rows, want 1", len(days))
 	}
 }

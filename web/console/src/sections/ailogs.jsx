@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import * as api from '../api.js';
 import { Empty, Notice, Screen, useSection } from '../ui.jsx';
 import { shortTime } from './overview.jsx';
@@ -71,6 +71,7 @@ export function AILogs({ onUnauthorized }) {
     >
       {d && (
         <>
+          <Spend onUnauthorized={onUnauthorized} />
           <div className="filters">
             <button
               className={`chip ${filter.endpoint === '' ? 'on' : ''}`}
@@ -201,6 +202,98 @@ function Row({ k, v, mono }) {
     <div className="field">
       <div className="field-label">{k}</div>
       <div className={`field-value ${mono ? 'mono' : ''}`}>{v}</div>
+    </div>
+  );
+}
+
+
+// The spend rollup: how much, on which model.
+//
+// It sits above the log because it answers the question people arrive with. The
+// log answers the follow-up.
+//
+// ⚠️ It stops at `throughDay` — a day is folded only once it can no longer
+// receive rows, so today is never here. The heading says so rather than leaving
+// somebody to notice that the newest bar is missing and file a bug.
+function Spend({ onUnauthorized }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    api
+      .getUsage({ limit: 30 })
+      .then((x) => live && setD(x))
+      .catch((e) => {
+        if (e instanceof api.Unauthorized) onUnauthorized?.();
+        else if (live) setErr(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [onUnauthorized]);
+
+  if (err) {
+    return (
+      <Notice kind="warn" title="用量统计读不到">
+        {err}
+      </Notice>
+    );
+  }
+  if (!d) return null;
+
+  const days = [...(d.days || [])].reverse(); // oldest → newest, so the bar row reads left to right
+  const peak = Math.max(1, ...days.map((x) => x.promptTokens + x.compTokens));
+  const t = d.totals || {};
+
+  return (
+    <div className="block">
+      <div className="block-head">
+        <h2>用量</h2>
+        <span className="muted">
+          {t.firstDay ? `${t.firstDay} 起` : '还没有折叠过'} · 折到 {d.throughDay}（不含今天）
+        </span>
+      </div>
+      {days.length === 0 ? (
+        <Empty>还没有可折叠的完整日期 —— 明天这里会有第一条。</Empty>
+      ) : (
+        <>
+          <div className="spark" title="每天的 token 总量">
+            {days.map((x) => (
+              <span
+                key={x.day}
+                className="spark-bar"
+                style={{ height: `${Math.max(2, ((x.promptTokens + x.compTokens) / peak) * 100)}%` }}
+                title={`${x.day} · ${x.calls} 次 · ${x.promptTokens + x.compTokens} tokens${x.errors ? ` · ${x.errors} 失败` : ''}`}
+              />
+            ))}
+          </div>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>模型</th>
+                  <th>调用</th>
+                  <th>失败</th>
+                  <th>入 tokens</th>
+                  <th>出 tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(d.byModel || []).map((m) => (
+                  <tr key={m.model}>
+                    <td className="mono">{m.model}</td>
+                    <td className="mono">{m.calls}</td>
+                    <td className="mono">{m.errors || ''}</td>
+                    <td className="mono">{m.promptTokens}</td>
+                    <td className="mono">{m.compTokens}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

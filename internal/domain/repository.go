@@ -257,7 +257,30 @@ type AICallLogRepository interface {
 	// fastest-growing table in the database. Retention and the leader gate live
 	// in internal/server/leader.go beside the job_runs prune, which is the same
 	// shape for the same reason.
+	//
+	// ⚠️ RollUpUsage must run first. See ai_usage.go: the prune deletes the rows
+	// the rollup is computed from.
 	Prune(ctx context.Context, before time.Time) (int64, error)
+
+	// RollUpUsage folds every closed day the ledger still holds and the rollup
+	// does not, and reports how many days it wrote.
+	//
+	// One server-side aggregate per day, no per-call bookkeeping, idempotent by
+	// construction — the whole argument is in ai_usage.go. `today` is the day
+	// key that is NOT closed yet; everything strictly before it is fair game.
+	RollUpUsage(ctx context.Context, today string) (int, error)
+
+	// UsageTotals sums the rollup over [from, to] inclusive. Empty bounds mean
+	// unbounded, so UsageTotals(ctx, "", "") is the deployment's whole history.
+	UsageTotals(ctx context.Context, from, to string) (*AIUsageTotals, error)
+	// UsageDays returns per-day totals, newest day first, capped.
+	UsageDays(ctx context.Context, from, to string, limit int) ([]AIUsageDay, error)
+	// UsageByModel returns per-model totals over the window, biggest first.
+	//
+	// The question it answers is "what is costing money", which a per-day series
+	// cannot: a spend that doubled is only actionable once you know which model
+	// did it. Day is empty on these rows — they are a fold ACROSS days.
+	UsageByModel(ctx context.Context, from, to string) ([]AIUsageDay, error)
 }
 
 type RuleRepository interface {

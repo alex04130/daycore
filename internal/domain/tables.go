@@ -101,6 +101,13 @@ var Tables = []Table{
 	// ── operational: what is running, what ran, what broke ──────────────────
 	{Name: "operation_logs", Class: TableOperational, OrderBy: "created_at", KeyColumn: "id"},
 	{Name: "ai_call_logs", Class: TableOperational, OrderBy: "created_at", KeyColumn: "id"},
+	{Name: "ai_usage_daily", Class: TableOperational, OrderBy: "day",
+		// Composite key, and deleting from it by hand would be a mistake anyway:
+		// the rollup is a pure function of the ledger for every day the ledger
+		// still holds, so a hand-deleted row comes back on the next fold — or
+		// worse, does not, because the ledger's rows for that day are gone and
+		// the number is silently lower forever.
+		NotDeletableWhy: "复合主键（day + model + endpoint），而且它是账本折出来的 —— 手删只会在下一次折叠时回来，或者永远回不来"},
 	{Name: "job_runs", Class: TableOperational, OrderBy: "started_at", KeyColumn: "id"},
 	{Name: "leases", Class: TableOperational, OrderBy: "acquired_at",
 		NotDeletableWhy: "复合主键（lease_name + holder），没有单行 id 可指"},

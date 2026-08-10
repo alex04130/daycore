@@ -38,6 +38,10 @@ const (
 	// row — a 500-row page is a real amount of JSON to build and ship.
 	AILogListDefault, AILogListMax = 50, 200
 
+	// The usage rollup's day series. Two years of days, so a chart can ask for
+	// "everything" without the ceiling being the thing that truncates it.
+	UsageDaysDefault, UsageDaysMax = 90, 800
+
 	// Internal lists. These already had ceilings on SQL; the numbers are kept
 	// as they were so this change alters no SQL behaviour beyond the two that
 	// were wrong.

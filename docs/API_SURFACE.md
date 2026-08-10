@@ -6,7 +6,7 @@
 >
 > 三件事由测试兜住，不靠自觉（`internal/server/routes_test.go`）：本表与代码一致、**代码与 `api/openapi.yaml` 双向一致**（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复。REST 细节（请求/响应 schema）以 `api/openapi.yaml` 为准 —— 但**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**，openapi.yaml 是生成物，手改会被覆盖。
 >
-> 当前 **128 条路由 / 31 个组**。
+> 当前 **129 条路由 / 31 个组**。
 
 <!-- BEGIN GENERATED ROUTES -->
 ## admin (config)（2 条）
@@ -64,7 +64,7 @@
 | `POST /api/admin/session` | handlers_admin_session.go |
 | `DELETE /api/admin/session` | handlers_admin_session.go |
 
-## admin (stats, users, DB)（10 条）
+## admin (stats, users, DB)（11 条）
 
 | 路由 | Handler 文件 |
 |---|---|
@@ -76,6 +76,7 @@
 | `DELETE /api/admin/db/table/{name}/{id}` | handlers_admin_db.go |
 | `GET /api/admin/db/tables` | handlers_admin_db.go |
 | `GET /api/admin/stats` | handlers_admin_stats.go |
+| `GET /api/admin/usage` | handlers_admin_stats.go |
 | `GET /api/admin/users` | handlers_admin_stats.go |
 | `DELETE /api/admin/users/{id}` | handlers_admin_stats.go |
 

@@ -6,11 +6,15 @@ import { Empty, Field, Notice, Screen, useSection } from '../ui.jsx';
 //
 // # Everything here answers a question an operator actually has
 //
-// The prototype's five stat cards are kept, and one of them is labelled
-// differently on purpose: "AI 调用" and "Token 消耗" are NOT all-time counters.
-// The ledger is pruned, so both figures cover the retention window and will
-// appear to go down. Saying so on the card is the difference between an honest
-// number and one that quietly means something else than it did last month.
+// The prototype's five stat cards are kept. "AI 调用" and "Token 消耗" ARE
+// totals — they read the spend rollup, which is folded server-side per closed
+// day and kept forever, plus today's live ledger rows.
+//
+// They did not used to be. They were COUNT and SUM over a table pruned at
+// ninety days, so they were window figures wearing the label of a total and
+// they went DOWN as the window slid. The card now carries `since`, because on a
+// deployment that upgraded into the rollup the count begins where the ledger
+// began — and a total rendered without that date is the same lie one level up.
 //
 // # What is deliberately not a card
 //
@@ -40,7 +44,7 @@ export function Overview({ onUnauthorized, principal }) {
     >
       {d && (
         <>
-          <StatGrid stats={d.stats} retentionDays={d.logs?.retentionDays} />
+          <StatGrid stats={d.stats} />
           <ServiceCard meta={d.meta} principal={principal} />
           <RecentCalls logs={d.logs} />
         </>
@@ -52,7 +56,7 @@ export function Overview({ onUnauthorized, principal }) {
 const fmt = (n) =>
   typeof n === 'number' ? (n >= 10000 ? (n / 1000).toFixed(1) + 'k' : String(n)) : '—';
 
-function StatGrid({ stats, retentionDays }) {
+function StatGrid({ stats }) {
   if (stats?.__err) {
     return (
       <Notice kind="warn" title="统计读不到">
@@ -60,13 +64,26 @@ function StatGrid({ stats, retentionDays }) {
       </Notice>
     );
   }
-  const window = retentionDays ? `最近 ${retentionDays} 天` : '保留窗口内';
+  // The AI figures are totals, not a window — they come from the rollup, which
+  // is kept forever, plus today's live rows. `since` is what makes them honest:
+  // on a deployment that upgraded into the rollup the count begins where the
+  // ledger began, and a total rendered without that date is the same lie the
+  // rollup was built to fix.
+  const since = stats?.since ? `自 ${stats.since}` : '';
+  const tokens = (stats?.promptTokens ?? 0) + (stats?.tokenUsed ?? 0);
   const cards = [
     { lbl: '注册用户', num: fmt(stats?.users) },
     { lbl: '会话总数', num: fmt(stats?.sessions) },
-    // The two windowed ones carry their window in the label, not in a tooltip.
-    { lbl: 'AI 调用', num: fmt(stats?.aiCalls), sub: window },
-    { lbl: 'Token 消耗', num: fmt(stats?.tokenUsed), sub: window + ' · 只算输出' },
+    {
+      lbl: 'AI 调用',
+      num: fmt(stats?.aiCalls),
+      sub: stats?.aiErrors ? `${since} · ${stats.aiErrors} 次失败` : since,
+    },
+    {
+      lbl: 'Token 消耗',
+      num: fmt(tokens),
+      sub: `${fmt(stats?.promptTokens)} 入 / ${fmt(stats?.tokenUsed)} 出`,
+    },
     {
       lbl: '反馈有用率',
       num: stats?.feedbackTotal

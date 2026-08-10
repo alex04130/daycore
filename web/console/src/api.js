@@ -118,6 +118,20 @@ export const getOAuth = () => request('/oauth');
 
 export const getStats = () => request('/stats');
 
+// getUsage is the spend rollup: a per-day series and a per-model fold.
+//
+// ⚠️ It stops at `throughDay` — today is never in it, because a day is folded
+// only once it can no longer receive rows. /stats is the one place that adds
+// today's live rows on top.
+export function getUsage(params = {}) {
+	const q = new URLSearchParams();
+	for (const [k, v] of Object.entries(params)) {
+		if (v !== '' && v !== null && v !== undefined) q.set(k, v);
+	}
+	const s = q.toString();
+	return request('/usage' + (s ? '?' + s : ''));
+}
+
 // getAILogs takes the filter as an object and drops the empty fields, because
 // `?status=` is not the same request as omitting it — the server refuses an
 // unknown status, and an empty string is one.
