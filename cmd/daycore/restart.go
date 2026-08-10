@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,14 +51,33 @@ import (
 // port belongs to something else: "address already in use" after thirty silent
 // seconds is a much worse answer than the same message straight away.
 //
-// # ⚠️ The listening socket is deliberately NOT inherited
+// # The listening socket IS inherited — but only when the address did not move
 //
-// exec could pass the fd through and make the restart zero-downtime. It must
-// not: a restart exists to pick up NEW CONFIGURATION, and the listen address is
-// configuration. Inheriting the old socket would silently keep serving the old
-// address after somebody changed PORT — a restart that appears to work and
-// quietly ignored the reason it was asked for.
+// exec can carry an open fd across, which makes the restart seamless: nothing
+// is ever refused, because the socket never stops listening. Connections that
+// arrive mid-restart queue in the accept backlog and are served by the new
+// image.
 //
+// ⚠️ The reason this needs a condition at all: **a restart exists to pick up new
+// configuration, and the listen address is configuration.** Inheriting blindly
+// would make a restart after changing PORT appear to work while still serving
+// the old address — a restart that quietly ignored the reason it was asked for.
+//
+// So the parent passes the fd AND the address it belongs to, and **THE CHILD
+// DECIDES**. That is not a detail: only the child has read the new
+// configuration, so only the child can tell whether the address moved. A parent
+// that decided would be comparing the config against itself.
+//
+//	same address       inherit → no connection is refused at any point
+//	different address  close the inherited fd, bind the new one → the ordinary
+//	                   few seconds of refusal, which is what changing a listen
+//	                   address means
+//
+// Unix only. Windows has no exec, and carrying a socket across CreateProcess
+// needs WSADuplicateSocket plus a handshake with the target pid — real work for
+// a platform that has to spawn-and-rebind anyway.
+//
+// # Order, and the one thing that must not be reordered
 // # Order, and the one thing that must not be reordered
 //
 //	1. preflight        can we even resolve our own executable? Refuse while we
@@ -65,10 +85,13 @@ import (
 //	2. respond 200      the console needs the answer before its socket dies.
 //	3. graceful stop    Shutdown → StopTicks → ReleaseWorkerLease → WaitBackground,
 //	                    main's existing sequence, unchanged.
-//	4. release          close the store. On Unix nothing after exec runs, so a
+//	4. keep the socket  dup the listening fd BEFORE the shutdown closes it. A
+//	                    dup is a second reference to the same socket, so
+//	                    Shutdown closing the original leaves it listening.
+//	5. release          close the store. On Unix nothing after exec runs, so a
 //	                    deferred Close would never happen and every restart
 //	                    would leak a server-side connection until it timed out.
-//	5. replace          exec, or spawn-and-return.
+//	6. replace          exec, or spawn-and-return.
 //
 // ⚠️ If step 5 fails the process must NOT exit. It has already stopped serving,
 // so it is no use as it is — but a process that is up and broken can still be
@@ -125,12 +148,44 @@ func preflightRestart() error {
 	return nil
 }
 
-// strippedEnv is the environment without our own restart marker.
+// startEnv is the environment this process was STARTED with, captured before
+// anything read a .env file.
+//
+// # ⚠️ Without this, a restart cannot pick up an edited .env — at all
+//
+// godotenv.Load does not merely parse the file: it calls os.Setenv for every
+// key that was not already in the environment. So by the time config.Load
+// returns, `os.Environ()` contains the .env values as though the operator had
+// exported them. Handing THAT to a replacement means the replacement finds them
+// already set, godotenv declines to override them, and **the file it was
+// supposed to re-read is ignored**.
+//
+// The symptom is the worst kind: the restart works, the process comes back, and
+// the change the operator made is silently not applied. And it defeats the case
+// the button exists for — "storage is down, I fixed DB_DSN in .env, restart".
+//
+// Passing the ORIGINAL environment instead makes the replacement start exactly
+// as this process did and read the file for itself. Anything the operator
+// really did export is still there; only the values that came from the file are
+// left to the file.
+//
+// This was found by the address-change e2e, which restarted with a new PORT in
+// .env and watched the replacement come back on the old one.
+var startEnv []string
+
+func captureStartEnv() { startEnv = os.Environ() }
+
+// strippedEnv is the starting environment without our own restart marker.
 //
 // Appending a second copy would leave two, and which one a child sees is not
 // something to rely on across platforms. Restarting twice is ordinary.
 func strippedEnv() []string {
-	src := os.Environ()
+	src := startEnv
+	if src == nil {
+		// A test or a caller that never went through main(). Falling back to the
+		// live environment keeps behaviour sane; it just cannot re-read .env.
+		src = os.Environ()
+	}
 	out := make([]string, 0, len(src))
 	for _, kv := range src {
 		if strings.HasPrefix(kv, restartEnvKey+"=") {
@@ -139,6 +194,18 @@ func strippedEnv() []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+// openListener returns the socket to serve on: the inherited one when the
+// previous image handed over a socket for this same address, otherwise a fresh
+// bind (retried, on the platform that needs it).
+func openListener(addr string, logger *slog.Logger) (net.Listener, bool, error) {
+	if ln, ok := inheritedListener(addr, logger); ok {
+		return ln, true, nil
+	}
+	_, restarted := restartRequested()
+	ln, err := listenWithRetry(addr, restarted, logger)
+	return ln, false, err
 }
 
 // listenWithRetry opens the listening socket, retrying only for a restart.
@@ -168,3 +235,85 @@ func listenWithRetry(addr string, restarted bool, logger *slog.Logger) (net.List
 
 // errRestartNotPossible is what the console is told when the preflight fails.
 var errRestartNotPossible = errors.New("this process cannot restart itself")
+
+// The two environment variables that carry a listening socket across exec.
+//
+// Two, not one: the fd alone would let a child inherit a socket bound to an
+// address its own configuration no longer asks for. The address travels with it
+// so the child can refuse.
+const (
+	listenFDEnvKey   = "DAYCORE_LISTEN_FD"
+	listenAddrEnvKey = "DAYCORE_LISTEN_ADDR"
+)
+
+// inheritedListener returns the socket handed over by the previous image, if it
+// is for the address this process actually wants.
+//
+// ⚠️ THE ADDRESS COMPARISON IS THE WHOLE POINT. `want` is computed from THIS
+// process's configuration, which is the configuration the restart existed to
+// load. If it differs from what the parent was serving, the inherited fd is
+// closed and this returns nothing — the caller then binds normally and the
+// restart is an ordinary one with a few seconds of refusal, which is what
+// changing a listen address means.
+//
+// A malformed or unusable fd is treated the same way as a mismatch: say so and
+// fall back to binding. Refusing to start because a handover went wrong would
+// turn a restart into an outage over an optimisation.
+func inheritedListener(want string, logger *slog.Logger) (net.Listener, bool) {
+	raw := os.Getenv(listenFDEnvKey)
+	if raw == "" {
+		return nil, false
+	}
+	fd, err := strconv.Atoi(raw)
+	if err != nil || fd <= 2 {
+		// 0/1/2 are stdio; anything there is a bug in the handover, not a socket.
+		logger.Warn("ignoring an unusable inherited listener", "fd", raw)
+		return nil, false
+	}
+	from := os.Getenv(listenAddrEnvKey)
+	if from != want {
+		logger.Info("not reusing the previous listening socket: the address changed",
+			"was", from, "now", want)
+		// Close it, or this process holds a socket on an address it is not
+		// serving — and the next thing to try that address gets EADDRINUSE from
+		// a process that has no idea it is holding it.
+		_ = os.NewFile(uintptr(fd), "old-listener").Close()
+		return nil, false
+	}
+	ln, err := net.FileListener(os.NewFile(uintptr(fd), "inherited-listener"))
+	if err != nil {
+		logger.Warn("could not adopt the inherited listening socket; binding instead", "err", err)
+		return nil, false
+	}
+	logger.Info("reusing the previous listening socket — no connection was refused during this restart",
+		"addr", want)
+	return ln, true
+}
+
+// socketHandover is a listening socket prepared to survive the replacement.
+//
+// ⚠️ IT MUST BE PREPARED BEFORE THE GRACEFUL SHUTDOWN. Shutdown closes the
+// listener, and a dup taken afterwards fails with "use of closed network
+// connection" — which degrades silently to a rebind, because the handover is
+// best-effort by design. The restart still works; it just stops being seamless,
+// and nothing says so.
+//
+// That failure is not hypothetical: this type exists because the first version
+// prepared the handover inside replaceSelf, which runs after the shutdown, and
+// every restart quietly fell back. The e2e caught it.
+type socketHandover struct {
+	fd   int
+	addr string
+	ok   bool
+}
+
+// env returns the variables that carry the handover across, or nothing.
+func (h socketHandover) env() []string {
+	if !h.ok {
+		return nil
+	}
+	return []string{
+		listenFDEnvKey + "=" + strconv.Itoa(h.fd),
+		listenAddrEnvKey + "=" + h.addr,
+	}
+}

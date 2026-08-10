@@ -59,9 +59,13 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 
 	cmd := exec.Command(bin)
 	cmd.Dir = dir
+	// ⚠️ PORT is NOT in the environment: godotenv lets the real environment win,
+	// so a PORT set here could never be changed by a restart — and "the address
+	// moved" is a case this file has to be able to produce. It lives in .env,
+	// which the child re-reads.
+	writeEnvFile(t, dir, port)
 	cmd.Env = append(os.Environ(),
 		"HOST=127.0.0.1",
-		fmt.Sprintf("PORT=%d", port),
 		"DB_TYPE=sqlite",
 		"DB_DSN=file:"+filepath.Join(dir, "e2e.db"),
 		"ADMIN_TOKEN="+adminToken,
@@ -120,6 +124,7 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 	if firstID == "" {
 		t.Fatalf("the server never came up. output:\n%s", readLogs())
 	}
+	firstInherited, _ := inheritedAt(addr, adminToken)
 
 	// ── the button ──────────────────────────────────────────────────────────
 	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/api/admin/restart", nil)
@@ -179,6 +184,27 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 			"container running this as pid 1 would have stopped", cmd.Process.Pid)
 	}
 
+	// ── the socket was handed over, so nothing was refused ──────────────────
+	//
+	// ⚠️ Only where exec exists. Windows spawns a replacement that binds for
+	// itself, and asserting otherwise there would be asserting a thing the
+	// platform cannot do.
+	if !parentExitsOnRestart {
+		inherited, ok := inheritedAt(addr, adminToken)
+		if !ok {
+			t.Error("could not ask the replacement whether it inherited the socket")
+		} else if !inherited {
+			t.Errorf("the replacement bound a fresh socket. The address did not change, so it should "+
+				"have adopted the one handed to it — connections arriving during the restart were "+
+				"refused instead of queued.\n%s", readLogs())
+		}
+	}
+	// A first boot must NOT claim to have inherited anything: the flag has to
+	// mean something, and a constant true would pass every check above.
+	if firstInherited {
+		t.Error("the FIRST process reported an inherited socket; it had nothing to inherit from")
+	}
+
 	t.Logf("restarted: instance %s → %s (pid %d, parent exited=%v)", firstID, secondID, cmd.Process.Pid, didExit)
 }
 
@@ -203,6 +229,15 @@ var buildOnce = sync.OnceValues(func() (string, error) {
 	}
 	return bin, nil
 })
+
+// writeEnvFile puts PORT where a restart can change it.
+func writeEnvFile(t *testing.T, dir string, port int) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, ".env"),
+		[]byte(fmt.Sprintf("PORT=%d\n", port)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func mustAbs(t *testing.T, rel string) string {
 	t.Helper()
@@ -263,6 +298,28 @@ func instanceAt(addr, token string) string {
 	return body.Instance
 }
 
+// inheritedAt asks whether the process now serving adopted its predecessor's
+// listening socket.
+func inheritedAt(addr, token string) (bool, bool) {
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/admin/health", nil)
+	if err != nil {
+		return false, false
+	}
+	req.Header.Set("X-Admin-Token", token)
+	resp, err := (&http.Client{Timeout: 2 * time.Second}).Do(req)
+	if err != nil {
+		return false, false
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Inherited bool `json:"listenerInherited"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false, false
+	}
+	return body.Inherited, true
+}
+
 func waitForServer(t *testing.T, addr, token string, within time.Duration) string {
 	t.Helper()
 	deadline := time.Now().Add(within)
@@ -318,4 +375,110 @@ func killListener(t *testing.T, logs string) {
 			_ = p.Kill()
 		}
 	}
+}
+
+// Changing the listen address across a restart: the socket is NOT inherited.
+//
+// This is the condition the handover exists behind, and it is the half that
+// fails silently if it is wrong. Inheriting blindly would leave the replacement
+// serving the OLD address while its configuration says a new one — a restart
+// that looks like it worked and quietly ignored the reason it was asked for.
+//
+// ⚠️ The decision has to be made by the CHILD, because only the child has read
+// the new configuration. A parent that compared would be comparing the config
+// against itself, and would always conclude "unchanged".
+func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a real server process")
+	}
+	bin := buildDaycore(t)
+	dir := t.TempDir()
+	oldPort, newPort := freePort(t), freePort(t)
+	if oldPort == newPort {
+		t.Skip("the kernel handed out the same port twice")
+	}
+	oldAddr := fmt.Sprintf("127.0.0.1:%d", oldPort)
+	newAddr := fmt.Sprintf("127.0.0.1:%d", newPort)
+	const adminToken = "rebind-e2e-token"
+
+	writeEnvFile(t, dir, oldPort)
+	cmd := exec.Command(bin)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"HOST=127.0.0.1",
+		"DB_TYPE=sqlite",
+		"DB_DSN=file:"+filepath.Join(dir, "e2e.db"),
+		"ADMIN_TOKEN="+adminToken,
+		"APP_ENV=development",
+		"JWT_SECRET=e2e-secret-that-is-long-enough-to-pass",
+		"COOKIE_SECRET=e2e-cookie-secret-long-enough-too",
+		"STATIC_DIR="+filepath.Join(dir, "nothing"),
+		"MODELS_CONFIG="+mustAbs(t, "../../config/models.yaml"),
+		"OAUTH_CONFIG="+filepath.Join(dir, "no-oauth.yaml"),
+		"PROVIDERS_CONFIG="+filepath.Join(dir, "no-providers.yaml"),
+	)
+	logPath := filepath.Join(dir, "server.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	readLogs := func() string { b, _ := os.ReadFile(logPath); return string(b) }
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		killListener(t, readLogs())
+		if t.Failed() {
+			t.Logf("server output:\n%s", readLogs())
+		}
+	})
+
+	if waitForServer(t, oldAddr, adminToken, 30*time.Second) == "" {
+		t.Fatalf("the server never came up on %s. output:\n%s", oldAddr, readLogs())
+	}
+
+	// The operator edits .env by hand — which is the only way a boot-layer knob
+	// changes — and presses restart.
+	writeEnvFile(t, dir, newPort)
+
+	req, _ := http.NewRequest(http.MethodPost, "http://"+oldAddr+"/api/admin/restart", nil)
+	req.Header.Set("X-Admin-Token", adminToken)
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("restart request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("restart answered %d", resp.StatusCode)
+	}
+
+	// It comes back on the NEW address…
+	if waitForServer(t, newAddr, adminToken, 60*time.Second) == "" {
+		t.Fatalf("nothing came up on the new address %s. output:\n%s", newAddr, readLogs())
+	}
+	// …having bound a fresh socket rather than adopting the one it was handed.
+	if inherited, ok := inheritedAt(newAddr, adminToken); !ok {
+		t.Error("could not ask the replacement whether it inherited the socket")
+	} else if inherited {
+		t.Errorf("the replacement adopted a socket bound to %s while its configuration says %s — "+
+			"it is serving the old address and the restart silently ignored the change", oldAddr, newAddr)
+	}
+	// And the old address is released, not held by a process that is not
+	// serving it. A leaked socket means the next thing to try that port gets
+	// EADDRINUSE from a process with no idea it is holding it.
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, derr := net.DialTimeout("tcp", oldAddr, 300*time.Millisecond); derr != nil {
+			return // refused: the old socket is gone, which is what should happen
+		} else {
+			c.Close()
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Errorf("%s is still accepting connections after the address changed; the inherited socket was "+
+		"not closed.\n%s", oldAddr, readLogs())
 }

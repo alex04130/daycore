@@ -4,6 +4,7 @@ package main
 
 import (
 	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -44,7 +45,12 @@ import (
 // SO_REUSEADDR on Windows (deliberately — there it lets a second socket steal a
 // live listener). So the child retries its bind; see listenWithRetry, armed by
 // the marker set below.
-func replaceSelf(logger *slog.Logger, exe string) error {
+// The handover argument is accepted and ignored: carrying a socket across
+// CreateProcess needs WSADuplicateSocket and a handshake with the target pid,
+// which is real work for a platform that has to rebind anyway. The child finds
+// no DAYCORE_LISTEN_FD and binds for itself, with the retry that exists for
+// exactly this.
+func replaceSelf(logger *slog.Logger, exe string, _ socketHandover) error {
 	cmd := exec.Command(exe, os.Args[1:]...) //nolint:gosec // our own path, our own args
 	cmd.Env = append(strippedEnv(), restartEnvKey+"="+strconv.Itoa(os.Getpid()))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -55,4 +61,9 @@ func replaceSelf(logger *slog.Logger, exe string) error {
 	// Released rather than waited on: this process is about to exit, and Wait
 	// would block for the child's whole lifetime.
 	return cmd.Process.Release()
+}
+
+// prepareHandover has nothing to prepare here — see replaceSelf.
+func prepareHandover(_ net.Listener, _ string, _ *slog.Logger) socketHandover {
+	return socketHandover{}
 }

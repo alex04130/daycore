@@ -954,14 +954,30 @@ paths:
         permanently" for anybody running the binary directly — which is the
         deployment shape `daycore install` produces.
 
-        One code path on both platforms. `exec`-self would be cleaner on Unix and
-        DOES NOT EXIST on Windows, leaving two implementations and two failure
-        modes; spawn-then-exit is identical everywhere. The port handover is closed
-        by the child RETRYING its bind for thirty seconds, not by SO_REUSEADDR —
-        whose semantics differ between the two platforms in exactly the direction
-        that would matter (on Windows it lets a second socket steal a live
+        Each platform uses the mechanism it actually has. Unix (Linux, macOS, BSD)
+        replaces the process image with syscall.Exec — same pid, no moment when two
+        of them exist, and pid 1 in a container stays alive. Windows has no exec, so
+        it spawns a replacement and exits; there the port is handed over by the
+        child RETRYING its bind, not by SO_REUSEADDR (whose semantics differ in the
+        direction that matters — on Windows it lets a second socket steal a live
         listener). The retry is armed only for a restart, so a normal boot still
         fails immediately on a busy port.
+
+        ⚠️ ON UNIX THE LISTENING SOCKET IS HANDED OVER, so a restart refuses NO
+        connection: arrivals queue in the accept backlog and the new image serves
+        them. **Only when the listen address is unchanged.** The parent passes the
+        fd and the address it belongs to; the CHILD compares against its own
+        freshly-read configuration and rebinds if they differ — a restart exists to
+        load new configuration, and the listen address is configuration, so
+        inheriting blindly would silently keep serving the old address after
+        somebody changed PORT. `listenerInherited` on GET /api/admin/health reports
+        which happened.
+
+        ⚠️ The replacement is given the environment this process STARTED with, not
+        its current one. godotenv sets .env values into the process environment, so
+        passing the live environment would make the replacement find them already
+        set, decline to re-read the file, and silently ignore the edit the restart
+        was asked for.
 
         The response is sent BEFORE the shutdown begins, because the console needs
         the answer while it still has a connection to be told on. Expect a few

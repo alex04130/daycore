@@ -132,6 +132,12 @@ function ServiceCard({ meta, principal }) {
         >
           {v ? `v${v.apiVersion}.${v.apiMinor}${v.minClient ? ` · minClient ${v.minClient}` : ''}` : '—'}
         </Field>
+        <Field
+          label="上次重启"
+          why="监听 socket 有没有被上一个进程交接过来。交接过 = 那次重启没有拒过任何一个连接；没交接 = 普通启动，或者监听地址变了所以重新绑定了。"
+        >
+          {h?.listenerInherited ? '接过了监听 socket（无中断）' : '普通绑定'}
+        </Field>
         <Field label="你的身份" why="控制台按这个决定显示哪些分区；每个端点仍然自己再查一次。">
           {principal?.root ? 'ADMIN_TOKEN（root）' : principal?.owner ? 'owner' : `${principal?.permissions?.length ?? 0} 项权限`}
         </Field>

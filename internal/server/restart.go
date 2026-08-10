@@ -69,6 +69,20 @@ func (s *Server) SetRestarter(fn func() error) {
 	s.restarter.Store(&fn)
 }
 
+// SetListenerInherited records whether this process adopted its predecessor's
+// listening socket.
+//
+// It exists so the console can tell the operator which kind of restart the last
+// one was — seamless, or a rebind with a gap. That distinction is not cosmetic:
+// "did anybody get a connection refused" is the first question after a restart,
+// and the answer depends on whether the listen address changed, which is
+// something the operator may have done in .env without connecting the two
+// facts.
+func (s *Server) SetListenerInherited(v bool) { s.listenerInherited.Store(v) }
+
+// ListenerInherited reports what SetListenerInherited was told.
+func (s *Server) ListenerInherited() bool { return s.listenerInherited.Load() }
+
 // CanRestart reports whether a restarter is installed at all.
 //
 // Nothing but the console reads this today; it exists so the console can grey

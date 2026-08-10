@@ -231,8 +231,9 @@ function RestartButton({ onUnauthorized }) {
   if (state === 'done') {
     return (
       <p className="sub">
-        <strong>已经开始重启。</strong>在途的请求会先收尾，然后进程把自己换掉 ——
-        几秒内连不上是正常的，等一下手动刷新页面。
+        <strong>已经开始重启。</strong>在途的请求会先收尾，然后进程把自己换掉。
+        地址没变的话（Linux / macOS）监听 socket 会被交给新映像，刷新一下就好；
+        改过 HOST / PORT 的话会重新绑定，几秒连不上是正常的。
         如果一分钟后还连不上，就要有人登机器看日志了。
       </p>
     );
@@ -243,7 +244,13 @@ function RestartButton({ onUnauthorized }) {
       <Confirm
         word="restart"
         label={state === 'going' ? '…' : '重启进程'}
-        danger="进程会排空在途请求、起一个替身、然后退出自己。几秒不可用是正常的。⚠️ 如果新进程起不来，除了登机器没有别的办法。"
+        danger={
+          '在 Linux / macOS 上进程会原地替换自己，并且把监听 socket 交给新映像 —— ' +
+          '在途请求先收尾，重启期间到达的连接排队等新进程接手，一个都不会被拒。' +
+          '⚠️ 但这只在监听地址没变时成立：如果你在 .env 里改过 HOST 或 PORT，' +
+          '新进程会重新绑定，那几秒的连接会被拒。Windows 上一律是重新绑定。' +
+          '⚠️ 如果新进程起不来，除了登机器没有别的办法。'
+        }
         onConfirm={go}
       />
     </div>

@@ -119,6 +119,9 @@ type Server struct {
 	// restarter is the process-level restart, installed by cmd/daycore. Nil in
 	// tests and in any build with no process behind it — see restart.go.
 	restarter restarterHolder
+	// listenerInherited records whether this process adopted its predecessor's
+	// listening socket, which is what makes a restart seamless.
+	listenerInherited atomic.Bool
 
 	// Leader election for the background worker (see leader.go). instanceID is
 	// generated on first use rather than in New so that the zero value keeps

@@ -53,14 +53,20 @@ var startedAt = time.Now()
 func (s *Server) handleAdminHealth(w http.ResponseWriter, r *http.Request) {
 
 	out := map[string]any{
-		"degraded":  s.Degraded(),
-		"instance":  s.InstanceID(),
-		"startedAt": startedAt.UTC(),
-		"uptimeSec": int64(time.Since(startedAt).Seconds()),
-		"db":        s.cfg.DBType,
-		"env":       s.cfg.Env,
-		"build":     version.Full(),
-		"channel":   version.Channel,
+		"degraded": s.Degraded(),
+		"instance": s.InstanceID(),
+		// Whether this process adopted its predecessor's listening socket. The
+		// first question after a restart is "did anybody get a connection
+		// refused", and this is the answer — false after an ordinary boot, false
+		// after a restart that changed the listen address, true after a seamless
+		// one.
+		"listenerInherited": s.ListenerInherited(),
+		"startedAt":         startedAt.UTC(),
+		"uptimeSec":         int64(time.Since(startedAt).Seconds()),
+		"db":                s.cfg.DBType,
+		"env":               s.cfg.Env,
+		"build":             version.Full(),
+		"channel":           version.Channel,
 		// Whether this build carries a console at all. An operator reading this
 		// through curl is entitled to know before going looking for /admin.
 		"console": ConsoleBuilt(),

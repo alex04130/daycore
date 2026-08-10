@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strconv"
 	"syscall"
@@ -41,11 +43,12 @@ import (
 // ⚠️ NOTHING AFTER THIS RUNS. No deferred function, no atexit, no buffered
 // writer flush. The caller must have released everything it owns first — see
 // finishRestart, which closes the store before calling this and says why.
-func replaceSelf(logger *slog.Logger, exe string) error {
+func replaceSelf(logger *slog.Logger, exe string, h socketHandover) error {
 	// The marker the child reads back. It arms the bind retry (which this path
 	// will not need) and, more usefully, puts "this is a restart, from pid N"
 	// into the startup log where somebody debugging will see it.
 	env := append(strippedEnv(), restartEnvKey+"="+strconv.Itoa(os.Getpid()))
+	env = append(env, h.env()...)
 
 	// argv[0] must be included: execve takes the whole argv, unlike
 	// exec.Command which prepends the path for you. Omitting it shifts every
@@ -53,7 +56,58 @@ func replaceSelf(logger *slog.Logger, exe string) error {
 	// program that thinks it is the program name.
 	argv := append([]string{exe}, os.Args[1:]...)
 
-	logger.Info("replacing this process image", "exe", exe, "pid", os.Getpid())
+	logger.Info("replacing this process image", "exe", exe, "pid", os.Getpid(), "handedOverSocket", h.ok)
 	// Returns only on failure.
 	return syscall.Exec(exe, argv, env)
 }
+
+// prepareHandover dups the listening socket so it survives the replacement.
+//
+// ⚠️ CALL IT BEFORE THE GRACEFUL SHUTDOWN. See socketHandover for what happens
+// when it is called after — the answer is "nothing visible", which is why the
+// ordering is a named step in main's restart path rather than a detail here.
+//
+// Two things have to be true and neither is the default:
+//
+//	a DUP        (*net.TCPListener).File() returns one, which is what lets the
+//	             socket outlive the Shutdown that closes the listener: a dup is
+//	             a second reference to the same socket, so the socket stays in
+//	             LISTEN state and arriving connections queue instead of being
+//	             refused.
+//	no CLOEXEC   Go sets FD_CLOEXEC on every descriptor it opens, so without
+//	             clearing it execve closes the fd and the child inherits a
+//	             number pointing at nothing.
+//
+// Best-effort throughout: any failure means the replacement binds for itself,
+// which is what happened before this existed. An outage would be a bad price
+// for a failed optimisation.
+func prepareHandover(ln net.Listener, addr string, logger *slog.Logger) socketHandover {
+	tl, ok := ln.(*net.TCPListener)
+	if !ok {
+		logger.Warn("cannot hand over the listening socket", "type", fmt.Sprintf("%T", ln))
+		return socketHandover{}
+	}
+	f, err := tl.File()
+	if err != nil {
+		logger.Warn("cannot hand over the listening socket; the replacement will bind for itself", "err", err)
+		return socketHandover{}
+	}
+	fd := int(f.Fd())
+	// F_SETFD with 0 clears every descriptor flag, and FD_CLOEXEC is the only
+	// one defined — so this is "keep it across exec" rather than a blunt reset.
+	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFD, 0); errno != 0 {
+		f.Close()
+		logger.Warn("cannot clear close-on-exec on the listening socket", "err", errno)
+		return socketHandover{}
+	}
+	// ⚠️ f is deliberately NOT closed and NOT allowed to be finalised: closing it
+	// would close the very descriptor the child is about to be told to use.
+	keepAlive = append(keepAlive, f)
+	logger.Info("prepared the listening socket for handover", "fd", fd, "addr", addr)
+	return socketHandover{fd: fd, addr: addr, ok: true}
+}
+
+// keepAlive holds the handed-over file so its finaliser cannot close the very
+// descriptor the child was told about. The process is about to be replaced, so
+// this never grows.
+var keepAlive []*os.File

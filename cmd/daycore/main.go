@@ -54,6 +54,8 @@ import (
 )
 
 func main() {
+	// ⚠️ CAPTURED FIRST, BEFORE ANYTHING READS .env — see startEnv.
+	captureStartEnv()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if err := run(logger); err != nil {
 		logger.Error("fatal", "err", err)
@@ -366,11 +368,12 @@ func run(logger *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	fromPID, restarted := restartRequested()
-	ln, err := listenWithRetry(httpSrv.Addr, restarted, logger)
+	fromPID, _ := restartRequested()
+	ln, inherited, err := openListener(httpSrv.Addr, logger)
 	if err != nil {
 		return err
 	}
+	srv.SetListenerInherited(inherited)
 
 	// The console's restart button. Installed here rather than in the server
 	// package because the shutdown sequence below is main's, in main's order,
@@ -398,7 +401,7 @@ func run(logger *slog.Logger) error {
 		logger.Info("listening",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
 			"static", srv.StaticRoot(), "console", server.ConsoleBuilt(), "models", len(catalog.List()), "vision", catalog.HasVision(),
-			"oauth", oauthMgr.Providers(), "restartedFrom", fromPID)
+			"oauth", oauthMgr.Providers(), "restartedFrom", fromPID, "inheritedSocket", inherited)
 		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -411,12 +414,17 @@ func run(logger *slog.Logger) error {
 	// orderings, and the ordering is the part with the sharp edges (see the
 	// comments inside it).
 	replacing := false
+	var handover socketHandover
 	select {
 	case err := <-errCh:
 		return err
 	case <-restart:
 		replacing = true
 		logger.Warn("restarting on console request")
+		// ⚠️ BEFORE the shutdown below, which closes the listener. Afterwards
+		// there is nothing left to dup and the handover silently degrades to a
+		// rebind. See finishRestart.
+		handover = prepareHandover(ln, httpSrv.Addr, logger)
 	case <-stop:
 		logger.Info("shutting down")
 	}
@@ -451,12 +459,20 @@ func run(logger *slog.Logger) error {
 					logger.Warn("could not close the store before restarting", "err", cerr)
 				}
 			}
-		})
+		}, handover)
 	}
 	return err
 }
 
 // finishRestart is the tail of both serve loops.
+//
+// # The socket handover is prepared by the CALLER, not here
+//
+// ⚠️ It has to be, and the ordering is the whole reason: preparing it means
+// dup'ing the listening fd, and Shutdown closes the listener. A dup taken here
+// — after the shutdown — fails with "use of closed network connection" and the
+// restart silently degrades to a rebind. That is not a guess; it is what the
+// first version did, and the e2e is what noticed.
 //
 // # It takes a release function, and that is not optional on Unix
 //
@@ -482,7 +498,7 @@ func run(logger *slog.Logger) error {
 // started it, and its logs are still where somebody is looking. Exiting would
 // turn a visible failure into a machine that stopped answering for no stated
 // reason.
-func finishRestart(logger *slog.Logger, release func()) error {
+func finishRestart(logger *slog.Logger, release func(), h socketHandover) error {
 	// Resolved BEFORE releasing anything: if this fails there is nothing to
 	// replace ourselves with, and we would rather find that out while the store
 	// is still open than after.
@@ -494,7 +510,7 @@ func finishRestart(logger *slog.Logger, release func()) error {
 	if release != nil {
 		release()
 	}
-	if err := replaceSelf(logger, exe); err != nil {
+	if err := replaceSelf(logger, exe, h); err != nil {
 		logger.Error("could not replace this process; it is NOT serving any more, "+
 			"and is staying up only so this line is somewhere you can find it",
 			"err", err, "hint", "start the binary again by hand")
@@ -516,11 +532,12 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	fromPID, restarted := restartRequested()
-	ln, err := listenWithRetry(httpSrv.Addr, restarted, logger)
+	fromPID, _ := restartRequested()
+	ln, inherited, err := openListener(httpSrv.Addr, logger)
 	if err != nil {
 		return err
 	}
+	srv.SetListenerInherited(inherited)
 
 	// ⚠️ Degraded is the state where this button matters MOST: the operator has
 	// just fixed DB_DSN in .env and a restart is the only way to pick it up.
@@ -541,7 +558,7 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 	go func() {
 		logger.Warn("listening in DEGRADED mode — admin console only; every other route answers 503",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
-			"reason", srv.DegradedReason(), "restartedFrom", fromPID)
+			"reason", srv.DegradedReason(), "restartedFrom", fromPID, "inheritedSocket", inherited)
 		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -554,12 +571,14 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 		return err
 	case <-restart:
 		logger.Warn("restarting on console request (degraded)")
+		// Before the shutdown, for the same reason as the normal path.
+		handover := prepareHandover(ln, httpSrv.Addr, logger)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
 		// Nothing to release: a degraded process never opened a store, which is
 		// the whole reason it is able to serve at all.
-		return finishRestart(logger, nil)
+		return finishRestart(logger, nil, handover)
 	case <-stop:
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
