@@ -84,6 +84,7 @@
     "PATCH /api/wishes/{id} updateWish",
     "POST /api/admin/db/import adminDBImport",
     "POST /api/admin/models/{id}/test adminModelTest",
+    "POST /api/admin/restart adminRestart",
     "POST /api/admin/session adminLogin",
     "POST /api/ai/auto-plan autoPlan",
     "POST /api/ai/companion companion",

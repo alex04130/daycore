@@ -115,6 +115,7 @@ func permissionsMentionedInSource(t *testing.T) map[string]bool {
 		"PermPromptsRead": PermPromptsRead, "PermPromptsWrite": PermPromptsWrite, "PermAILogsRead": PermAILogsRead,
 		"PermUsersRead": PermUsersRead, "PermUsersDelete": PermUsersDelete, "PermUsersAssign": PermUsersAssign,
 		"PermRolesEdit": PermRolesEdit, "PermDBOperational": PermDBOperational,
+		"PermRestart":       PermRestart,
 		"PermDBUserContent": PermDBUserContent, "PermDBDeleteRow": PermDBDeleteRow,
 		"PermDBExport": PermDBExport, "PermDBImport": PermDBImport,
 	}

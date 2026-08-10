@@ -941,6 +941,53 @@ paths:
         '400': { description: "unknown_setting, not_editable, or bad_value." }
         '401': { description: No admin credential. }
         '503': { description: "degraded — storage is unavailable, so overrides cannot be written. The environment layer still applies." }
+  /api/admin/restart:
+    post:
+      operationId: adminRestart
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Really restart the process. Not exit-and-hope.
+      description: >-
+        ⚠️ The process brings ITSELF back: it drains, spawns a replacement, and
+        only then lets go. `os.Exit(0)` and letting a supervisor pick it up works
+        under systemd or Docker and turns this button into "switch the server off,
+        permanently" for anybody running the binary directly — which is the
+        deployment shape `daycore install` produces.
+
+        One code path on both platforms. `exec`-self would be cleaner on Unix and
+        DOES NOT EXIST on Windows, leaving two implementations and two failure
+        modes; spawn-then-exit is identical everywhere. The port handover is closed
+        by the child RETRYING its bind for thirty seconds, not by SO_REUSEADDR —
+        whose semantics differ between the two platforms in exactly the direction
+        that would matter (on Windows it lets a second socket steal a live
+        listener). The retry is armed only for a restart, so a normal boot still
+        fails immediately on a busy port.
+
+        The response is sent BEFORE the shutdown begins, because the console needs
+        the answer while it still has a connection to be told on. Expect a few
+        seconds of refused connections after it.
+
+        ⚠️ WORKS IN DEGRADED MODE, and that is the case it matters most for: the
+        operator has just fixed DB_DSN in .env and a restart is the only way to
+        pick it up. Nothing on this path touches storage. In a degraded process
+        only the root credential passes anything.
+
+        Its own permission (server.restart), not config.write: a bad config value
+        is fixed from the same screen, and a restart that does not come back needs
+        somebody with shell access.
+      responses:
+        '200':
+          description: Accepted; the process is shutting down and will replace itself.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+        '501': { description: This build has no restart hook (not a real server process). }
+        '503': { description: 'Preflight failed — e.g. the executable path cannot be resolved. The process stays up.' }
   /api/admin/session:
     post:
       operationId: adminLogin

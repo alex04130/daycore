@@ -116,6 +116,10 @@ type Server struct {
 	// is moving towards.
 	staticRoot string
 
+	// restarter is the process-level restart, installed by cmd/daycore. Nil in
+	// tests and in any build with no process behind it — see restart.go.
+	restarter restarterHolder
+
 	// Leader election for the background worker (see leader.go). instanceID is
 	// generated on first use rather than in New so that the zero value keeps
 	// working and so that it can never come from configuration.

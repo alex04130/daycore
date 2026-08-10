@@ -105,6 +105,10 @@ export const whoami = () => request('/session');
 
 // ── the eight sections ─────────────────────────────────────────────────────
 
+// restart really restarts the process — it drains, spawns a replacement, and
+// only then lets go. Expect a few seconds of refused connections after a 200.
+export const restart = () => request('/restart', { method: 'POST' });
+
 export const getConfig = () => request('/config');
 export const putConfig = (settings) => request('/config', { method: 'PUT', body: { settings } });
 

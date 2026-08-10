@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import * as api from '../api.js';
-import { Field, Notice, Screen, Secret, useSection } from '../ui.jsx';
+import { Confirm, Field, Notice, Screen, Secret, useSection } from '../ui.jsx';
 
 // 服务配置。
 //
@@ -83,6 +83,7 @@ export function Config({ onUnauthorized }) {
               </li>
             ))}
           </ul>
+          <RestartButton onUnauthorized={onUnauthorized} />
         </Notice>
       )}
 
@@ -192,6 +193,59 @@ function BootRow({ setting }) {
         )}
       </Field>
       {setting.why && <Field label="为什么改不了">{setting.why}</Field>}
+    </div>
+  );
+}
+
+
+// 重启按钮，放在「这几项要重启才生效」那条提示的里面。
+//
+// 位置是有意的：一个孤零零挂在页面角落的「重启」按钮是一个随时会被误点的
+// 按钮，而这里它只在真的有东西在等重启的时候出现，紧挨着等的是哪几项。
+//
+// # 它真的会重启，所以要按住
+//
+// 后端不是退出等 supervisor 拉 —— 它自己排空、起一个替身、然后才放手。
+// 但这仍然是这个控制台里唯一一个「失败就得有人登机器」的动作，所以走
+// Confirm：要打字，不是再点一下。再点一下是肌肉记忆。
+//
+// ⚠️ 200 之后连接会断，这是正常的。所以不 reload、不刷新状态 —— 那只会
+// 变成一个转圈的界面。只把话说清楚，让人自己刷新。
+function RestartButton({ onUnauthorized }) {
+  const [state, setState] = useState('idle');
+  const [err, setErr] = useState('');
+
+  async function go() {
+    setState('going');
+    setErr('');
+    try {
+      await api.restart();
+      setState('done');
+    } catch (e) {
+      if (e instanceof api.Unauthorized) return onUnauthorized?.();
+      setErr(e.message);
+      setState('idle');
+    }
+  }
+
+  if (state === 'done') {
+    return (
+      <p className="sub">
+        <strong>已经开始重启。</strong>在途的请求会先收尾，然后进程把自己换掉 ——
+        几秒内连不上是正常的，等一下手动刷新页面。
+        如果一分钟后还连不上，就要有人登机器看日志了。
+      </p>
+    );
+  }
+  return (
+    <div className="row-actions">
+      {err && <Notice kind="error">{err}</Notice>}
+      <Confirm
+        word="restart"
+        label={state === 'going' ? '…' : '重启进程'}
+        danger="进程会排空在途请求、起一个替身、然后退出自己。几秒不可用是正常的。⚠️ 如果新进程起不来，除了登机器没有别的办法。"
+        onConfirm={go}
+      />
     </div>
   );
 }

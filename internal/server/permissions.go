@@ -50,6 +50,12 @@ const (
 	PermConfigRead  = "config.read"
 	PermConfigWrite = "config.write"
 
+	// Restarting the process. Separate from config.write because the two
+	// failures are nothing alike: a bad config value is fixed from the same
+	// screen, and a restart that does not come back needs somebody with shell
+	// access on the machine.
+	PermRestart = "server.restart"
+
 	PermProvidersRead  = "providers.read"
 	PermProvidersWrite = "providers.write"
 
@@ -167,6 +173,8 @@ func init() {
 		"看全部配置项的当前值（密钥只显示配没配，不显示值）")
 	registerPerm(PermConfigWrite,
 		"改运行时配置。改错一个阈值会影响每一次 AI 调用；密钥与启动期项改不了")
+	registerPerm(PermRestart,
+		"重启这个进程。在途的请求会先收尾，然后进程把自己换掉 —— 几秒不可用是正常的。⚠️ 如果新进程起不来，除了登机器没有别的办法")
 	registerPerm(PermProvidersRead,
 		"看天气与搜索的源、它们的健康状态、以及适配层自报的信息")
 	registerPerm(PermProvidersWrite,
@@ -260,6 +268,11 @@ var routePermissions = map[string]string{
 
 	"GET /api/admin/config": PermConfigRead,
 	"PUT /api/admin/config": PermConfigWrite,
+
+	// Its own permission, not config.write. Changing a knob is reversible from
+	// the same screen; restarting is the one console action whose failure mode
+	// needs somebody physically at the machine.
+	"POST /api/admin/restart": PermRestart,
 
 	"GET /api/admin/providers": PermProvidersRead,
 	"PUT /api/admin/providers": PermProvidersWrite,

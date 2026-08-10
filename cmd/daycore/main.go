@@ -366,46 +366,105 @@ func run(logger *slog.Logger) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	fromPID, restarted := restartRequested()
+	ln, err := listenWithRetry(httpSrv.Addr, restarted, logger)
+	if err != nil {
+		return err
+	}
+
+	// The console's restart button. Installed here rather than in the server
+	// package because the shutdown sequence below is main's, in main's order,
+	// and a second copy of that order is a second copy that will drift.
+	//
+	// The function runs INSIDE the HTTP handler: it preflights and returns an
+	// error the operator sees on the connection they asked from, then signals
+	// this loop. Everything after that happens once the handler has returned,
+	// because Shutdown waits for handlers and a handler waiting for Shutdown
+	// would be waiting for itself.
+	restart := make(chan struct{}, 1)
+	srv.SetRestarter(func() error {
+		if perr := preflightRestart(); perr != nil {
+			return perr
+		}
+		select {
+		case restart <- struct{}{}:
+		default: // already restarting; a second click is not a second restart
+		}
+		return nil
+	})
+
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("listening",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
 			"static", srv.StaticRoot(), "console", server.ConsoleBuilt(), "models", len(catalog.List()), "vision", catalog.HasVision(),
-			"oauth", oauthMgr.Providers())
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			"oauth", oauthMgr.Providers(), "restartedFrom", fromPID)
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	// ⚠️ A restart and a signal run the SAME shutdown sequence. It is written
+	// once, below the select, for exactly that reason: two copies would be two
+	// orderings, and the ordering is the part with the sharp edges (see the
+	// comments inside it).
+	replacing := false
 	select {
 	case err := <-errCh:
 		return err
+	case <-restart:
+		replacing = true
+		logger.Warn("restarting on console request")
 	case <-stop:
 		logger.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		err := httpSrv.Shutdown(shutdownCtx)
-		// Stop the tick loops before anything else waits: they are the only
-		// background work that re-enters the store on a schedule, and a tick that
-		// fires after the store closes logs an error nobody can act on. It also
-		// has to happen before any loop that OWNS something (a lease) exists —
-		// that loop would otherwise reclaim what the process is giving up.
-		srv.StopTicks()
-		// Only now: the renewal loop is stopped, so nothing can take the lease
-		// back after this. Releasing before StopTicks would let the next tick
-		// re-acquire what this process is giving up, and the next instance would
-		// wait a whole TTL for a leader that has already exited.
-		srv.ReleaseWorkerLease()
-		// Wait for detached background work (async turns, channel replies) so
-		// in-flight results still get persisted; stale pending placeholders
-		// from a hard deadline are swept to "error" on the next boot.
-		if werr := srv.WaitBackground(shutdownCtx); werr != nil {
-			logger.Warn("background agents did not finish before shutdown deadline", "err", werr)
-		}
-		return err
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	err = httpSrv.Shutdown(shutdownCtx)
+	// Stop the tick loops before anything else waits: they are the only
+	// background work that re-enters the store on a schedule, and a tick that
+	// fires after the store closes logs an error nobody can act on. It also
+	// has to happen before any loop that OWNS something (a lease) exists —
+	// that loop would otherwise reclaim what the process is giving up.
+	srv.StopTicks()
+	// Only now: the renewal loop is stopped, so nothing can take the lease
+	// back after this. Releasing before StopTicks would let the next tick
+	// re-acquire what this process is giving up, and the next instance would
+	// wait a whole TTL for a leader that has already exited.
+	srv.ReleaseWorkerLease()
+	// Wait for detached background work (async turns, channel replies) so
+	// in-flight results still get persisted; stale pending placeholders
+	// from a hard deadline are swept to "error" on the next boot.
+	if werr := srv.WaitBackground(shutdownCtx); werr != nil {
+		logger.Warn("background agents did not finish before shutdown deadline", "err", werr)
+	}
+	if replacing {
+		// Only now, with the listener closed and the lease released: the
+		// replacement's first bind attempt should succeed, and it will not be
+		// racing this process for leadership.
+		return finishRestart(logger)
+	}
+	return err
+}
+
+// finishRestart is the tail of both serve loops: bring a replacement up, and
+// only then let this process go.
+//
+// ⚠️ A failed spawn does NOT exit. This process has already stopped serving so
+// it is no use as it is — but it is still attached to whatever started it, and
+// its logs are still where somebody is looking. Exiting would turn a visible
+// failure into a machine that stopped answering for no stated reason.
+func finishRestart(logger *slog.Logger) error {
+	if err := spawnSelf(logger); err != nil {
+		logger.Error("could not start a replacement process; this one is NOT serving any more, "+
+			"and is staying up only so this line is somewhere you can find it",
+			"err", err, "hint", "start the binary again by hand")
+		return fmt.Errorf("%w: %v", errRestartNotPossible, err)
+	}
+	return nil
 }
 
 // serveDegraded runs the HTTP server with no storage behind it.
@@ -421,12 +480,33 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	fromPID, restarted := restartRequested()
+	ln, err := listenWithRetry(httpSrv.Addr, restarted, logger)
+	if err != nil {
+		return err
+	}
+
+	// ⚠️ Degraded is the state where this button matters MOST: the operator has
+	// just fixed DB_DSN in .env and a restart is the only way to pick it up.
+	// Nothing here touches the store, which is what makes that possible.
+	restart := make(chan struct{}, 1)
+	srv.SetRestarter(func() error {
+		if perr := preflightRestart(); perr != nil {
+			return perr
+		}
+		select {
+		case restart <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Warn("listening in DEGRADED mode — admin console only; every other route answers 503",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
-			"reason", srv.DegradedReason())
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			"reason", srv.DegradedReason(), "restartedFrom", fromPID)
+		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -436,6 +516,12 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 	select {
 	case err := <-errCh:
 		return err
+	case <-restart:
+		logger.Warn("restarting on console request (degraded)")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+		return finishRestart(logger)
 	case <-stop:
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
