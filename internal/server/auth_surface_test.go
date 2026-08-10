@@ -28,9 +28,13 @@ var publicRoutes = map[string]string{
 	"GET /api/models":        "capability discovery",
 	"POST /api/session/init": "this is what mints the session",
 
-	"POST /api/auth/register":                 "no session yet by definition",
-	"POST /api/auth/login":                    "no session yet by definition",
-	"POST /api/auth/logout":                   "must work with an expired session",
+	"POST /api/auth/register": "no session yet by definition",
+	"POST /api/auth/login":    "no session yet by definition",
+	"POST /api/auth/logout":   "must work with an expired session",
+	"DELETE /api/admin/session": "logging out must work with an expired or absent admin cookie — " +
+		"401ing a logout leaves somebody unable to clear a session they cannot use, and " +
+		"it clears a cookie rather than reading anything",
+	"POST /api/admin/session":                 "this is what mints the admin session; the raw ADMIN_TOKEN in the body IS the credential",
 	"GET /api/auth/providers":                 "shown on the signed-out screen",
 	"GET /api/me":                             "answers {user:null} when anonymous",
 	"GET /api/auth/oauth/{provider}":          "starts the redirect dance",
@@ -39,24 +43,42 @@ var publicRoutes = map[string]string{
 	// Own credential, not a session.
 	"POST /api/channels/{channel}/verify": "the binding token in the body IS the credential — " +
 		"the channel side (a bot) calls this, and it has no session by construction",
+	// Static files, not data. Every byte of the console bundle is in the public
+	// repository, so gating the HTML would only produce a login page that cannot
+	// render its own login form. The credential check is on /api/admin/*, where
+	// the data is.
+	//
+	// ⚠️ The consequence, and it is a real constraint on the console: nothing in
+	// that bundle may carry a secret, a deployment-specific value, or anything
+	// the API would refuse to serve unauthenticated.
+	"GET /admin":  "static console bundle; the credential check is on /api/admin/*",
+	"GET /admin/": "same",
+
 	"POST /api/import/canvas": "X-Import-Token (browser extension push)",
 	"POST /api/import/ics":    "X-Import-Token",
-
-	// Own credential, not a session.
-	"GET /api/admin/prompts":                 "X-Admin-Token",
-	"GET /api/admin/prompts/{key}":           "X-Admin-Token",
-	"PUT /api/admin/prompts/{key}":           "X-Admin-Token",
-	"GET /api/admin/stats":                   "X-Admin-Token",
-	"GET /api/admin/ailogs":                  "X-Admin-Token",
-	"GET /api/admin/users":                   "X-Admin-Token",
-	"DELETE /api/admin/users/{id}":           "X-Admin-Token",
-	"GET /api/admin/db/tables":               "X-Admin-Token",
-	"GET /api/admin/db/table/{name}":         "X-Admin-Token",
-	"DELETE /api/admin/db/table/{name}/{id}": "X-Admin-Token",
-	"GET /api/admin/db/export":               "X-Admin-Token",
-	"POST /api/admin/db/import":              "X-Admin-Token",
-	"GET /api/admin/db/backup":               "X-Admin-Token",
 }
+
+// ⚠️ 2026-08-09: thirteen /api/admin/* routes used to sit in the list above,
+// each annotated "X-Admin-Token".
+//
+// That annotation was TRUE and the entry was WRONG, and the difference is the
+// whole point of this file. "Carries its own credential instead of a session"
+// is not the same statement as "answers an unauthenticated request" — and this
+// list only means the second one. Every one of those thirteen DOES check
+// adminAuthorized; listing them here said "and it is fine if one day it does
+// not".
+//
+// It was not hypothetical. Deleting the four-line check from
+// handleAdminDBExport left the ENTIRE suite green — `go test ./internal/server/`
+// ok 15.7s — while `GET /api/admin/db/export` answered 200 to a request with no
+// credential at all. Fifteen of twenty-three admin routes were in that state:
+// a door with a sign reading "locked" and no lock behind it.
+//
+// The import rails above stay, and the difference is worth naming: they answer
+// 401 to an unauthenticated request too, but their credential is a header this
+// test cannot mint, so exempting them keeps the test honest rather than
+// blinding it. Admin routes have exactly the same shape — which is why they are
+// now checked with an empty request instead of exempted.
 
 // Every non-public route must reject a request that carries no credentials.
 //

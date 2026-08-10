@@ -18,10 +18,13 @@
 
 前后端分离部署：Go 后端收敛为纯 API 服务，四个前端各自独立构建部署、做成 **git 子仓库**，与后端只靠 **API 契约 + 版本号**同步 —— 前端声明最低 API 支持，后端由 `GET /api/version` 报告。落地方案见 `docs/EXPERIENCE_CORE.md` 与计划文件。
 
-**版本号分三层，不要混**：
-1. 后端构建版本 — `internal/version/version.go` 的 `Version` + `Channel`（现 `2.2.0-beta`）
-2. **API 契约版本** — 同文件 `APIVersion` + `APIMinor`（现 `1` / `7`）。**四个前端子仓握手用的是这个**；breaking 改动升 `APIVersion`，additive 升 `APIMinor`
-3. 各前端自己的版本号 — 独立迭代，与上面两个解耦（`design-ui/API_CONTRACT.md` 抬头的「v4」就是这一层，不是 API 版本）
+**版本号只有一个**（2026-08-09 合并，此前是三层）：`internal/version/version.go` 的 `Version` + `Channel`，现 `2.3.0-beta`。`APIVersion`/`APIMinor` 仍然存在、仍然由 `GET /api/version` 报，但**是从 `Version` 推导出来的** —— 线上形状没变，只是数字的来源变了。
+
+**它是「第几个修改批次」不是发布号**：`2.2 → 2.3` 的意思是**一整份规划实现完了**（vNext 路线图从头到尾），不是「加了些功能」。
+
+⚠️ **合并的代价说清楚**：前端没法再把「我要的契约至少这么新」和「我要的构建至少这么新」分开讲了，两句话变成同一句。这是真的精度损失，有意接受 —— 今天没有任何前端在协商，所以它不花钱；等它开始花钱（前端在自己的仓库、按自己的节奏发版），再把数字拆回去，比先靠手工对齐两个数字好几个月要便宜。
+
+各前端自己的版本号仍然独立（`design-ui/API_CONTRACT.md` 抬头的「v4」是那一层，与上面无关）。
 
 ## 实时文档铁律
 
@@ -37,13 +40,26 @@
 
 ## 常用事实
 
-- 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta。
+- 版本唯一来源：`internal/version/version.go`（同步 `web/frontend/package.json`）。规则：2.<minor>.<patch>-beta，**minor 只在一整份规划完成时 +1**。发布节奏：v2 beta → 小范围内测 → v2 继续改 → 公测 → v3 正式版。
 - 构建验证：`go build ./... && go vet ./... && go test ./...`（或 `make test`，会先跑 i18n 校验）。
+- **加一个配置项必须同批分类**（`internal/config/layer.go` 的 `Settings`：启动期 / 运行时 / 是不是密钥）—— 不分类 `go test` 直接红。判据与生成的总表见 `docs/CONFIG.md`；`make config-doc` 重生成。
 - 新增 domain 实体的完整路径：domain struct → repository.go 接口 → sqlstore（三方言 DDL）→ mongostore → 详见 `docs/DATA.md`。
-- **存储层改动的验收标准是 `internal/storage/storagetest` 的行为套件**（42 个用例，**四个后端跑同一份**）。它测的是四个后端必须一致的**行为**，`dialect_parity_test.go` 是三方言 DDL 的**静态**比对，两者互不替代。本机跑真机那几个：`make test-mongo`（Mongo）、`make test-sql`（PG + MySQL）。
+- **存储层改动的验收标准是 `internal/storage/storagetest` 的行为套件**（43 个用例，**四个后端跑同一份**）。它测的是四个后端必须一致的**行为**，`dialect_parity_test.go` 是三方言 DDL 的**静态**比对，两者互不替代。本机跑真机那几个：`make test-mongo`（Mongo）、`make test-sql`（PG + MySQL）。
 - **SQL 里存自由数据不必只会「一个大 JSON 整体重写」**：需要条件写就用 JSON 路径写（`json_set` 配 `WHERE json_extract`，SQLite/PG/MySQL 都支持，已实测），键集开放且要按键查就用侧表。**凡是出现在 `WHERE` 里、或被算术/`CASE` 更新的字段必须是列** —— 塞进 blob 就退成读-改-写，那是正确性取舍不是性能取舍。
 - 提示词模板必须 zh-CN / en-US 双 locale 同时存在，缺一启动报错（`internal/ai/prompts.go`）。**L1 硬边界是唯一例外**：`internal/ai/prompts/boundaries.json`，只有磁盘（`PROMPTS_DIR/boundaries.json`）+ 内嵌两层，**不要给它加 DB 覆盖或 admin 端点** —— 能从控制台改的边界等于能被删。
 - **Go 里的用户可见文案一律 `i18n.Register` 注册 key + `i18n.T`/`Tf` 取用**，不要写 `if HasPrefix(locale,"en")`，也**不要直接 `i18n.Pick`**（会绕开 DB/文件两层，让这条字符串变成不可翻译的）。语言包三层：DB → `LOCALES_DIR/<locale>.json` → 内嵌 zh-CN/en-US；**加一门语言是丢一个翻译文件，不是改代码也不是发版**。主副语言由用户自己在设置页选，配置只给默认值。详见 `docs/DATA.md`「多语言机制」。
 - 许可证：LGPL-3.0-or-later（`COPYING.LESSER` + `COPYING`）。引入新依赖前确认其协议兼容（Apache-2.0 / MIT / BSD / MPL-2.0 可以；GPL-only、SSPL、专有协议不行）。
-- CI：`.github/workflows/ci.yml` 四个 job —— backend（gofmt 门禁 + vet + test + **MongoDB / PostgreSQL / MySQL 三个真机 service，跑存储行为一致性套件**，并断言它没有静默 skip + 静态二进制）、frontend（i18n 校验 + vite build）、extension（MV3 manifest 与双 locale 校验 + 打 zip）、docker（构建镜像）。**改动后本地先跑 `gofmt -l .` 确认为空**，否则 CI 直接红。
+- **验证全部在本机**（2026-08-09 起：CI 已删除，此前是 `.github/workflows/ci.yml` 四个 job）。一条也不少，而且比 CI 那份**更强** —— 它包含 CI 从来没有的 `-tags lite`、`-race` 与子进程 e2e：
+
+  ```bash
+  gofmt -l .                                        # 必须为空
+  go build ./... && go vet ./... && go test ./...
+  go build -tags lite ./... && go test -tags lite ./internal/resources/ ./internal/setup/
+  go test -race ./internal/adapters/ ./internal/weather/
+  make test-mongo                                   # 真机 MongoDB
+  make test-sql                                     # 真机 PostgreSQL + MySQL
+  node web/frontend/scripts/check-i18n.mjs
+  ```
+
+  ⚠️ **丢掉的是什么，写清楚免得有人以为还有人在看**：没有任何东西检查这台机器没跑过的分支；前端 `vite build` 与插件 zip 现在只有人跑才跑。别人来提交之前要把它加回去。
 - 历史：v1（Next.js + Eazo SDK）已于建库时移除，可从首个 commit 取回。代码中出现的 `v2` 字样如无特别说明均指外部 API 版本号（如 Google OAuth、QWeather），不要当作目录路径改写。

@@ -250,7 +250,7 @@ paths:
         error | done. Comment heartbeats `: ping`. NO `[DONE]` sentinel. See
         FRONTEND_HANDOFF.md §B. With threadId the server loads AND persists thread
         history; client roles are whitelisted to user/assistant.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, location: { type: string, maxLength: 128, description: "Where the device is, free text. Fills in or updates a device-detected location; never overwrites one the user set on the settings page. Used only by the briefs — the chat tool takes a location as an argument." }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
       responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
   /api/ai/companion/async:
     post:
@@ -265,7 +265,7 @@ paths:
         appear in the placeholder's toolEvents while still pending — answer it
         via POST /api/decisions/{id}/respond (wait budget 90s in async mode).
         threadId is REQUIRED. See FRONTEND_HANDOFF.md §H.
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [threadId], properties: { message: { type: string, description: "May be empty when attachmentIds is not." }, threadId: { type: string }, timezone: { type: string }, location: { type: string, maxLength: 128 }, assistantName: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string } } } } } } }
       responses:
         '202': { description: Accepted, content: { application/json: { schema: { type: object, properties: { threadId: { type: string }, userMessageId: { type: string }, messageId: { type: string }, status: { type: string, enum: [pending] } } } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -677,7 +677,64 @@ paths:
       summary: Canvas direct push (extension) or JSON upload.
       responses: { '200': { description: OK } }
   /api/import/ics:
-    post: { operationId: importICS, tags: [import], summary: ICS upload (preview → confirm via rules/batch)., responses: { '200': { description: OK } } }
+    post:
+      operationId: importICS
+      tags: [import]
+      summary: ICS upload (preview → confirm via rules/batch).
+      description: >-
+        Accepts `text/calendar` (raw body, query params) or JSON.
+
+        TWO TIMEZONES, and they answer different questions: the SESSION timezone is
+        where the user is now; the CALENDAR timezone is whose wall clocks the
+        file's times belong to. A "09:00" in a Shanghai timetable means 09:00
+        中国时间 whatever city the student is sitting in, so floating times (no Z,
+        no TZID) are interpreted in the calendar's zone — read from
+        X-WR-TIMEZONE — and `timezone` is only the fallback for a file that does
+        not say.
+
+        When the file names a zone, that zone is not the session's, AND the file
+        has floating times whose meaning therefore depends on the answer, the
+        import stops with 409 `timezone_mismatch` and does nothing. Re-send with
+        `tzConfirmed` (and `timezone` if the user chose the other one) to proceed.
+        It never asks when the two agree or when every time carries its own anchor,
+        and `preview` is never blocked — that is how a client shows the user what
+        they are deciding about.
+
+        An event's zone is editable afterwards through PATCH /api/rules/{id}
+        `timezone`.
+      parameters:
+        - { name: preview, in: query, schema: { type: string, enum: ["1"] } }
+        - { name: timezone, in: query, schema: { type: string }, description: "Fallback zone for floating times; overridden by X-WR-TIMEZONE unless tzConfirmed." }
+        - { name: tzConfirmed, in: query, schema: { type: string, enum: ["1"] } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                icsText: { type: string }
+                preview: { type: boolean }
+                timezone: { type: string }
+                tzConfirmed: { type: boolean, description: "The user saw the mismatch; import with the zone given." }
+          text/calendar:
+            schema: { type: string }
+      responses:
+        '200': { description: OK }
+        '400': { description: Not an iCalendar payload. }
+        '409':
+          description: >-
+            timezone_mismatch — the calendar names a zone that is not the
+            session's and has floating times. Nothing was imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, enum: [timezone_mismatch] }
+                  message: { type: string }
+                  calendarTimezone: { type: string }
+                  sessionTimezone: { type: string }
+                  events: { type: integer }
   /api/import/history:
     get: { operationId: importHistory, tags: [import], responses: { '200': { description: OK } } }
   /api/courses:
@@ -695,9 +752,19 @@ paths:
     patch:
       operationId: patchAssignment
       tags: [import]
+      summary: Planner status and/or the per-item reminder switch.
+      description: >-
+        Two independent fields, and the distinction matters: status "dismissed"
+        means "I am not doing this" and removes the item from counts and plans,
+        while remindersOff keeps it and only silences the deadline ladder.
+        At least one of the two must be present. STRATEGY §1.3 — the fact track can
+        only be turned off one item at a time.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
-      responses: { '200': { description: OK } }
+      requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] }, remindersOff: { type: boolean } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+        '400': { description: Neither field was sent, or an unknown status. }
+        '404': { description: No such assignment in this session. }
 
   # ─── channels ─────────────────────────────────────────────────────────────
   /api/channels:
@@ -780,6 +847,170 @@ paths:
     get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }
 
   # ─── admin ────────────────────────────────────────────────────────────────
+  /api/admin/config:
+    get:
+      operationId: adminConfigGet
+      tags: [admin]
+      summary: Every configuration knob, both layers, with where its value came from.
+      description: >-
+        Two layers, and the console may only write one. BOOT settings built
+        something at startup — a socket, a database handle, a signing key — so a
+        new value cannot change the thing already built; they are shown read-only.
+        RUNTIME settings are read fresh at each use, so an override takes effect on
+        the next read.
+
+        `source` says whether the active value came from the environment seed or
+        from a stored override, which is what makes a meaningful reset control
+        possible.
+
+        `requiresRestart` marks a knob that is runtime BY NATURE but whose value
+        was copied into something at construction (the rate limiters, the model
+        catalog, the weather chain). Storing the override is accepted and correct;
+        it simply will not take effect until a restart, and the console should say
+        so rather than imply the change is live.
+
+        SECRETS ARE NEVER RETURNED — not the value, not a prefix, not a length. A
+        masked secret still leaks how long it is and whether it changed between two
+        reads. `set` says whether it is configured, which is all the console needs.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settings:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        env: { type: string, description: The environment variable name. }
+                        key: { type: string, description: "The Config field — this is what PUT takes." }
+                        layer: { type: string, enum: [boot, runtime] }
+                        value: { type: string, description: Absent for secrets. }
+                        set: { type: boolean, description: "Configured at all; the only answer given for a secret." }
+                        secret: { type: boolean }
+                        source: { type: string, enum: [env, override] }
+                        editable: { type: boolean, description: "layer==runtime and not a secret." }
+                        why: { type: string, description: Why a surprising classification is what it is. }
+                        requiresRestart: { type: boolean }
+        '401': { description: No admin credential. }
+    put:
+      operationId: adminConfigPut
+      tags: [admin]
+      summary: Set or reset runtime overrides.
+      description: >-
+        `{"settings": {"MaxUploadBytes": "8388608", "AgentMaxRounds": null}}` —
+        a string sets the override, NULL resets the key to its environment seed.
+        Those are deliberately different from `""`: for a string knob "back to the
+        default" and "set it to nothing" are different requests, and a console with
+        only one of them cannot undo a mistake.
+
+        The whole request is validated before any of it is written. A partial apply
+        would leave the operator with some edits in place and no way to tell which,
+        and there is no transaction to offer them.
+
+        Boot-layer and secret keys are refused with a reason rather than stored —
+        a row the console displays and the process ignores is the worst outcome
+        available here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settings]
+              properties:
+                settings:
+                  type: object
+                  additionalProperties: { type: string, nullable: true }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  requiresRestart:
+                    type: array
+                    items: { type: string }
+                    description: "Keys whose new value waits for a restart. Per key, not one boolean — the operator's next question is WHICH one."
+        '400': { description: "unknown_setting, not_editable, or bad_value." }
+        '401': { description: No admin credential. }
+        '503': { description: "degraded — storage is unavailable, so overrides cannot be written. The environment layer still applies." }
+  /api/admin/session:
+    post:
+      operationId: adminLogin
+      tags: [admin]
+      summary: Obtain a short-lived console cookie, from the admin token or from your own login.
+      description: >-
+        TWO WAYS TO LOG IN, and only one of them is a password. Send
+        `{"token": "<ADMIN_TOKEN>"}` for the root credential, which passes
+        everything. Send `{}` while already signed in (dc_auth or a Bearer token)
+        to exchange your OWN login for a console session whose permissions come
+        from your roles — an ordinary user with no permissions is refused rather
+        than handed a credential that can do nothing.
+
+        It is an EXCHANGE, not an acceptance: dc_auth is long-lived and Path=/, so
+        letting it authenticate /api/admin/* directly would give up SameSite=Strict,
+        the narrow cookie path and the short TTL all at once.
+
+        TWO WAYS INTO THE ADMIN API, for two callers. Machines (curl, CI, deploy
+        scripts) keep sending `X-Admin-Token` on every request — that path is
+        unchanged and was never the problem: the token is in a header rather than
+        a URL and the comparison is constant-time.
+
+        Humans use this endpoint once and get `dc_admin`: httpOnly (an XSS on the
+        console cannot read it), Secure, SameSite=Strict, and short-lived. What it
+        fixes is that the console used to keep the raw token in sessionStorage,
+        where any XSS could read a credential that never expired and could only be
+        rotated by redeploying.
+
+        The cookie carries NO revocation mechanism — there is no admin account to
+        bump a token version on, and the console must keep working when storage is
+        down — so its TTL is its revocation. Logging out clears the cookie;
+        a copy taken beforehand stays valid until it expires.
+
+        CSRF: SameSite=Strict plus an Origin check, because a cookie rides along on
+        cross-site requests and httpOnly buys confidentiality rather than
+        authority. The header path needs neither — a custom header forces a
+        preflight.
+
+        ⚠️ An unset ADMIN_TOKEN no longer means "open outside production". The
+        server generates one at startup and prints it; there is no unauthenticated
+        state to fall into.
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { token: { type: string, description: 'ADMIN_TOKEN. Omit to exchange your own login instead.' } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPrincipal' } } } }
+        '401': { description: Wrong token, or no login to exchange. }
+        '403': { description: Cross-origin request, or a signed-in account with no console permission. }
+        '429': { description: Rate limited (shares the auth limiter). }
+    get:
+      operationId: adminWhoAmI
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Who am I, and what may I do.
+      description: >-
+        The console's first call after a reload. Needs a credential but no
+        permission: the answer is the caller's own permission list, which tells
+        them nothing clicking around would not.
+
+        ⚠️ The console uses this to hide sections it cannot open. Hiding is a
+        courtesy — every endpoint checks for itself, and a client that lies to
+        itself about what it holds gets 403s, not access.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPrincipal' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: adminLogout
+      tags: [admin]
+      summary: Clear the console cookie.
+      description: Deliberately open — a logout that 401s leaves somebody unable to clear a session they cannot use.
+      responses:
+        '200': { description: OK }
   /api/admin/prompts:
     get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
   /api/admin/prompts/{key}:
@@ -804,6 +1035,138 @@ paths:
     get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
   /api/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/admin/permissions:
+    get:
+      operationId: adminPermissions
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Every permission this build defines, with the sentence to grant from.
+      description: >-
+        Each entry carries a `damage` line saying what somebody holding it can do,
+        in terms of CONSEQUENCE rather than endpoints — the person granting is
+        deciding what somebody else can break, usually quickly, so "manage config"
+        is not something a decision can be made from.
+
+        Requires users.read rather than roles.edit: somebody who can see that a
+        person is in the "support" group needs to be able to see what "support"
+        means, or the user list is a screen of names that mean nothing.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { permissions: { type: array, items: { type: object, properties: { id: { type: string }, damage: { type: string } } } } } } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /api/admin/roles:
+    get:
+      operationId: adminRoles
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Every group, what it grants, and who is in it.
+      description: >-
+        Members come back with the list rather than behind a second call, because
+        the question a role list is read to answer is "who can do this" — and a
+        screen needing N+1 requests to answer it will be built to not answer it.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { roles: { type: array, items: { $ref: '#/components/schemas/AdminRole' } } } } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database, so groups cannot be read.' }
+  /api/admin/roles/{name}:
+    put:
+      operationId: adminSetRole
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Create or replace what a group grants. Requires roles.edit.
+      description: >-
+        ⚠️ REPLACE, not merge — the body IS the new permission set. A merge
+        endpoint cannot express "take this away", and the console's editor is a
+        set of switches whose whole content is already the answer.
+
+        ⚠️ roles.edit is OWNER-EQUIVALENT. Whoever can edit a group's permissions
+        can put themselves in an all-powerful one. That is true of every RBAC and
+        is not a flaw here, but granting it is the same decision as making somebody
+        an owner. It is deliberately a different permission from users.assign for
+        exactly that reason: holding both is holding everything.
+
+        An unknown permission id is refused rather than stored — a stored id that
+        nothing matches is a group that grants LESS than its own definition says,
+        and the definition is what the person granting it reads.
+      parameters: [{ name: name, in: path, required: true, schema: { type: string, maxLength: 64 } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { description: { type: string }, permissions: { type: array, items: { type: string } } } } } } }
+      responses:
+        '200': { description: OK }
+        '400': { description: Empty or over-long name, or an unknown permission id. }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+    delete:
+      operationId: adminDeleteRole
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Remove a group and everybody's membership in it. Requires roles.edit.
+      description: >-
+        Both, in one call. Orphaned membership rows grant nothing until somebody
+        recreates a group with the same name — at which point a set of people
+        silently regain a permission set that was deleted.
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/users/{id}/roles:
+    put:
+      operationId: adminSetUserRoles
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Set which groups one person is in. Requires users.assign.
+      description: >-
+        The commercial operation — moving a customer between tiers — and
+        deliberately reachable without any power to change what those tiers mean.
+
+        ⚠️ ADDITIONALLY requires roles.edit when any group being JOINED OR LEFT
+        carries a permission, evaluated against the group as it is at that moment.
+        Without that, "assign only" would quietly become "grant anything that
+        already exists". The check is on the DIFFERENCE, so leaving somebody in a
+        group they are already in never needs the higher permission.
+
+        The whole set is sent, for the same reason the role editor replaces: an
+        add/remove pair invites two requests that can half-apply.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [roles], properties: { roles: { type: array, items: { type: string } } } } } } }
+      responses:
+        '200': { description: OK }
+        '403': { description: Missing users.assign, or an admin group without roles.edit. }
+        '404': { description: No such user, or no such group. }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/users/{id}/owner:
+    put:
+      operationId: adminSetOwner
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Mark or unmark a super-administrator. ROOT CREDENTIAL ONLY.
+      description: >-
+        Not owner-only, not roles.edit — the ADMIN_TOKEN in the environment and
+        nothing else. Three reasons, and the third is the one that matters:
+
+        (1) The first administrator has to come from somewhere, and
+        "whoever registers first" is a race with the internet on a fresh
+        deployment. So the bootstrap is: the operator, holding the token they
+        configured, marks a person.
+
+        (2) It is the recovery path. Every other route can be locked out — the last
+        owner deleted, the role rows wrong. This one is reachable as long as the
+        process has its environment.
+
+        (3) It cannot be delegated by accident. An owner can still hand out
+        roles.edit, which is owner-equivalent in effect; what they cannot do is
+        create another break-glass holder.
+
+        ⚠️ There is deliberately no "cannot remove the last owner" rule — break-
+        glass grants and revokes, and the root credential can undo it in one
+        request. A missing `owner` field is a 400 rather than read as false.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [owner], properties: { owner: { type: boolean } } } } } }
+      responses:
+        '200': { description: OK }
+        '400': { description: The owner field was missing. }
+        '403': { description: Not the root credential. }
+        '404': { description: No such user. }
+        '503': { description: 'Degraded: no database.' }
   /api/admin/db/tables:
     get: { operationId: adminDBTables, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
   /api/admin/db/table/{name}:
@@ -816,6 +1179,321 @@ paths:
     post: { operationId: adminDBImport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
   /api/admin/db/backup:
     get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  /api/admin/providers:
+    get:
+      operationId: adminProvidersGet
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: External capability sources, with health
+      description: >
+        Every configured weather / search source, including disabled and unhealthy
+        ones — those are usually the ones being asked about.
+
+
+        Only three fields are writable (enabled, description, approved);
+        `editable` lists them. Identity and wiring — id, format, base_url,
+        token_env — live in config/providers.yaml and are file-only. That is F1's
+        rule applied per field: the process built an HTTP client out of base_url at
+        startup, so a new value cannot change the thing already built. base_url has
+        a second reason — it is the SSRF entrance, and requiring shell access to
+        change it is the whole defence.
+
+
+        `health` is PER PROCESS by design and never persisted: an adapter is often
+        same-host, so what one instance cannot reach another may reach fine. Two
+        consoles legitimately disagree, which is why `instance` names which one
+        answered.
+
+
+        No secret appears. `tokenEnv` is the variable NAME and `tokenSet` says
+        whether it currently holds anything — never the value, a prefix, or a
+        length.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers: { type: array, items: { $ref: '#/components/schemas/ProviderView' } }
+                  configPath: { type: string, description: The file to edit for the fields this screen cannot touch. }
+                  instance: { type: string }
+        '401': { description: No admin credential. }
+    put:
+      operationId: adminProvidersPut
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Set enabled / description / approved on one or more sources
+      description: >
+        A sparse patch: a field the console does not send keeps what it had. The
+        whole request is validated before any of it is written, because there is no
+        transaction and a partial apply leaves the operator with some edits in
+        place and no way to tell which.
+
+
+        `approved` means "an operator has read this text", and it is recorded
+        against a HASH of the description being approved — so editing the
+        description revokes its approval automatically. Without that the gate would
+        be one edit away from decorative and nothing anywhere would go red. An
+        unapproved source still works; the model is told about it in a sentence the
+        backend builds from its id and format rather than in the operator's words.
+
+
+        An adapter's own self-reported description is NEVER injected and the server
+        has no path that promotes it into this field. It appears separately as
+        `manifestDescription` so an operator can read it and choose to adopt it,
+        which records an approval like any other.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [providers]
+              properties:
+                providers:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [kind, id]
+                    properties:
+                      kind: { type: string, enum: [weather, search, channel] }
+                      id: { type: string }
+                      enabled: { type: boolean }
+                      description:
+                        type: object
+                        additionalProperties: { type: string }
+                        description: Per locale. Both zh-CN and en-US are required — one language only vanishes for half the users.
+                      approved: { type: boolean }
+      responses:
+        '200':
+          description: OK, with the refreshed list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  providers: { type: array, items: { $ref: '#/components/schemas/ProviderView' } }
+        '400': { description: Unknown source, or a description that is not in both locales. }
+        '401': { description: No admin credential. }
+        '503': { description: Degraded — the override table is in the database. }
+  /api/admin/models:
+    get:
+      operationId: adminModelsGet
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: The model catalog as it is actually loaded
+      description: >
+        Read-only, and that is a decision rather than an omission. Every field
+        here is boot-layer: an entry became a constructed provider with its base
+        URL and key baked in, so a new value cannot change the thing already
+        built. Which model fills which role IS editable — through
+        `PUT /api/admin/config` (DEFAULT_CHAT_MODEL and friends); a second door to
+        the same setting would be a second door that can disagree.
+
+
+        Disabling an entry was considered and not built: it is the one write that
+        can take a deployment down from a web page with no obvious way back — turn
+        off the entry DEFAULT_CHAT_MODEL points at and every AI feature fails, on
+        a screen whose next likely action is to turn off another one. The recovery
+        that already exists is better, and leaves the broken entry visible rather
+        than hidden.
+
+
+        Served from the loaded catalog, not by re-reading models.yaml: a screen
+        built from the file would describe a file that may have changed since
+        boot, i.e. a process that does not exist.
+
+
+        No key appears. `apiKeyEnv` is the variable NAME and `keySet` says whether
+        a key was resolved at all.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  models: { type: array, items: { $ref: '#/components/schemas/ModelDetail' } }
+                  configPath: { type: string, description: The file to edit, since nothing here is writable. }
+        '401': { description: No admin credential. }
+  /api/admin/models/{id}/test:
+    post:
+      operationId: adminModelTest
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Actually call the model once
+      description: >
+        "Is the key set" and "is the key VALID" are different questions and only
+        the second matters. Nothing about a correct-looking configuration reveals
+        a revoked key, a moved gateway or an exhausted account — and without this,
+        the only way to find out is to use the app and watch a feature fail, which
+        reports the failure to a user instead of an operator.
+
+
+        One tiny call with max_tokens 1, and the reply is discarded. A console
+        that could send arbitrary prompts on the deployment's key would be a way
+        to spend somebody's money from a web page.
+
+
+        ⚠️ A failed call answers **200 with ok:false**, not an error status: the
+        request to this server succeeded and found something out. A 502 would make
+        the console show "the admin API is broken" over what is, in fact, the
+        answer.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The result of the attempt, successful or not
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  model: { type: string }
+                  elapsedMs: { type: integer }
+                  message: { type: string }
+        '400': { description: No such model in the catalog. }
+        '401': { description: No admin credential. }
+  /api/admin/oauth:
+    get:
+      operationId: adminOAuthGet
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Configured social logins, with the callback URL to register
+      description: >
+        Read-only for the same reason as the models screen: credentials live in
+        config/oauth.yaml and the flow was constructed from them at startup.
+
+
+        `redirectUri` is the point of this screen. A mismatch there is the most
+        common OAuth setup failure, the vendor's error says nothing useful, and
+        the value is derived from PUBLIC_BASE_URL — which an operator cannot see
+        from a browser. It is produced by the same function the login flow uses,
+        so it cannot drift into being merely plausible.
+
+
+        `clientId` appears because it is not a secret: it travels in the authorize
+        URL of every login. `clientSecret` never appears in any form.
+
+
+        ⚠️ Providers with an empty client_id are skipped at startup and are
+        genuinely absent here — the manager has no memory of them.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers: { type: array, items: { $ref: '#/components/schemas/OAuthProviderView' } }
+                  configPath: { type: string }
+                  note: { type: string }
+        '401': { description: No admin credential. }
+  /admin:
+    get:
+      operationId: consoleIndex
+      tags: [admin]
+      summary: The operations console (static, unauthenticated)
+      description: >
+        Not an API endpoint — it serves the console's static bundle, embedded in
+        the binary. It appears in this contract because everything this deployment
+        answers appears in this contract, and because "does this build carry a
+        console" is a real question with a real answer.
+
+
+        **Deliberately unauthenticated.** Static files are not secret; every byte
+        is in the public repository, and gating the HTML would only produce a
+        login page that cannot render its own login form. The credential check is
+        on `/api/admin/*`, where the data is.
+
+
+        ⚠️ The consequence, and it is a real constraint on the console: nothing in
+        that bundle may carry a secret, a deployment-specific value, or anything
+        the API would refuse to serve unauthenticated.
+
+
+        404 with an explanation when this build carries no console (`-tags lite`,
+        or a clone where web/console was never built).
+      responses:
+        '200': { description: The console HTML. }
+        '404': { description: This build carries no console. }
+  /admin/:
+    get:
+      operationId: consoleAsset
+      tags: [admin]
+      summary: Console assets and client-side routes
+      description: >
+        Real files are served as themselves; anything else falls through to
+        index.html, because an unknown path under /admin is a client-side route
+        rather than a missing file.
+      responses:
+        '200': { description: An asset, or index.html for a client-side route. }
+        '404': { description: This build carries no console. }
+  /api/admin/health:
+    get:
+      operationId: adminHealth
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: What the overview screen needs, in one call
+      description: >
+        `/api/healthz` is unauthenticated and therefore cannot say anything
+        useful: it reports that storage is unavailable and deliberately refuses to
+        say why, because a driver error routinely carries the DSN and a DSN
+        routinely carries a password. Its own comment promised that "the operator
+        gets the reason through the console" — and until this endpoint existed
+        that was true of no code at all. `DegradedReason()` had exactly one
+        caller: a log line in main.
+
+
+        Three things live here and nowhere else:
+
+        - `reason` — the actual driver error. The most useful string in a broken
+          deployment, and the one thing the public endpoint must not say.
+
+        - `uptimeSec` / `startedAt` — "did this just restart" is how an operator
+          tells a configuration problem from a crash loop.
+
+        - `instance` — health is per process by design, so two consoles behind a
+          load balancer legitimately disagree. Without a name attached that is an
+          unexplainable bug report rather than a fact.
+
+
+        Three states, not two: degraded (storage never opened), running with an
+        unreachable database (`dbReachable:false`), and healthy. The middle one is
+        invisible to a boolean.
+
+
+        ⚠️ Answers **200** in all three — the request to this server succeeded and
+        found something out. A 503 here would make the console show "the admin API
+        is broken" over what is, in fact, the answer.
+      responses:
+        '200':
+          description: The state of this process
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  degraded: { type: boolean, description: Storage never opened. One-way; the only exit is a restart. }
+                  dbReachable: { type: boolean, description: Absent when degraded — there is no database to reach. }
+                  reason: { type: string, description: The driver error. Present only when something is wrong. }
+                  recovery: { type: string, description: Present when degraded, because there is no retry button and somebody will look for one. }
+                  instance: { type: string }
+                  startedAt: { type: string, format: date-time }
+                  uptimeSec: { type: integer }
+                  db: { type: string }
+                  env: { type: string }
+                  build: { type: string }
+                  channel: { type: string }
+                  console: { type: boolean, description: Whether this build carries the console bundle. }
+        '401': { description: No admin credential. }
 
   # ─── meta ─────────────────────────────────────────────────────────────────
   /api/healthz:
@@ -881,7 +1559,18 @@ components:
         type: { type: string, enum: [task, appointment, break, relax, meal] }
         duration_min: { type: integer, nullable: true }
         time_mode: { type: string, enum: [floating, fixed, local], description: "floating=wall clock (no utc_time); fixed=absolute instant; local=circadian, follows current tz. fixed/local carry utc_time." }
-        timezone: { type: string, example: "Asia/Shanghai" }
+        timezone:
+          type: string
+          example: "Asia/Shanghai"
+          description: >
+            The EVENT's zone — whose wall clocks this rule's time belongs to.
+            A different question from Preferences.timezone, which is where the
+            user is now: a lecture imported from a Shanghai timetable stays
+            09:00 中国时间 when the student is in London, and the two layers are
+            what make that expressible. Empty means floating (whatever the
+            reader's own zone says), which is right for "gym at 7" and wrong for
+            a class in another country. Set by ICS import from X-WR-TIMEZONE and
+            correctable here; a name this build cannot load is rejected.
         utc_time: { type: string, nullable: true, description: "RFC3339 UTC anchor for fixed/local blocks." }
         offset_min: { type: integer, nullable: true }
         offset_ref: { type: string }
@@ -951,7 +1640,20 @@ components:
             Four, not three. A silent expiry must stay distinguishable from a
             deliberate no — the ledger keeps everything, and an expired offer
             was never seen.
-        level: { type: string, enum: [L1, L2, L3], description: The attention ladder. L0 never becomes a proposal. }
+        level:
+          type: string
+          enum: [L1, L2, L3]
+          description: >-
+            The attention ladder — the MEDIUM. L1 an in-view ghost bound to a
+            slot, L2 a card in the stack, L3 a push against the ≤3/day budget.
+            L0 never becomes a proposal. Independent of whether the proposal may
+            ESCALATE, which is decided by what it rests on (see origin/btype):
+            a hard-backed one — an appointment, a deadline — may come back louder
+            as the moment approaches; a soft one gets one delivery, ever, because
+            "ignoring is always safe" is a promise and escalation would break it.
+            The distinction is derived server-side from the row, never asserted
+            by the agent: "is this important" is exactly the judgement a model
+            gets wrong in the direction of interrupting more.
         kind: { type: string, enum: [timed, card, decision] }
         title: { type: string }
         summary: { type: string }
@@ -960,7 +1662,16 @@ components:
         date: { type: string }
         start: { type: string, description: "HH:MM" }
         dur: { type: integer, nullable: true }
-        btype: { type: string }
+        btype:
+          type: string
+          description: >-
+            The block type this proposal is about. "appointment" is the only
+            HARD one today — a slot somebody else is also holding — and future
+            hard types (meeting, flight, exam) join that set rather than adding a
+            field. task/break/relax/meal are the user's own intentions about
+            their own day. Deliberately NOT the same as lockLevel: a lock says
+            "this cannot move", hardness says "missing this costs somebody other
+            than you".
         lockLevel: { type: string }
         lockReason: { type: string }
         rows:
@@ -992,7 +1703,15 @@ components:
             discards an undo window.
         expiresAt: { type: string, format: date-time }
         resolution: { type: string, enum: [user, silence, superseded] }
-        origin: { type: string, enum: [agent, daemon, upload, protector, user] }
+        origin:
+          type: string
+          enum: [agent, daemon, upload, protector, user, deadline]
+          description: >-
+            Which part of the system produced it. "deadline" is the fact track —
+            a due date the user or an import put there, the archetypal hard fact,
+            and the one origin that licenses escalation. "user" means the user
+            asked for this card; it matters for the ledger, since a summoned card
+            should not count against rapport the way an unsolicited one does.
         threadId: { type: string }
         rev: { type: integer, description: Optimistic concurrency — row-level accepts race otherwise. }
         createdAt: { type: string, format: date-time }
@@ -1018,6 +1737,59 @@ components:
         lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
         lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
+    ModelDetail:
+      type: object
+      properties:
+        id: { type: string, description: OUR stable name — what DEFAULT_CHAT_MODEL and the database reference. }
+        format: { type: string }
+        baseUrl: { type: string, description: Where requests go. "Which gateway is this actually hitting" is the second question after "is the key set". }
+        model: { type: string, description: The vendor's name — the perishable half. Shown next to id because that pair is the whole point of having two fields. }
+        apiKeyEnv: { type: string, description: The variable NAME. Not a credential. }
+        keySet: { type: boolean, description: Whether a key was resolved at all. The value never appears. }
+        caps: { type: object, additionalProperties: true }
+        roles:
+          type: array
+          items: { type: string, enum: [chat, vision, planner] }
+          description: The default slots this entry currently fills. Derived, so it cannot disagree with what the process is doing — planner reports where it actually lands, including its fallback to the chat model.
+
+    OAuthProviderView:
+      type: object
+      properties:
+        name: { type: string }
+        clientId: { type: string, description: Not a secret — it travels in the authorize URL of every login. }
+        secretSet: { type: boolean, description: The only thing said about the secret. An id with no secret fails at the token exchange, after the user has already left and come back. }
+        redirectUri: { type: string, description: The callback the vendor must have registered. Built by the same function the login flow uses. }
+        preset: { type: boolean, description: URLs and field mappings came from a built-in template, which is why a two-line entry works. }
+
+    ProviderView:
+      type: object
+      properties:
+        kind: { type: string, enum: [weather, search, channel] }
+        id: { type: string }
+        format: { type: string, enum: [builtin, http] }
+        impl: { type: string, description: 'For format builtin: the compiled-in implementation.' }
+        baseUrl: { type: string, description: For format http. File-only — it is the SSRF entrance. }
+        tokenEnv: { type: string, description: The environment variable NAME. Not a credential. }
+        tokenSet: { type: boolean, description: Whether that variable currently holds anything. The value never appears. }
+        displayName: { type: string }
+        logo: { type: string, description: A raster data URI or empty. SVG is refused — it can carry script, and channel logos render in ordinary user clients. }
+        enabled: { type: boolean }
+        editable: { type: array, items: { type: string }, description: Precomputed so the console does not re-derive a rule that lives on the server. }
+        description: { type: object, additionalProperties: { type: string } }
+        manifestDescription:
+          type: object
+          additionalProperties: { type: string }
+          description: What the ADAPTER says about itself. Shown as a suggestion; never injected into a prompt and never merged into description.
+        approved: { type: boolean }
+        health:
+          type: object
+          properties:
+            up: { type: boolean }
+            reason: { type: string }
+            lastChecked: { type: string, format: date-time }
+            failures: { type: integer }
+            backoffUntil: { type: string, format: date-time }
+        instance: { type: string, description: Which process answered. Health is per process. }
     Session:
       type: object
       properties:
@@ -1062,6 +1834,36 @@ components:
           enum: ["", user, detected]
           readOnly: true
           description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
+        location:
+          type: string
+          maxLength: 128
+          description: >
+            Where this user is, as free text a weather source can resolve
+            ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+            evening briefs, which look up the weather with no model in the loop
+            and therefore cannot ask anybody where to look. The chat tool takes
+            a location as an argument, so the model can already ask about
+            anywhere — a trip's destination, next week's city — and needs
+            nothing stored.
+
+            Same precedence as timezone: setting it here is the USER choosing
+            and outranks the client's reports from then on; "" goes back to
+            following the client. A client reports its place via the location
+            field on POST /api/ai/companion.
+
+            When nothing is known — no setting, and no memory fact stating a
+            home — the brief simply has NO weather line. That is deliberate: a
+            wrong city is worse than no city, because "17°C and raining" is a
+            sentence somebody dresses by.
+
+            Free text rather than coordinates because every weather source here
+            resolves a place name itself; geocoding server-side would mean
+            owning a geocoder and disagreeing with the source.
+        locationSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the location. Read-only, like timezoneSource."
         primaryLocale:
           type: string
           description: >
@@ -1224,7 +2026,23 @@ components:
         pointsPossible: { type: number, nullable: true }
         submitted: { type: boolean }
         graded: { type: boolean }
-        status: { type: string, enum: [pending, planned, done, dismissed] }
+        status:
+          type: string
+          enum: [pending, planned, done, dismissed]
+          description: >
+            The planner workflow. "dismissed" means "I am not doing this" — it
+            removes the item from counts and plans. To keep the item but stop
+            being reminded about it, use remindersOff instead.
+        remindersOff:
+          type: boolean
+          description: >
+            Silences the deadline ladder for this one item without changing what
+            it is. STRATEGY §1.3: the fact track can only be turned off one item
+            at a time; the global deadlineAlerts toggle is deliberately blunt and
+            this is what means a user does not have to reach for it.
+            The ladder itself is 24h → 12h → 1h → overdue, one message per rung
+            per item, ever — which is why the fact track needs no daily budget and
+            does not consume the ≤3/day suggestion budget.
     OperationLog:
       type: object
       properties:
@@ -1249,6 +2067,36 @@ components:
         status: { type: string, enum: [ok, failed] }
         requestId: { type: string }
         createdAt: { type: string, format: date-time }
+    AdminPrincipal:
+      type: object
+      description: >-
+        Who is holding a console session, and what they may do. `root` is the
+        ADMIN_TOKEN (or a cookie minted from it) and passes everything; `owner`
+        is a person marked as super-administrator, which is a MARK rather than a
+        role holding every permission — so a permission added in a later release
+        is held by every owner with no data change. Otherwise `permissions` is
+        the union of the caller's groups.
+      properties:
+        root: { type: boolean }
+        owner: { type: boolean }
+        userId: { type: string, description: Absent for the root credential. }
+        permissions: { type: array, items: { type: string } }
+        ok: { type: boolean, description: Present on login only. }
+        expiresIn: { type: integer, description: 'Seconds; present on login only.' }
+    AdminRole:
+      type: object
+      description: >-
+        A named permission set, and also a user group — one shape for both,
+        because the only difference is whether `permissions` is empty. An empty
+        set is a plain group, which is what a commercial tier is; `admin` is
+        derived from that rather than stored, so it can never go stale in the
+        dangerous direction.
+      properties:
+        name: { type: string, maxLength: 64 }
+        description: { type: string }
+        permissions: { type: array, items: { type: string } }
+        members: { type: array, items: { type: string }, description: User ids. }
+        admin: { type: boolean, description: Derived; true when permissions is non-empty. }
     AdminStats:
       type: object
       properties:

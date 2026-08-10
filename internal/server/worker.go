@@ -54,6 +54,23 @@ func NewWorker(s *Server, chReg *channels.Registry) *Worker {
 
 // Start begins the cron scheduler.
 func (w *Worker) Start() {
+	// A degraded process has no store, and every job this schedules reads rows.
+	//
+	// Nothing fires today, but only by accident: cron entries are added by
+	// ScheduleUser, which runs off markAwake, which sits behind requireSession —
+	// and degradedMW refuses every route that requires a session. So the worker
+	// is idle because a middleware three layers away happens to keep requests
+	// from reaching it.
+	//
+	// That accident has an expiry date written into docs/ROADMAP.md: enumerating
+	// sessions at boot is a stated future want, and the day somebody adds it the
+	// worker starts running jobs against a nil store in a degraded process.
+	// Refusing here costs one branch and makes the property explicit instead of
+	// emergent.
+	if w.s != nil && w.s.Degraded() {
+		w.s.log.Warn("degraded: proactive jobs are not scheduled (they all read rows); restart after fixing storage")
+		return
+	}
 	w.cron.Start()
 }
 
@@ -161,9 +178,9 @@ func (w *Worker) resolveTZ(sid, tz string) string {
 		}
 	}
 	fallback := "UTC"
-	if w.s != nil && w.s.cfg != nil && w.s.cfg.WorkerDefaultTZ != "" {
-		if _, err := time.LoadLocation(w.s.cfg.WorkerDefaultTZ); err == nil {
-			fallback = w.s.cfg.WorkerDefaultTZ
+	if w.s != nil && w.s.cfg != nil && w.s.runtime().WorkerDefaultTZ != "" {
+		if _, err := time.LoadLocation(w.s.runtime().WorkerDefaultTZ); err == nil {
+			fallback = w.s.runtime().WorkerDefaultTZ
 		}
 	}
 	if tz != "" {
@@ -343,7 +360,7 @@ func (w *Worker) runBrief(sid, tz, kind string) {
 	w.log.Info("running brief", "sid", sid, "kind", kind)
 
 	// Gather context: weather, today's plan, upcoming deadlines.
-	weatherSummary := w.lookupWeather(ctx, locale)
+	weatherSummary := w.lookupWeather(ctx, sid, locale)
 	planSummary := w.loadPlanSummary(ctx, sid, today)
 
 	// Build the prompt and call the agent.
@@ -409,7 +426,6 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 
 	loc := resolveLocation(tz)
 	now := time.Now().In(loc)
-	deadline := now.Add(48 * time.Hour)
 
 	assigns, err := w.s.store.Assignments().List(ctx, sid, domain.AssignmentFilter{})
 	if err != nil {
@@ -417,40 +433,58 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 		return
 	}
 
+	// The ladder (STRATEGY §1.3). This used to be a single 48-hour window: every
+	// two hours it re-listed everything due within two days and sent the same
+	// message again. Nothing recorded that an item had already been warned about,
+	// so a deadline three days out produced roughly two dozen identical messages
+	// before it arrived — and the only way to stop them was DeadlineAlerts, which
+	// turns the whole fact track off.
+	//
+	// Now: each item climbs 24h → 12h → 1h → overdue, and each rung fires at most
+	// once for that item because the occurrence key is (assignment, rung). Three
+	// or four messages over the life of a deadline, structurally, with no daily
+	// budget needed — which is what lets the fact track stay out of the ≤3/day
+	// suggestion budget honestly rather than as a loophole.
 	var urgent []domain.Assignment
+	rungs := map[string]time.Duration{}
 	for _, a := range assigns {
-		if a.DueAt == nil {
+		if a.DueAt == nil || a.RemindersOff {
 			continue
 		}
 		if a.Status == domain.AssignmentDone || a.Status == domain.AssignmentDismissed {
 			continue
 		}
-		if a.DueAt.After(now) && a.DueAt.Before(deadline) {
-			urgent = append(urgent, a)
+		rung, in := domain.DeadlineRungFor(*a.DueAt, now)
+		if !in {
+			continue
 		}
-		// Also flag overdue assignments (due_at < now) that aren't done yet.
-		if a.DueAt.Before(now) && a.Status != domain.AssignmentDone && a.Status != domain.AssignmentDismissed {
-			urgent = append(urgent, a)
+		// Claim per (assignment, rung): whoever gets it sends, everybody else —
+		// the next tick, the other instance, the process that just restarted —
+		// finds it taken and stays quiet.
+		if _, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, deadlineRunKey(a.ID, rung)); !ok {
+			continue
 		}
+		urgent = append(urgent, a)
+		rungs[a.ID] = rung
 	}
 
 	if len(urgent) == 0 {
-		// Nothing to say. Claiming here would write a row every two hours per
-		// session to record that nothing happened, burying the rows that mean
-		// something — which is exactly what JobRunRepository.Claim warns against.
 		return
 	}
 
-	// Two-hour slots, so two instances firing the same 0-mod-2 hour agree on the
-	// occurrence, and so a restart inside the same slot does not re-warn.
-	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, slotKey(now, loc, 2*time.Hour))
+	// One occurrence row for the message itself, so the send is claimed too.
+	run, ok := w.claim(ctx, sid, domain.JobDeadlineWarn, "batch:"+slotKey(now, loc, 2*time.Hour))
 	if !ok {
 		return
 	}
 	var jobErr error
 	defer func() { w.finish(ctx, run, jobErr) }()
 
-	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent))
+	// The fact track, and the only thing in the product that may escalate:
+	// domain.BackingOf(Proposal{Origin: OriginDeadline}) is hard, which is what
+	// licenses the 24h → 12h → 1h climb. Everything soft-backed gets one
+	// delivery and never comes back louder — see domain/proposal.go.
+	w.log.Info("deadline check", "sid", sid, "urgent", len(urgent), "rungs", rungs)
 
 	sess, err := w.s.store.Sessions().Get(ctx, sid)
 	if err != nil {
@@ -462,6 +496,23 @@ func (w *Worker) checkDeadlines(sid, tz string) {
 
 	msg := formatDeadlineWarning(locale, urgent, now)
 	w.sendToChannels(ctx, sid, msg)
+}
+
+// deadlineRunKey names one rung of one assignment.
+//
+// The rung is part of the key, so an item that crosses 24h, then 12h, then 1h
+// produces three distinct occurrences and therefore three messages — and
+// crossing the same rung again (a re-check two hours later) produces none.
+//
+// "overdue" rather than "0" for the past-due rung: run keys end up in a MySQL
+// VARCHAR(64) and in a Mongo _id built by concatenation, so they are read by
+// people as often as by code.
+func deadlineRunKey(assignmentID string, rung time.Duration) string {
+	name := "overdue"
+	if rung > 0 {
+		name = rung.String()
+	}
+	return "due:" + assignmentID + ":" + name
 }
 
 // ─── Rolling replan ──────────────────────────────────────────────────────────
@@ -647,12 +698,41 @@ func parseBlockTime(dateStr, timeStr string, loc *time.Location) (time.Time, err
 	return time.Date(y, mo, d, h, m, 0, 0, loc), nil
 }
 
-// lookupWeather tries to get a 2-day forecast for Beijing (future: session setting).
-func (w *Worker) lookupWeather(ctx context.Context, locale string) string {
+// lookupWeather gets a 2-day forecast for the brief.
+//
+// # This path never picks a source and never probes
+//
+// It passes an empty id, which takes the first source that is currently usable,
+// and it is the ONE weather caller that cannot ask the model to choose: the
+// brief is a Chat with no Tools attached, so the model never sees a tool band
+// at all. Any "let the model decide" story is simply false here, and inventing
+// a fallback chain for it would re-introduce exactly what this batch deleted.
+//
+// It must also never act as a half-open probe. A deployment nobody is chatting
+// with makes exactly two weather calls a day; paying the cost of discovering
+// that a dead source recovered out of those two means a probe timeout delays a
+// brief that was otherwise ready to send. Recovery is discovered by somebody's
+// conversation — see adapters.Health.ShouldProbe.
+//
+// No source available means the brief simply has no weather line. That has
+// always been the behaviour and it is the right one: a missing sentence beats a
+// brief that arrives late or not at all.
+//
+// The location comes from the ladder in session_location.go, whose last rung is
+// silence. It used to be hardcoded to 北京 for every user anywhere, with
+// `// future: session setting` beside it — a confidently wrong forecast every
+// morning, which is worse than none, because "17°C and raining" is a sentence
+// somebody dresses by.
+func (w *Worker) lookupWeather(ctx context.Context, sid, locale string) string {
 	if w.s.weather == nil {
 		return ""
 	}
-	fc, err := w.s.weather.Lookup(ctx, domain.WeatherQuery{Location: "北京", Days: 2, Locale: locale})
+	place, _ := w.s.SessionLocation(ctx, sid)
+	if place == "" {
+		// No line rather than a guess. The brief has four other things to say.
+		return ""
+	}
+	fc, err := w.s.weather.Lookup(ctx, "", domain.WeatherQuery{Location: place, Days: 2, Locale: locale})
 	if err != nil {
 		return ""
 	}
@@ -835,6 +915,25 @@ type SessionPrefs struct {
 	// an airport. See timezone.go.
 	Timezone       string `json:"timezone,omitempty"`
 	TimezoneSource string `json:"timezoneSource,omitempty"`
+
+	// Location is where this user is, as free text a weather source can resolve
+	// ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+	// evening briefs, which query the weather without a model in the loop and
+	// therefore cannot ask anybody where to look.
+	//
+	// LocationSource mirrors TimezoneSource and carries the same rule: a client
+	// hint may fill in or update a detected value but must never overwrite what
+	// the user typed. Somebody who set their home city on purpose should not
+	// have it rewritten the first time they open the app on a train.
+	//
+	// ⚠️ Not a coordinate pair, and not derived from the timezone. Free text
+	// because every weather source in this project takes free text and resolves
+	// it itself — turning "Cambridge, MA" into a lat/lon here would mean this
+	// process owning a geocoder, and getting a different answer than the source
+	// would have. A timezone is not a location either: Asia/Shanghai covers a
+	// country.
+	Location       string `json:"location,omitempty"`
+	LocationSource string `json:"locationSource,omitempty"`
 }
 
 // DefaultPrefs returns the default (all-on) preferences.

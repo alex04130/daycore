@@ -10,7 +10,7 @@
 # that rots — they retire and rename on their own schedule. Rotating to a newer
 # upstream model is a one-line edit to `model:` and touches nothing else, which
 # only works if ids say what an entry is FOR rather than what is behind it today.
-# See models.example.yaml.
+# See internal/ai/seed/models.yaml — the copy `daycore install` writes.
 models:
   # ── Default chat (DeepSeek, OpenAI-compatible) ─────────────────────────────
   - id: chat

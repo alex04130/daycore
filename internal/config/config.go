@@ -5,6 +5,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
@@ -52,6 +54,11 @@ type Config struct {
 	// AI — model catalog + OAuth providers are loaded from these files by main.go.
 	ModelsConfigPath string
 	OAuthConfigPath  string
+	// ProvidersConfigPath declares external capability sources — weather,
+	// search, messaging channels. Boot-layer for the same reason as the two
+	// above: the process builds an HTTP client or looks up a registered factory
+	// out of every entry at startup.
+	ProvidersConfigPath string
 	// BlobStore selects the file-bus driver ("local", …; empty = no file bus).
 	// Every feature that needs one checks and degrades to saying so, because
 	// running without it is a supported configuration.
@@ -105,6 +112,7 @@ type Config struct {
 	// Weather — provider selection + keys. Empty keys fall back to the free
 	// default (open-meteo) with wttr.in as a chained fallback.
 	WeatherProvider   string
+	TavilyKey         string
 	QWeatherKey       string
 	OpenWeatherMapKey string
 
@@ -127,6 +135,21 @@ type Config struct {
 	// UsingDevSecrets is true when JWT/Cookie secrets fell back to the insecure
 	// public dev defaults (no real secret configured). main.go warns on it.
 	UsingDevSecrets bool
+
+	// GeneratedAdminToken is true when no ADMIN_TOKEN was supplied and one was
+	// invented for this process. main.go prints it — a generated credential
+	// nobody is told about is the same as no credential at all, except harder to
+	// diagnose.
+	GeneratedAdminToken bool
+}
+
+// randomToken makes a URL-safe 256-bit secret.
+func randomToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // Load reads .env (if present) then environment variables, applies defaults, and
@@ -152,6 +175,7 @@ func Load() (*Config, error) {
 		PublicBaseURL:           getEnv("PUBLIC_BASE_URL", "http://localhost:8080"),
 		ModelsConfigPath:        getEnv("MODELS_CONFIG", "config/models.yaml"),
 		OAuthConfigPath:         getEnv("OAUTH_CONFIG", "config/oauth.yaml"),
+		ProvidersConfigPath:     getEnv("PROVIDERS_CONFIG", "config/providers.yaml"),
 		PromptsDir:              getEnv("PROMPTS_DIR", ""),
 		BlobStore:               getEnv("BLOB_STORE", ""),
 		DataDir:                 getEnv("DATA_DIR", ""),
@@ -171,6 +195,7 @@ func Load() (*Config, error) {
 		OneBotToken:             getEnv("ONEBOT_TOKEN", ""),
 		WorkerDefaultTZ:         getEnv("WORKER_DEFAULT_TZ", "Asia/Shanghai"),
 		WeatherProvider:         getEnv("WEATHER_PROVIDER", "open-meteo"),
+		TavilyKey:               getEnv("TAVILY_API_KEY", ""),
 		QWeatherKey:             getEnv("QWEATHER_API_KEY", ""),
 		OpenWeatherMapKey:       getEnv("OPENWEATHERMAP_API_KEY", ""),
 	}
@@ -192,6 +217,32 @@ func Load() (*Config, error) {
 	}
 	if c.DBType == "" {
 		return nil, fmt.Errorf("DB_TYPE must not be empty")
+	}
+
+	// An unset ADMIN_TOKEN used to mean "the admin API is open outside
+	// production" (handlers_admin.go's old `return !IsProduction()`). That is an
+	// UNAUTHENTICATED configuration API on every dev box, every staging
+	// deployment, and every self-hosted instance whose owner never set APP_ENV —
+	// and it is the branch that would have been most dangerous under the planned
+	// degraded boot, where the whole point is to serve the console while storage
+	// is down.
+	//
+	// Generating one instead removes the open state entirely without making
+	// local development painful: it is printed once at startup, so getting in is
+	// a copy-paste, and there is never a moment when there is no credential.
+	// Production still refuses to invent one — a token nobody wrote down is a
+	// token nobody can rotate, and a deployment that means to be administered
+	// should say so.
+	if c.AdminToken == "" {
+		if c.IsProduction() {
+			return nil, fmt.Errorf("ADMIN_TOKEN is required in production")
+		}
+		tok, err := randomToken()
+		if err != nil {
+			return nil, fmt.Errorf("generate a development admin token: %w", err)
+		}
+		c.AdminToken = tok
+		c.GeneratedAdminToken = true
 	}
 	// In production, default the Secure cookie flag on unless the operator
 	// explicitly opted out — a forgotten SECURE_COOKIES must not silently ship

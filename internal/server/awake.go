@@ -110,6 +110,10 @@ func (s *Server) markAwake(sid string) {
 			s.log.Debug("rhythm: observe failed", "sid", sid, "day", day, "err", err)
 		}
 		s.foldAwakeMark(ctx, sid, now, cfg)
+		// The user is in the app. Anything queued for them — a Protector nudge
+		// made at four in the morning, a daemon suggestion — becomes visible
+		// now rather than at the moment it was made. See proposal_delivery.go.
+		s.deliverQueued(ctx, sid)
 	})
 }
 

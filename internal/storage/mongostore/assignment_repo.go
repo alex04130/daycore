@@ -25,6 +25,7 @@ type assignmentDoc struct {
 	HTMLURL        string     `bson:"html_url"`
 	Source         string     `bson:"source"`
 	Status         string     `bson:"status"`
+	RemindersOff   bool       `bson:"reminders_off"`
 	CreatedAt      time.Time  `bson:"created_at"`
 	UpdatedAt      time.Time  `bson:"updated_at"`
 }
@@ -34,7 +35,8 @@ func (d assignmentDoc) toDomain() *domain.Assignment {
 		ID: d.ID, SessionID: d.SessionID, CourseID: d.CourseID, CanvasID: d.CanvasID,
 		Title: d.Title, DueAt: d.DueAt, PointsPossible: d.PointsPossible,
 		Submitted: d.Submitted, Graded: d.Graded, Score: d.Score, HTMLURL: d.HTMLURL,
-		Source: d.Source, Status: d.Status, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
+		Source: d.Source, Status: d.Status, RemindersOff: d.RemindersOff,
+		CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
 
@@ -115,6 +117,21 @@ func (r assignmentRepo) UpsertByCanvasID(ctx context.Context, a *domain.Assignme
 func (r assignmentRepo) SetStatus(ctx context.Context, sessionID, id, status string) error {
 	res, err := r.c("assignments").UpdateOne(ctx, bson.M{"_id": id, "session_id": sessionID},
 		bson.M{"$set": bson.M{"status": status, "updated_at": time.Now().UTC()}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+// SetReminders silences or restores the deadline ladder for one item. Separate
+// from SetStatus because they mean different things: status is the planner
+// workflow, this is whether the fact track may speak.
+func (r assignmentRepo) SetReminders(ctx context.Context, sessionID, id string, on bool) error {
+	res, err := r.c("assignments").UpdateOne(ctx, bson.M{"_id": id, "session_id": sessionID},
+		bson.M{"$set": bson.M{"reminders_off": !on, "updated_at": time.Now().UTC()}})
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,79 @@
+# External capability sources — weather, web search, messaging channels.
+#
+# `daycore install` writes this file. Everything in it is BOOT-layer: the
+# process builds an HTTP client or looks up a registered implementation out of
+# each entry at startup, so a new value cannot change the thing already built.
+# Edit the file and restart.
+#
+# ── What the console CAN change, without touching this file ──────────────────
+#
+#   enabled       turn a source off without deleting its configuration
+#   description   the sentence the model is told about this source
+#   approved      whether that sentence is allowed into the prompt at all
+#
+# Those three are read fresh at each use, so they live in the provider_overrides
+# table and take effect immediately, on every instance. The console never writes
+# this file — partly because rewriting a YAML somebody also hand-edits loses
+# comments and ordering and races with them, and partly because `base_url` is
+# the SSRF entrance: a base_url editable from a web page lets a compromised
+# console point this backend at an internal address and read the answer back out
+# through a forecast the assistant repeats to the user.
+#
+# ── The two formats ─────────────────────────────────────────────────────────
+#
+#   format: builtin   `impl` names an implementation compiled into this binary
+#   format: http      `base_url` is an external adapter speaking the protocol in
+#                     docs/specs/provider-protocol.md
+#
+# ── Deleting this file ──────────────────────────────────────────────────────
+#
+# Perfectly fine. With no file, the defaults below are synthesised from the
+# environment — the free sources always, and a keyed one whenever its key is
+# set. That is exactly what deployments had before this file existed.
+
+weather:
+  # Free, no key, worldwide.
+  - id: open-meteo
+    format: builtin
+    impl: open-meteo
+
+  # Free, no key. A second opinion rather than a fallback: with more than one
+  # source configured, the model picks per question and a failure is reported
+  # as a failure. There is deliberately no chain — the previous release had one,
+  # and when the primary failed it answered from the other source under the
+  # primary's name, silently, with the error discarded.
+  - id: wttr
+    format: builtin
+    impl: wttr
+
+  # Keyed sources. Uncomment once the environment variable is set; a source
+  # whose key is missing is refused at startup with a reason rather than
+  # quietly falling back to a free one.
+  # - id: qweather
+  #   format: builtin
+  #   impl: qweather
+
+  # An external adapter. Anything that speaks the protocol works, in any
+  # language, on any machine.
+  # - id: my-weather
+  #   format: http
+  #   base_url: https://wx.example.com
+  #   token_env: MY_WEATHER_TOKEN
+  #   description:
+  #     zh-CN: 覆盖东亚，逐小时，问本地天气时优先用它
+  #     en-US: East Asia, hourly; prefer it for local forecasts
+  #   # ⚠️ A description does NOT approve itself. It reaches the model only
+  #   # after somebody ticks "approved" in the console, which records the
+  #   # approval against a hash of this exact text — editing it revokes that.
+
+search:
+  # No key, always available.
+  - id: duckduckgo
+    format: builtin
+    impl: duckduckgo
+
+  # - id: tavily
+  #   format: builtin
+  #   impl: tavily          # needs TAVILY_API_KEY
+
+channels: []

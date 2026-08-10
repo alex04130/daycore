@@ -112,6 +112,13 @@ func (s *Store) Locales() domain.LocaleRepository     { return localeRepo{s} }
 // ε — the ownership half of the file bus.
 func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRepo{s} }
 
+// θ-F4b — the runtime half of configuration layering.
+func (s *Store) Settings() domain.SettingRepository { return settingRepo{s} }
+func (s *Store) Roles() domain.RoleRepository       { return roleRepo{s} }
+func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
+	return providerOverrideRepo{s}
+}
+
 func (s *Store) Ping(ctx context.Context) error { return s.client.Ping(ctx, nil) }
 func (s *Store) Close() error                   { return s.client.Disconnect(context.Background()) }
 

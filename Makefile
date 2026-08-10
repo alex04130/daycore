@@ -1,6 +1,7 @@
-.PHONY: help run build test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
+VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -11,12 +12,35 @@ run: ## Run the server (SQLite by default)
 build: ## Build a static binary into bin/
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o $(BIN) ./cmd/daycore
 
+build-lite: ## Build the lite binary + its data pack into dist/
+	@# The lite binary embeds nothing, so the pack is not optional packaging —
+	@# it is half the artifact. Shipping one without the other produces a binary
+	@# that cannot start, which is the failure this whole build target exists to
+	@# make impossible to do by accident.
+	CGO_ENABLED=0 go build -tags lite -ldflags="-s -w" -o dist/daycore-lite ./cmd/daycore
+	rm -rf dist/data && mkdir -p dist/data
+	cp -r internal/resources/data/prompts internal/resources/data/seed dist/data/
+	tar czf dist/daycore-data-$(VERSION).tar.gz -C dist/data .
+	@echo "dist/daycore-lite + dist/daycore-data-$(VERSION).tar.gz"
+	@echo "unpack the pack next to the binary, or point DAYCORE_DATA_DIR at it"
+
+# The two DSNs the SQL conformance suite connects with.
+#
+# `?=` so an existing environment variable WINS. It matters more than it looks:
+# a developer machine that already runs a Postgres or a MySQL for something else
+# has those ports taken, and the daycore containers land on 3307 or 5433. Before
+# this, `make test-sql` overrode whatever was exported and produced 46 identical
+# authentication failures — which reads exactly like a broken suite.
+PG_TEST_DSN ?= postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable
+MYSQL_TEST_DSN ?= root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true
+
 test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
-	@echo "needs a postgres on :5432 and a mysql on :3306 — each case creates and drops its own schema/database"
+	@echo "each case creates and drops its own schema/database; export PG_TEST_DSN / MYSQL_TEST_DSN to point elsewhere"
 	@echo "  docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=daycore -e POSTGRES_USER=daycore -e POSTGRES_DB=daycore postgres:16"
 	@echo "  docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=daycore -e MYSQL_DATABASE=daycore mysql:8"
-	PG_TEST_DSN='postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable' \
-	MYSQL_TEST_DSN='root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true' \
+	@echo "  pg=$(PG_TEST_DSN)"
+	PG_TEST_DSN='$(PG_TEST_DSN)' \
+	MYSQL_TEST_DSN='$(MYSQL_TEST_DSN)' \
 	go test -count=1 -run 'TestConformancePostgres|TestConformanceMySQL|TestRealDialectNamespaces' -v ./internal/storage/sqlstore/
 
 test-models: ## Live tool-calling check against real models (costs money; never in CI)
@@ -48,6 +72,9 @@ api-lock: ## Freeze the current contract surface at the current APIVersion.APIMi
 
 api-surface: ## Regenerate the route table in docs/API_SURFACE.md from the registry
 	go test ./internal/server/ -run TestRouteSurfaceDoc -update
+
+config-doc: ## Regenerate the layering tables in docs/CONFIG.md from internal/config
+	go test ./internal/config/ -run TestConfigDocIsCurrent -update
 
 vet: ## go vet
 	go vet ./...

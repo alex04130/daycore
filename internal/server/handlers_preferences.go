@@ -45,6 +45,14 @@ type sessionPrefsPatch struct {
 	// their device reports from then on. Send "" to go back to following the
 	// device (and, until it reports, the deployment default).
 	Timezone *string `json:"timezone"`
+	// Location is where the briefs look up the weather. Same shape as Timezone
+	// and the same rule: setting it outranks whatever the client reports from
+	// then on, and "" goes back to following the client.
+	//
+	// Free text, not a coordinate: every weather source in this project resolves
+	// a place name itself, and geocoding here would mean owning a geocoder and
+	// getting a different answer than the source would have.
+	Location *string `json:"location"`
 }
 
 // sessionPrefs loads a session's preferences, falling back to defaults (the
@@ -174,6 +182,20 @@ func (s *Server) handleSessionPreferences(w http.ResponseWriter, r *http.Request
 		default:
 			tzChanged = prefs.Timezone != tz
 			prefs.Timezone, prefs.TimezoneSource = tz, TZSourceUser
+		}
+	}
+	if patch.Location != nil {
+		loc := strings.TrimSpace(*patch.Location)
+		switch {
+		case loc == "":
+			// Back to following the client. Clearing the source is what lets a
+			// later hint take effect again.
+			prefs.Location, prefs.LocationSource = "", ""
+		case len([]rune(loc)) > 128:
+			s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_location", "err.sessionPreferences.bad_location")
+			return
+		default:
+			prefs.Location, prefs.LocationSource = loc, LocSourceUser
 		}
 	}
 	if patch.MaterialCategories != nil {

@@ -53,7 +53,7 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 	locale := s.requestLocale(r)
 	prompt, err := s.prompts.Render(ctx, ai.PromptTravelSuggest, locale, ai.TravelSuggestData{

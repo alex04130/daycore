@@ -36,7 +36,7 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.aIMood.bad_request")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
 	sys, err := s.prompts.Render(ctx, ai.PromptMood, s.requestLocale(r), ai.MoodData{

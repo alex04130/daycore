@@ -102,7 +102,7 @@ func (s *Server) handleInboxProcess(w http.ResponseWriter, r *http.Request) {
 	if !s.rateLimit(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 	locale := s.requestLocale(r)
 	cls, err := s.classifyInbox(ctx, sid, locale, text)
@@ -219,7 +219,7 @@ func (s *Server) processInboxImage(w http.ResponseWriter, r *http.Request, sid, 
 	if !s.rateLimit(w, r) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AIRequestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 	locale := s.requestLocale(r)
 	prompt, err := s.prompts.Render(ctx, ai.PromptFoodRecognize, locale, ai.FoodRecognizeData{})

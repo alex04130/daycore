@@ -40,6 +40,22 @@ type Store interface {
 	Rhythm() RhythmRepository
 	Locales() LocaleRepository
 
+	// Settings is the runtime half of the configuration layering: the boot half
+	// stays in the environment because it built something already. See
+	// setting.go and internal/config/layer.go.
+	Settings() SettingRepository
+
+	// ProviderOverrides is the console-editable half of an external capability
+	// source. The other half lives in config/providers.yaml and is boot-layer —
+	// see provider.go for the line between them and why the console never
+	// writes the file.
+	ProviderOverrides() ProviderOverrideRepository
+
+	// Roles is the console permission model: named permission sets, and who is
+	// in them. A role with no permissions is a plain user group — which is what
+	// a commercial tier is. See role.go.
+	Roles() RoleRepository
+
 	// Attachments is the ownership half of the file bus: internal/blob maps refs
 	// to bytes and knows nothing about sessions, so these rows are what makes a
 	// ref safe to resolve. See attachment.go.
@@ -124,6 +140,22 @@ type UserRepository interface {
 	// IncrementTokenVersion bumps the user's token version, invalidating every
 	// previously issued JWT (used on logout).
 	IncrementTokenVersion(ctx context.Context, userID string) error
+	// SetOwner marks or unmarks the super-administrator flag.
+	//
+	// ⚠️ A NARROW setter, and it must stay one. Upsert takes a whole *User and
+	// the OAuth callback builds one out of what the provider returned — so the
+	// moment is_owner appears in Upsert's column list, logging in becomes a
+	// privilege escalation write. The same arrangement already protects
+	// TokenVersion and DataSessionID; unlike those, this one has a conformance
+	// case pinning it across all four back ends.
+	SetOwner(ctx context.Context, userID string, owner bool) error
+	// List returns users for the console, newest first, capped.
+	//
+	// It exists because "who can export the database" has to be answerable, and
+	// every safety rule in the permission model — refusing to remove the last
+	// owner, showing how many people a role edit affects — assumes the set can
+	// be enumerated.
+	List(ctx context.Context, limit int) ([]User, error)
 }
 
 type AuthRepository interface {
@@ -217,4 +249,9 @@ type AssignmentRepository interface {
 	// agent-created assignment means the row goes away, not that it gets
 	// dismissed — dismissal is a user-visible workflow state, not an erasure.
 	Delete(ctx context.Context, sessionID, id string) error
+	// SetReminders silences or restores the deadline ladder for one item —
+	// STRATEGY §1.3's "the fact track can only be turned off one item at a
+	// time". Separate from SetStatus: status is the planner workflow, this is
+	// whether the fact track may speak.
+	SetReminders(ctx context.Context, sessionID, id string, on bool) error
 }

@@ -241,13 +241,13 @@ func TestVersionRule(t *testing.T) {
 		wantErr string
 	}{
 		{"nothing changed, nothing bumped", both, 1, 0, ""},
-		{"new operation without a bump", plusOne, 1, 0, "bump version.APIMinor to 1"},
+		{"new operation without a bump", plusOne, 1, 0, "raise the MINOR in internal/version/version.go"},
 		{"new operation with the batch's one bump", plusOne, 1, 1, ""},
 		{"a second new operation in the same batch needs no second bump", plusOne, 1, 1, ""},
 		{"new operation, major bumped instead", plusOne, 2, 0, ""},
-		{"removed operation is breaking", minusOne, 1, 1, "bump version.APIVersion to 2"},
+		{"removed operation is breaking", minusOne, 1, 1, "raise the MAJOR in internal/version/version.go"},
 		{"removed operation with a major bump", minusOne, 2, 0, ""},
-		{"renamed operationId counts as removal", renamed, 1, 1, "bump version.APIVersion to 2"},
+		{"renamed operationId counts as removal", renamed, 1, 1, "raise the MAJOR in internal/version/version.go"},
 		{"version went backwards", both, 0, 9, "went backwards"},
 		{"minor went backwards", both, 1, 0, ""},
 		{"field-only additive change (surface identical, minor bumped)", both, 1, 1, ""},

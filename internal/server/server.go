@@ -17,7 +17,8 @@ import (
 	"daycore/internal/config"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
-	"daycore/internal/search"
+	"daycore/internal/weather"
+	"daycore/internal/websearch"
 )
 
 // Deps are the constructed dependencies the server needs.
@@ -32,7 +33,14 @@ type Deps struct {
 	Cookies  *auth.CookieSigner
 	OAuth    *auth.OAuthManager
 	Searcher domain.Searcher
-	Weather  domain.WeatherProvider
+	// Weather and WebSearch are SETS of sources, not single providers.
+	//
+	// domain.WeatherProvider is untouched and still means one source — the four
+	// built-in ones implement it exactly as before. What changed is that the
+	// server holds the set, because a shared cache has to receive (id, query)
+	// together to key correctly and Lookup(ctx, q) cannot express that.
+	Weather   *weather.Sources
+	WebSearch *websearch.Sources
 	// Blobs is the file bus. nil is a supported configuration — every feature
 	// that needs bytes checks and says so.
 	Blobs  blob.Store
@@ -53,9 +61,9 @@ type Server struct {
 	log         *slog.Logger
 	limiter     *rateLimiter
 	authLimiter *rateLimiter
-	weather     domain.WeatherProvider
+	weather     *weather.Sources
 	blobs       blob.Store
-	search      *search.Client
+	search      *websearch.Sources
 	searcher    domain.Searcher
 	decisions   *decisionRegistry
 	worker      *Worker // set by main.go after construction
@@ -80,6 +88,33 @@ type Server struct {
 	tickStop  sync.Once
 	ticksDone chan struct{}
 	tickWG    sync.WaitGroup
+
+	// runtimeCfg is cfg with the stored runtime overrides applied (θ-F4b).
+	//
+	// A separate snapshot rather than mutating cfg: cfg is shared by everything
+	// constructed from it at boot, and rewriting its fields under a live server
+	// races with every reader. Published atomically, so a reload is one pointer
+	// swap and an in-flight request keeps the snapshot it started with.
+	//
+	// ⚠️ Read RUNTIME-classified fields through s.runtime(), never s.cfg —
+	// TestRuntimeFieldsAreReadThroughTheSnapshot fails the build otherwise,
+	// because a runtime knob read from the boot config is a console setting the
+	// process silently ignores.
+	runtimeCfg atomic.Pointer[config.Config]
+
+	// Degraded boot (see degraded.go): storage was unavailable at startup, so
+	// this process serves only what needs no database.
+	degraded degraded
+
+	// staticRoot is the frontend directory this process is ACTUALLY serving,
+	// which is not the same as the one configured: staticHandler returns nil
+	// when the directory has no index.html, and STATIC_DIR keeps its default
+	// whether or not anything was ever built there. Logging cfg.StaticDir
+	// instead announced "static: web/frontend/dist" on every API-only
+	// deployment — a startup line naming a directory that does not exist, in
+	// the one deployment shape (front and back deployed separately) the project
+	// is moving towards.
+	staticRoot string
 
 	// Leader election for the background worker (see leader.go). instanceID is
 	// generated on first use rather than in New so that the zero value keeps
@@ -115,6 +150,53 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	}
 }
 
+// runtime is the current configuration: boot values with the stored runtime
+// overrides applied. Never nil — it falls back to the boot config, which is what
+// a degraded process and every test get.
+func (s *Server) runtime() *config.Config {
+	if c := s.runtimeCfg.Load(); c != nil {
+		return c
+	}
+	return s.cfg
+}
+
+// ReloadSettings rebuilds the runtime snapshot from the overrides table.
+//
+// Called at boot and after every console write. Best-effort by design: a
+// database that cannot be read is a deployment already in trouble, and refusing
+// to start over it would mean the console — the thing that could fix it — is
+// also gone. The seeds are still correct in that case; they are just not
+// overridden.
+func (s *Server) ReloadSettings(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	rows, err := s.store.Settings().All(ctx)
+	if err != nil {
+		return err
+	}
+	overrides := make(map[string]string, len(rows))
+	for _, r := range rows {
+		overrides[r.Key] = r.Value
+	}
+	next, problems := s.cfg.Apply(overrides)
+	for _, p := range problems {
+		// A stored row that no longer applies — left by an older build, or by a
+		// hand-written INSERT. Logged rather than fatal: one bad row must not
+		// cost the operator every other override they set.
+		s.log.Warn("ignoring a stored setting", "err", p)
+	}
+	s.runtimeCfg.Store(next)
+	// A runtime knob with a setter must actually be pushed to whatever holds it,
+	// or it is a console setting the process ignores — the exact failure the
+	// classification table exists to prevent. WEATHER_PROVIDER is the first
+	// entry to leave the notHotYet list, and this line is why it could.
+	if s.weather != nil {
+		s.weather.SetDefault(next.WeatherProvider)
+	}
+	return nil
+}
+
 // SetWorker attaches the background worker so handlers (e.g. channel verify) can
 // schedule proactive jobs for a session on demand.
 func (s *Server) SetWorker(w *Worker) { s.worker = w }
@@ -126,7 +208,7 @@ func New(d Deps) *Server {
 		prompts: d.Prompts, hasher: d.Hasher, tokens: d.Tokens, cookies: d.Cookies,
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
-		weather:     d.Weather, blobs: d.Blobs, search: search.New(), searcher: d.Searcher,
+		weather:     d.Weather, blobs: d.Blobs, search: d.WebSearch, searcher: d.Searcher,
 		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,
@@ -151,8 +233,12 @@ func (s *Server) Handler() http.Handler {
 	// This used to be one hundred mux.HandleFunc calls in this function, which
 	// made it the single most contended file in the repo — twelve parallel work
 	// items all had to edit the same list.
+	//
+	// ⚠️ Through adminGate, never straight into the mux. It is what applies the
+	// permission each /api/admin/ route declares, and registering past it would
+	// publish that route with no check at all — see admin_gate.go.
 	for _, g := range routeGroups {
-		g.register(s, mux)
+		g.register(s, adminGate{s: s, mux: mux})
 	}
 
 	// static frontend (SPA) — stays here because it is conditional on
@@ -162,10 +248,13 @@ func (s *Server) Handler() http.Handler {
 	// goes in.
 	if h := s.staticHandler(); h != nil {
 		mux.Handle("/", h)
+		s.staticRoot = s.cfg.StaticDir
 	}
 
 	// middleware chain (outermost first)
-	return s.recoverMW(s.requestIDMW(s.loggingMW(s.corsMW(s.sessionMW(s.userMW(s.dataSessionMW(mux)))))))
+	// degradedMW sits inside logging (so refusals are visible) and OUTSIDE the
+	// three identity middlewares (which read the store). See degraded.go.
+	return s.recoverMW(s.requestIDMW(s.loggingMW(s.corsMW(s.degradedMW(s.sessionMW(s.userMW(s.dataSessionMW(mux))))))))
 }
 
 // ─── context plumbing ────────────────────────────────────────────────────────
@@ -220,7 +309,16 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string,
 
 func (s *Server) requestLocale(r *http.Request) string {
 	sid := sessionIDFrom(r.Context())
-	if sid == "" {
+	// s.store is nil in a degraded process, and this is called from the FIRST
+	// line of handlers whose own degraded check is three lines further down —
+	// handleAdminConfigPut is exactly that shape. So a handler that had
+	// carefully considered degraded mode still panicked before reaching the
+	// consideration, and recoverMW turned it into a 500 that said nothing.
+	//
+	// The deployment default is the right answer here rather than an error: a
+	// language is not something to fail a request over, and in a degraded
+	// process there is no stored preference to read anyway.
+	if sid == "" || s.store == nil {
 		return s.defaultLocales.Resolve("", r.Header.Get("Accept-Language"))
 	}
 	sess, err := s.store.Sessions().Get(r.Context(), sid)

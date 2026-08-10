@@ -366,6 +366,31 @@ func WriteLock(root string, bundled []byte) error {
 // CheckVersion applies the bump rule. It lives in the tool rather than only in
 // the test so `-check` enforces it too — the rule is part of what the contract
 // is, not a property someone remembered to test.
+//
+// ⚠️ The two numbers it compares are now DERIVED from the build version
+// (2026-08-09): there is one number to move, in internal/version/version.go.
+//
+// # What this gate means BEFORE the contract is frozen, which is today
+//
+// Merging the contract version into the build version created a tension worth
+// naming, because the obvious reading of this gate is wrong right now:
+//
+//	the build version is a BATCH MARKER — it moves when a whole plan is done
+//	this gate wants a bump whenever an operation is added
+//
+// Taken together those would move the version several times per batch, which
+// spends the only marker there is for "that plan is finished" on a Tuesday.
+//
+// So before η SPEC-FREEZE the correct action when this fires is **`make
+// api-lock`**, not a version bump. The gate's job in this period is narrow and
+// still worth having: *did you remember to update the openapi shard?* — and the
+// bidirectional route↔spec check in internal/server/routes_test.go already
+// answers that, so this is the belt to its braces.
+//
+// AFTER the freeze the same code becomes a ratchet: the lock stops being
+// refreshed casually, and a surface change then genuinely does require the
+// version to move, because at that point somebody is negotiating against it.
+// Nothing here changes on that day except the habit.
 func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
 	added, removed := diffOps(lock.Operations, current)
 
@@ -382,13 +407,13 @@ func CheckVersion(lock Lock, apiVersion, apiMinor int, current []string) error {
 		// generated client's function is gone, which a client cannot tell apart
 		// from removal.
 		if apiVersion <= lock.APIVersion {
-			return fmt.Errorf("these operations disappeared since contract %d.%d, which is breaking — bump version.APIVersion to %d:\n  %s",
+			return fmt.Errorf("these operations disappeared since contract %d.%d, which is breaking — raise the MAJOR in internal/version/version.go (to %d.x) and run `make api-lock`:\n  %s",
 				lock.APIVersion, lock.APIMinor, lock.APIVersion+1, strings.Join(removed, "\n  "))
 		}
 	case len(added) > 0:
 		if apiVersion == lock.APIVersion && apiMinor == lock.APIMinor {
-			return fmt.Errorf("%d new operations since contract %d.%d — bump version.APIMinor to %d (once per batch, not once per change):\n  %s",
-				len(added), lock.APIVersion, lock.APIMinor, lock.APIMinor+1, strings.Join(added, "\n  "))
+			return fmt.Errorf("%d new operations since contract %d.%d — raise the MINOR in internal/version/version.go (to %d.%d) and run `make api-lock`. Once per batch, not once per change:\n  %s",
+				len(added), lock.APIVersion, lock.APIMinor, lock.APIVersion, lock.APIMinor+1, strings.Join(added, "\n  "))
 		}
 	}
 	// Surface unchanged deliberately does NOT mean "no bump allowed": additive

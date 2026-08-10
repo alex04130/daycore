@@ -8,7 +8,7 @@
 |---|---|---|
 | chat.go | ChatThread{Summary 滑窗摘要, Archived}, ChatMessage{ToolEvents, Status, **Attachments**} | `Attachments` **不是列**，读时从 `attachments` 表批量水合 |
 | companion.go | Message, Role 常量(user/assistant/system/tool), CompanionMemory | |
-| courses.go | Course, Assignment{Source: canvas/manual; Status: pending/planned/done/dismissed} | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文 |
+| courses.go | Course, Assignment{Source, Status, **RemindersOff**} + **DeadlineRungs/DeadlineRungFor**（事实轨阶梯） | Assignment 与 dayplan **无外键**，只作 auto-plan LLM 上下文；`RemindersOff` 与 `status=dismissed` 有意分开，见 STRATEGY §1.3 |
 | material.go | Material{Category, Title/Summary/Body/Source/MimeType/StorageRef/Tags} | ⚠️ MaterialRepository 的 ctx 参数是 `interface{}` |
 | material_category.go | MaterialCategory 注册表（10 类，note/diet/health/academic/travel 默认开）+ MaterialCategoryByID | 加类别 = 此文件加一条目（含 `Names` 与 `Hints`，**两者都要每种 Supported locale 齐全**，见下「Go 侧显示名的多语言机制」）；写侧枚举校验在 handlers_materials_full.go `normalizeCategory`（空→note，未知→400；读侧不拦 legacy 自由文本）；会话级开关在 SessionPrefs.MaterialCategories |
 | plan.go | DayPlan, TimeBlock, BlockType, TimeMode(floating/fixed/local), Origin(auto/manual/rule), **LockLevel(""/none/soft/hard)** | 见下「块的锁定与重捞字段」 |
@@ -24,6 +24,7 @@
 | lock.go | LockLevel 常量 + 派生规则 | 配 `api/lock-rules.json` 契约夹具 |
 | mood_kind.go | 心情注册表（12 种 + valence） | 存 id 不存标签 —— 多语言扩展的前提 |
 | attachment.go | Attachment + AttachmentRepository | 文件总线的**所有权那一半**，见下「附件与文件总线」 |
+| setting.go | Setting + SettingRepository | 运行时配置覆盖（θ-F4b）；**部署级不是会话级**，见下「运行时配置覆盖表」 |
 | tempcontext.go / channel.go / feedback.go / errors.go | TempContext / ChannelBinding / FeedbackLog / 哨兵错误 | |
 
 ## 存储后端（4 个：sqlite/postgres/mysql/mongo）
@@ -48,7 +49,7 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 这个测试直接读三个方言 `Migrations()` 的返回值做**静态比对** —— 它检查的是 DDL 字符串自身的性质，不需要跑引擎。它**不能替代真机**：静态比对只能看出三份 DDL 互相不一致，看不出其中任何一份是否合法。
 
-✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 33 张表 DDL 全部合法（三方言表名集合完全一致）、42 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件。**
+✅ 它诞生时「只有 sqlite 被真机测过」，这个洞放跑过三次真事故（见下）。**2026-07-29 起 pg 与 MySQL 都已真机验证**（`conformance_real_test.go`，本机 PostgreSQL 16.14 + MySQL 8）：两边各 34 张表 DDL 全部合法（三方言表名集合完全一致）、43 例行为套件全过、原生全文索引（tsvector+GIN / FULLTEXT ngram）建得起来且能查。**四个后端至此全部真机过套件**，最近一次全量复跑 2026-08-08（θ-F4b 的 `settings`）。
 
 | 检查 | 挡住什么 |
 |---|---|
@@ -157,6 +158,52 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 
 **TTL 默认值**（`ProposalExpiry()`，均可配置）：决策卡 45s / 异步 90s · 先斩后奏撤销窗口 2h · 普通 L2 卡 6h **且不越当地午夜**（今天的事不该明天还挂着）· L1 占位到它所指时段的开始时刻（§4 明写，不可调）· 晨卡到当地 12:00（共识 17，不可调）。
 
+## 提案的生命周期（ζ½，2026-08-07）
+
+`Expire` / `Supersede` / `Prune` 三个方法**全部零生产调用方**。后果从外面完全看不见，这正是它危险的地方：
+
+- 过期的卡永远停在 `pending`。`Prune` 只删终态（这是对的 —— 超过 cutoff 的 pending 行是 `Expire` 还没扫到的，删它等于把用户还欠着的卡抹掉），于是**什么都没被删过，表在无界增长**。
+- 没人察觉，因为堆叠查询按 `expires_at` 过滤：用户看到的卡一直是对的。唯一的症状是磁盘。
+- **`Resolution` 从不被写入**，于是「他没回答」与「我们根本没问对」在账本里是同一行 —— 而共识 15 整个建立在「沉默 ≠ 拒绝」这个区分上。
+
+现在有一个 5 分钟一跑的清扫（`proposal_sweep.go`）：先 `Expire` 后 `Prune`。**用 `everyTickNow`**，第一跳在启动时 —— 重启正是有积压的时刻。
+
+**leader 门控，但不 claim 门控**：这是跨会话的清扫，没有 `(session, job, run_key)` 可占，且跑两遍是幂等的（`Expire` 只动还 pending 的行，`Prune` 只删还在的行）。lease 是节流，而在工作天然可重复时节流就够了 —— 对比早报，跑两遍是两次推送，那里的场次行在做真活。
+
+### 为什么**没有**针对决策卡的重启清扫（差点为它给四个后端加方法）
+
+`KindDecision` 是唯一绑在活 goroutine 上的：建它的那轮 agent 阻塞在一个进程内 channel 上。重启后 channel 没了，于是显而易见的担心是「行永远 pending，客户端还显示着一张按了没反应的卡」。
+
+**它不会发生**，理由值得写下来：`persistDecision` 把 `ExpiresAt` 设成 agent 自己的等待预算（同步 45 秒、异步 90 秒），所以一张被孤立的决策卡**在任何东西能看它之前就已经过期了**。过期 = `Deliverable()` 为假 = 堆叠查询排除它，用户根本看不到；然后上面那个清扫像处理任何过期一样把它结算成 expired/silence。
+
+⚠️ **会打破这条的改动**：给决策卡一个长 TTL。一旦卡可以活得比造它的那轮长，它就不再自我结算 —— 而 `ProposalFilter` **表达不了跨会话清扫**（`session_id` 在过滤器构造里是无条件的，有意为之：「filter 永不跨用户」）。那时需要的是一个新的仓储方法、四个后端、一条行为用例。
+
+### 投递：造出来 ≠ 给他看过（`proposal_delivery.go`）
+
+生成不限流、投递才是闸门（共识 15）。提案从有东西决定造它的那一刻就存在；它变成**用户被展示过的东西**，是在 `DeliveredAt` 被盖上的时候 —— 堆叠查询要的正是这个戳。这是两个不同的事实，而两者之间的空隙就是这个产品的礼貌所在。
+
+**Protector 是让它具体起来的那个例子**：它凌晨四点触发，因为那是有人已经醒了二十小时的时刻。当场盖上「已投递」，意味着这张卡在凌晨四点被「展示」了 —— 中午读到时，它是一句关于昨天的话。**排队**则等到用户真的打开 app；如果在那之前就过期了，它**从未被展示过地作废**。这是诚实的结果：它说的那个时刻已经过去了。
+
+| 生产者 | 造出来就投递？ | 为什么 |
+|---|---|---|
+| 决策卡 | ✅ | 那一轮 agent **此刻正阻塞在它上面** |
+| 标记冲突 | ✅ | 用户**在这个请求里**刚问的就是这个撞车 |
+| Protector | ❌ 排队 | 按时钟触发，不是对用户刚做的事的回应 |
+
+**投递时才 `Supersede`**（不是创建时）：这才让一个生产者能在用户离开期间持续生产，而不堆出 N 份同一条提醒 —— 也正是 `Supersede` 放过已投递卡的原因，退休一张正在被读的卡等于让它在眼前消失。
+
+**触发点是 `markAwake` 的准入门**：一个带认证的数据请求就是「app 开着」，而插件的导入路径走的是另一套认证、正确地不算数 —— 与节律信号同一条纯度论证。
+
+**通道推送不受这个门管**：投递管的是 app 里出现什么，推给 QQ 是让不在 app 里的人知道这件事的唯一办法。对 Protector 尤其站得住：这条关怀的前提就是这个人此刻确实醒着。
+
+⚠️ **这段推翻了一个 commit 之前的判断**。当时写「投递调度有意不做，因为没有任何东西排队」—— 对当时每一个生产者都成立，而在**第一个按时钟触发而非响应用户动作的生产者**出现的那一刻就不成立了。活下来的规则是「不要造没有调用方的机制」；由它推出的那个结论下早了。记在这里而不是悄悄删掉，因为「我们决定不做 X」正是那种活得比它的理由更久的笔记。
+
+### 顺带修掉：`handleProposalRespond` 从不按契约重试
+
+`Update` 是乐观并发，接口注释自己写着「调用方 re-read 后重试 `ErrConflict`」，而这个 handler 没有。后果：两个标签页回答同一张卡、或者投递扫描恰好在回答那个请求上盖 `deliveredAt`，用户都会拿到一个 500 —— 而事情其实成了。现在有界重试（3 次）：反复冲突就不再是争用，是别处有东西在循环写，无限重试会把它藏起来。
+
+**保留期 90 天**：够回答「上周它建议了什么、我说了什么」，那是足迹页的全部工作。pending 行任何年龄都不删。
+
 ## 默契 rapport（原「胆量系数」，2026-07-26）
 
 `internal/rapport/`，纯函数零依赖。**分数不是事实，是账本的读数** —— 任何缓存都必须能靠重放账本重建，所以 `Replay`（全量）与 `Folder`（增量）走同一份折叠逻辑，两份实现迟早会分叉，那时缓存就凌驾于账本之上了，正好反了。
@@ -252,6 +299,40 @@ domain 加 struct → repository.go 加接口 + Store 组合 → sqlstore 加文
 | 已绑定的附件不能单独删 | 它是那条消息的一部分了；出口是删消息 |
 
 ⚠️ **`Material.StorageRef` 仍然没有生产方**。ROADMAP「待拍板」第 1 条（签名 ref vs `blobs` 表）的**落地那一半就是这张表**：持久化的东西写行。瞬态签名 ref 那一半仍未做 —— 下载一律由 `GET /api/files/{id}` 代理，`blob.SignedURL` 至今零调用方。
+
+## 运行时配置覆盖表（`settings`，θ-F4b，2026-08-07）
+
+一张两列半的小表：`setting_key` / `value` / `updated_at`。分层规则、端点语义、`notHotYet` 名单在 [CONFIG.md](CONFIG.md)，这里只记数据层这一侧的四个决定。
+
+| 决定 | 为什么 |
+|---|---|
+| **列叫 `setting_key` 不叫 `key`** | `KEY` 是 MySQL 保留字。照 `rows_json` / `start_time` 的先例改名，不用反引号 —— 反引号只在 MySQL 里合法，三方言 DDL 是共用同一份 SQL 写出来的 |
+| **主键是 Config 的**字段名**，不是环境变量名** | 字段名才是代码读的、也是 `config.Apply` 反射匹配的东西。环境变量是运维对同一样东西的叫法，住在分类表里 |
+| **值一律存字符串** | 表因此不必建模类型系统。解析在 `config.Apply`，那是唯一知道某个字段是什么类型的地方，也是环境变量解析所在的同一处 |
+| **部署级，不带 session_id** | 这是运维的设置，运维视角只有一个。与本仓其余几乎所有表相反，所以值得写下来 —— 别照抄别的 repo 的会话收口 |
+
+**边界**：启动期旋钮与密钥**永不进这张表**（端点拒收，`Apply` 读到也再拒一次）。密钥不进的理由与端点那条不同：这张表凡有数据库访问权的东西都读得到，一把签名密钥躺在这里就是它躺在每一份备份里。
+
+**取舍**：`All` 没有过滤参数。表小、读得稀（启动一次 + 每次 PUT 后一次），加一个 `Get(key)` 只会多一条要在四个后端保持一致的行为。
+
+行为套件加了 1 例（`Setting/OverrideRoundTripAndReset`，第 43 例）：覆盖写入即读回、重复写是更新不是插入、`""` 与「删掉」是两回事、删不存在的 key 幂等、空 key 拒收。
+
+## 权限组与成员（`roles` / `role_members` / `users.is_owner`，2026-08-10）
+
+两张表 + 一个列。权限清单本身**不在数据库里**（它是这个 build 定义了什么，见 [AUTH.md](AUTH.md)），库里存的只有「哪个组授予哪几条」和「谁在哪个组」。
+
+| 决定 | 为什么 |
+|---|---|
+| **一张表既是权限组也是用户组** | 唯一的区别是 `permissions_json` 空不空。拆成两张表就要两张成员表、两套分配端点，以及每个调用点都要判断在说哪一种。而且合成一张之后，**提权边界是可校验的**：`len(Permissions) == 0` 当场求值，没有会过期的标志位 |
+| **列叫 `role_name` / `permissions_json`** | 照 `setting_key`、`rows_json` 的先例：挑一个三个引擎都不保留、且在复合主键里不含糊的拼法，而不是去引用一个每种方言引法都不同的标识符 |
+| **`is_owner` 是 `User` 上的一个列，不是一个「拥有全部权限」的角色** | 新加一条权限，当天每个 owner 就都有 —— 零数据变更、零迁移。⚠️ **它有意不走 `Upsert`**：`Upsert` 收整个 `*User`，而 OAuth 回调是拿厂商返回的东西拼一个出来 —— `is_owner` 一进 `Upsert` 的列表，登录就变成了一次提权写。窄方法 `SetOwner`，与 `TokenVersion`/`DataSessionID` 同一套安排 |
+| **`AddMember` 是 UPDATE-then-INSERT** | 而不是 INSERT 然后吞重复键。三个引擎报重复键的错误类型各不相同，一个能认全三种的 helper 就是一个某天只认得两种的 helper。空转的 UPDATE 报出一行是同一个信号，三处拼法一致 |
+| **`DeleteRole` 同时删定义和成员，且先删定义** | 留下的成员行不授予任何东西 —— 直到有人用同一个名字再建一个组，那一批人就静默地拿回了一份已被删掉的权限集。包内无事务，所以顺序有意义：先删定义，两条语句中间失败留下的是「不授予任何东西的行」，而不是「成员未知的组」 |
+| **权限 JSON 解析不了 = 空集，不是错误** | 空是安全的方向，也是诚实的方向：一个定义读不出来的组不授予任何东西。整条读失败会把其它每个组一起拖下水，而运维那时第一件事就是打开控制台 —— 而控制台要拿到组列表才渲染得出来 |
+
+**边界**：权限 id 在**写入时**校验（不在清单里就拒收）。存了一条没人匹配的 id，就是一个授予得比自己定义少的组 —— 而定义正是授予它的人读的那个东西。
+
+行为套件加了 3 例（第 44–46 例）：组的增删改查、成员进出的幂等、删组连带删成员、`SetOwner` 往返。四个后端跑同一份。
 
 ## 心情注册表（`domain/mood_kind.go`）
 

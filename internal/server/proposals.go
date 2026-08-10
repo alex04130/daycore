@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -132,6 +133,11 @@ func (s *Server) handleProposalList(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{"proposals": items})
 }
 
+// proposalWriteRetries bounds the read-modify-write retry. Three is enough to
+// ride out ordinary contention (a delivery pass, a second tab) and few enough
+// that a write loop somewhere else surfaces as an error instead of a hang.
+const proposalWriteRetries = 3
+
 const (
 	keyProposalGone     = "proposal.gone"
 	keyProposalSettled  = "proposal.settled"
@@ -196,31 +202,49 @@ func (s *Server) handleProposalRespond(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.readJSON(r, &body)
 
-	p, err := s.store.Proposals().Get(r.Context(), sid, r.PathValue("id"))
-	if err != nil {
-		s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyProposalGone, locale))
-		return
-	}
-	if p.State != domain.ProposalPending {
-		// Not an error worth a 500, and not a silent success either: the client
-		// asked about a card someone (or a timeout) already settled.
-		s.writeErr(w, http.StatusConflict, "already_settled", i18n.T(keyProposalSettled, locale))
-		return
-	}
-	p.State, p.Resolution = domain.ProposalAccepted, domain.ResolutionUser
-	if body.Choice == "reject" || body.Choice == "" {
-		p.State = domain.ProposalRejected
-	}
-	for i := range p.Rows {
-		if p.Rows[i].ID == body.Choice {
-			p.Rows[i].State = domain.ProposalAccepted
-		} else {
-			p.Rows[i].State = domain.ProposalRejected
+	// Read-modify-write under optimistic concurrency, so it retries on a rev
+	// conflict rather than reporting one.
+	//
+	// The interface says so in its own doc ("The caller re-reads and retries on
+	// ErrConflict") and this handler did not: two tabs answering the same card,
+	// or the delivery pass stamping deliveredAt on the very request that answers
+	// it, both landed the user on a 500 for something that had in fact worked.
+	// Bounded, because a conflict that keeps recurring is not contention any
+	// more — it is something else writing in a loop, and retrying forever would
+	// hide that.
+	var p *domain.Proposal
+	var err error
+	for attempt := 0; ; attempt++ {
+		p, err = s.store.Proposals().Get(r.Context(), sid, r.PathValue("id"))
+		if err != nil {
+			s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyProposalGone, locale))
+			return
 		}
-	}
-	if err := s.store.Proposals().Update(r.Context(), p); err != nil {
-		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.proposalRespond.internal")
-		return
+		if p.State != domain.ProposalPending {
+			// Not an error worth a 500, and not a silent success either: the
+			// client asked about a card someone (or a timeout) already settled.
+			s.writeErr(w, http.StatusConflict, "already_settled", i18n.T(keyProposalSettled, locale))
+			return
+		}
+		p.State, p.Resolution = domain.ProposalAccepted, domain.ResolutionUser
+		if body.Choice == "reject" || body.Choice == "" {
+			p.State = domain.ProposalRejected
+		}
+		for i := range p.Rows {
+			if p.Rows[i].ID == body.Choice {
+				p.Rows[i].State = domain.ProposalAccepted
+			} else {
+				p.Rows[i].State = domain.ProposalRejected
+			}
+		}
+		err = s.store.Proposals().Update(r.Context(), p)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, domain.ErrConflict) || attempt >= proposalWriteRetries {
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.proposalRespond.internal")
+			return
+		}
 	}
 	s.logOp(r.Context(), &domain.OperationLog{
 		SessionID: sid, Actor: domain.ActorUser, Action: "proposal_" + string(p.State),

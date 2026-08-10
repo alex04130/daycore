@@ -1,3 +1,14 @@
+// Package search is the站内 full-text index over a user's own imported
+// material — notes, assignments, screenshots, anything the file bus took in.
+//
+// # It used to hold two unrelated things
+//
+// Web search lived here too, and the package comment described only that half.
+// The two share a verb and nothing else: this one is a repository query against
+// rows this deployment owns, returning {ID, Title, Snippet, Score} with no URL
+// because a stored note has none. Web search is a network call to a third party
+// with sources, health and a registry. They are now internal/search and
+// internal/websearch.
 package search
 
 import (

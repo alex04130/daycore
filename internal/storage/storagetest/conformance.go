@@ -23,7 +23,9 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,6 +125,10 @@ var cases = []suiteCase{
 	{"Attachment/DeleteReturnsTheRowAndSparesBound", attachmentDeleteReturnsRows},
 	{"Attachment/DeleteByThreadTakesItsBytes", attachmentDeleteByThread},
 	{"Attachment/PruneReclaimsOnlyUnsentUploads", attachmentPruneUnbound},
+	{"Setting/OverrideRoundTripAndReset", settingRoundTrip},
+	{"ProviderOverride/TriStateEnabledAndApprovalRevoke", providerOverrideRoundTrip},
+	{"User/UpsertNeverTouchesTheOwnerMark", upsertNeverTouchesOwner},
+	{"Role/MembershipAndDeleteTakesItsMembers", roleMembership},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1515,8 +1521,34 @@ func proposalOwnerInstanceIsQueryable(t *testing.T, h Harness) {
 
 // ── attachments (ε) ─────────────────────────────────────────────────────────
 
+// att builds one upload with an id that increases on every call, which is not
+// cosmetic — see below.
+//
+// ⚠️ THE ID IS A MONOTONIC COUNTER, AND THE ORDERING ASSERTION DEPENDS ON IT.
+//
+// The documented order is `(created_at, id)`. created_at is stored to the
+// millisecond, and four inserts over a network round-trip usually land in four
+// different ones — but not always. When two collide, the tie-break decides, and
+// with a repository-generated random UUID the tie-break is a coin toss. That is
+// what made Attachment/HydrateIsOrderedAndScoped fail about one Mongo run in
+// five: not a bug in any back end, a test asserting an order the data could not
+// carry.
+//
+// Sortable ids make the assertion deterministic in BOTH cases, which is
+// strictly more than it checked before — it now pins the tie-break itself
+// rather than avoiding the tie.
+//
+// ⚠️ The production gap this leaves visible, deliberately: real uploads DO get
+// a random uuid, so two attachments landing in the same millisecond (a
+// multi-file drop uploads in parallel) come back in an arbitrary order. Nothing
+// downstream depends on it today. Closing it means a monotonic id, not a
+// stronger sort — sorting harder cannot recover an order the row never stored.
+var attSeq atomic.Int64
+
 func att(sid, name, mime string) *domain.Attachment {
 	return &domain.Attachment{
+		// Zero-padded because the sort is lexicographic on a string column.
+		ID:        fmt.Sprintf("att-%06d", attSeq.Add(1)),
 		SessionID: sid, Ref: "ref-" + name, MIME: mime,
 		Kind: domain.AttachmentKindOf(mime), Size: 11, SHA256: "abc", Filename: name,
 	}
@@ -1776,3 +1808,379 @@ func attachmentPruneUnbound(t *testing.T, h Harness) {
 		t.Errorf("prune reclaimed an attachment that belongs to a message: %v", err)
 	}
 }
+
+// ── settings (θ-F4b) ────────────────────────────────────────────────────────
+
+// The runtime half of configuration layering. Small surface, and every part of
+// it is load-bearing for the console:
+//
+//   - Set is an upsert, because "change this again" is the normal case and the
+//     console has no idea whether a row exists.
+//   - Delete restores the environment seed, and MUST be distinguishable from
+//     setting the value to "": for a string knob those are different requests,
+//     and a backend that conflated them would make "reset to default" silently
+//     mean "set to empty".
+//   - Deleting what is not there is not an error. Two consoles clicking reset is
+//     ordinary, and so is clicking it on a knob that was never overridden.
+func settingRoundTrip(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+
+	if got, err := s.Settings().All(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a fresh store has %d overrides (err=%v); nil must come back as an empty slice", len(got), err)
+	}
+	if err := s.Settings().Set(ctx, "MaxUploadBytes", "1048576"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Settings().Set(ctx, "AgentMaxRounds", "3"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Settings().All(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("All returned %d, want 2: %+v", len(got), got)
+	}
+	byKey := map[string]domain.Setting{}
+	for _, x := range got {
+		byKey[x.Key] = x
+	}
+	if byKey["MaxUploadBytes"].Value != "1048576" {
+		t.Errorf("round trip lost the value: %+v", byKey["MaxUploadBytes"])
+	}
+	if byKey["AgentMaxRounds"].UpdatedAt.IsZero() {
+		t.Error("no updated_at; the console shows when a setting last changed")
+	}
+
+	// Upsert, not insert-or-fail.
+	if err := s.Settings().Set(ctx, "AgentMaxRounds", "6"); err != nil {
+		t.Fatalf("re-setting an existing key failed: %v", err)
+	}
+	got, _ = s.Settings().All(ctx)
+	if len(got) != 2 {
+		t.Errorf("re-setting created a second row: %+v", got)
+	}
+
+	// An empty value is a value.
+	if err := s.Settings().Set(ctx, "DefaultVisionModel", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Settings().All(ctx)
+	var sawEmpty bool
+	for _, x := range got {
+		if x.Key == "DefaultVisionModel" {
+			sawEmpty = true
+		}
+	}
+	if !sawEmpty {
+		t.Error("setting a knob to the empty string stored nothing — that is a different request from resetting it")
+	}
+
+	// Delete restores the seed, and is boring when repeated.
+	if err := s.Settings().Delete(ctx, "AgentMaxRounds"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Settings().Delete(ctx, "AgentMaxRounds"); err != nil {
+		t.Errorf("deleting an absent override errored: %v", err)
+	}
+	if err := s.Settings().Delete(ctx, "never-set"); err != nil {
+		t.Errorf("resetting a knob that was never overridden errored: %v", err)
+	}
+	got, _ = s.Settings().All(ctx)
+	for _, x := range got {
+		if x.Key == "AgentMaxRounds" {
+			t.Error("delete did not remove the override")
+		}
+	}
+
+	// An empty key is a row nothing can ever read back.
+	if err := s.Settings().Set(ctx, "", "x"); err == nil {
+		t.Error("an empty key was accepted")
+	}
+}
+
+// providerOverrideRoundTrip covers the console-editable half of a capability
+// source. Three properties, and each one is a behaviour a back end could
+// plausibly get wrong on its own:
+//
+//   - Enabled is TRI-state. nil ("no opinion, use the file"), false ("off") and
+//     true are three different answers, and a back end that stores a Go bool
+//     collapses the first two — which silently turns "I never touched this" into
+//     "I turned it off" for every source in a fresh deployment.
+//   - The key is composite. Two capabilities may each have a source called
+//     "primary"; a back end keyed on id alone lets one overwrite the other.
+//   - Editing a description must not carry its approval along. The hash is what
+//     approval was granted against, and the whole gate rests on the store
+//     round-tripping it faithfully.
+func providerOverrideRoundTrip(t *testing.T, h Harness) {
+	ctx := bg()
+	repo := h.Store().ProviderOverrides()
+
+	on, off := true, false
+	if err := repo.Set(ctx, domain.ProviderOverride{
+		Kind: "weather", ID: "primary", Enabled: &off,
+		Description:     map[string]string{"zh-CN": "内网天气", "en-US": "intranet weather"},
+		DescriptionHash: "h1", Approved: true,
+	}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	// Same id, different capability: must be a separate row.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "search", ID: "primary", Enabled: &on}); err != nil {
+		t.Fatalf("set second kind: %v", err)
+	}
+	// No opinion at all — neither on nor off.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "channel", ID: "qq"}); err != nil {
+		t.Fatalf("set third: %v", err)
+	}
+
+	all, err := repo.All(ctx)
+	if err != nil {
+		t.Fatalf("all: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("All returned %d rows, want 3 — (kind, id) is the key, so weather/primary and search/primary are different rows", len(all))
+	}
+	byKey := map[string]domain.ProviderOverride{}
+	for _, o := range all {
+		byKey[o.Kind+"/"+o.ID] = o
+	}
+
+	w := byKey["weather/primary"]
+	if w.Enabled == nil || *w.Enabled {
+		t.Errorf("weather/primary Enabled = %v, want an explicit false", w.Enabled)
+	}
+	if w.Description["zh-CN"] != "内网天气" || w.Description["en-US"] != "intranet weather" {
+		t.Errorf("description did not round-trip: %v", w.Description)
+	}
+	if w.DescriptionHash != "h1" || !w.Approved {
+		t.Errorf("approval did not round-trip: hash=%q approved=%v", w.DescriptionHash, w.Approved)
+	}
+	if e := byKey["search/primary"].Enabled; e == nil || !*e {
+		t.Errorf("search/primary Enabled = %v, want true", e)
+	}
+	if e := byKey["channel/qq"].Enabled; e != nil {
+		t.Errorf("channel/qq Enabled = %v, want nil — 'no opinion' and 'off' are different answers", *e)
+	}
+
+	// Editing the description must not carry the old approval with it. The store
+	// only has to persist what it is given, but a back end that ignores a field
+	// on update would leave a source approved against text nobody read.
+	if err := repo.Set(ctx, domain.ProviderOverride{
+		Kind: "weather", ID: "primary", Enabled: &off,
+		Description:     map[string]string{"zh-CN": "改过了", "en-US": "edited"},
+		DescriptionHash: "h2", Approved: false,
+	}); err != nil {
+		t.Fatalf("re-set: %v", err)
+	}
+	all, _ = repo.All(ctx)
+	if len(all) != 3 {
+		t.Errorf("re-setting an existing (kind, id) inserted a row instead of updating: %d rows", len(all))
+	}
+	for _, o := range all {
+		if o.Kind == "weather" && o.ID == "primary" {
+			if o.Approved || o.DescriptionHash != "h2" || o.Description["en-US"] != "edited" {
+				t.Errorf("the edit did not land: %+v", o)
+			}
+		}
+	}
+
+	// Clearing the opinion has to be expressible, or the console can never undo
+	// a change it made.
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "search", ID: "primary"}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	all, _ = repo.All(ctx)
+	for _, o := range all {
+		if o.Kind == "search" && o.Enabled != nil {
+			t.Errorf("Enabled could not be cleared back to nil: %v", *o.Enabled)
+		}
+	}
+
+	if err := repo.Delete(ctx, "weather", "primary"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := repo.Delete(ctx, "weather", "primary"); err != nil {
+		t.Errorf("deleting an absent override is not idempotent: %v", err)
+	}
+	if err := repo.Set(ctx, domain.ProviderOverride{Kind: "", ID: "x"}); err == nil {
+		t.Error("an override with no kind was accepted; it would be unreachable by every reader")
+	}
+	if all, _ = repo.All(ctx); len(all) != 2 {
+		t.Errorf("after one delete: %d rows, want 2", len(all))
+	}
+}
+
+// The OAuth callback builds a *domain.User out of what the provider returned and
+// hands it to Upsert. So if is_owner ever appears in the column list — or if a
+// back end starts replacing the whole document instead of $set-ing a field list
+// — **logging in becomes a privilege escalation write**.
+//
+// This is a convention today (TokenVersion and DataSessionID are protected the
+// same way, and nothing tests them). It gets a conformance case because the
+// consequence is not "a field gets clobbered": it is that a stranger with a
+// Google account can become the super-administrator, and because the Mongo
+// variant of the mistake is invisible on SQL — the four back ends would not
+// fail together.
+func upsertNeverTouchesOwner(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+	repo := s.Users()
+
+	created, err := repo.Upsert(ctx, &domain.User{Name: strPtr("someone")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.IsOwner {
+		t.Fatal("a newly created user is an owner")
+	}
+	if err := repo.SetOwner(ctx, created.ID, true); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+	if got, _ := repo.GetByID(ctx, created.ID); got == nil || !got.IsOwner {
+		t.Fatal("SetOwner did not stick")
+	}
+
+	// The escalation shape, both directions.
+	//
+	// A login carrying IsOwner:false must not CLEAR the mark (that is a
+	// self-inflicted lockout: the last owner logs in through Google and stops
+	// being an owner), and one carrying IsOwner:true must not SET it.
+	if _, err := repo.Upsert(ctx, &domain.User{ID: created.ID, Name: strPtr("renamed"), IsOwner: false}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := repo.GetByID(ctx, created.ID)
+	if after == nil || !after.IsOwner {
+		t.Error("Upsert with IsOwner:false cleared the owner mark — a login would demote the last owner")
+	}
+	if after.Name == nil || *after.Name != "renamed" {
+		t.Error("Upsert did not apply the fields it IS supposed to write")
+	}
+
+	other, err := repo.Upsert(ctx, &domain.User{Name: strPtr("stranger")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Upsert(ctx, &domain.User{ID: other.ID, Name: strPtr("stranger"), IsOwner: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := repo.GetByID(ctx, other.ID)
+	if got == nil || got.IsOwner {
+		t.Error("Upsert with IsOwner:true made somebody an owner — this is the OAuth callback's shape exactly")
+	}
+
+	// And the list the console needs, with the mark on it.
+	users, err := repo.List(ctx, 50)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(users) < 2 {
+		t.Fatalf("List returned %d users, want at least 2", len(users))
+	}
+	owners := 0
+	for _, u := range users {
+		if u.IsOwner {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Errorf("List reports %d owners, want exactly 1 — every 'is this the last owner' check reads this", owners)
+	}
+}
+
+// Roles, membership, and the two properties that are only interesting because
+// getting them wrong is silent.
+func roleMembership(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+	repo := s.Roles()
+
+	if got, err := repo.ListRoles(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a fresh store has %d roles (err=%v); nil must come back as an empty slice", len(got), err)
+	}
+	if _, err := repo.GetRole(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetRole on a missing role returned %v, want ErrNotFound", err)
+	}
+
+	// A role with no permissions is a plain group — a commercial tier — and that
+	// is a meaningful state, not an unfinished one. It has to round-trip as an
+	// empty slice rather than nil, because IsAdminRole() is what the assignment
+	// check reads.
+	if err := repo.UpsertRole(ctx, domain.Role{Name: "tier-free", Description: "免费档"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertRole(ctx, domain.Role{
+		Name: "support", Description: "客服", Permissions: []string{"users.read", "overview.read"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := repo.ListRoles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 2 || roles[0].Name != "support" || roles[1].Name != "tier-free" {
+		t.Fatalf("ListRoles = %+v, want two sorted by name", roles)
+	}
+	if roles[1].IsAdminRole() {
+		t.Error("a role with no permissions reports as an admin role — the assignment check reads exactly this")
+	}
+	if !roles[0].IsAdminRole() || len(roles[0].Permissions) != 2 {
+		t.Errorf("permissions did not round-trip: %+v", roles[0])
+	}
+
+	// Membership, and its idempotence: two consoles clicking the same button is
+	// ordinary and must not be an error.
+	if err := repo.AddMember(ctx, "support", "u-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMember(ctx, "support", "u-1"); err != nil {
+		t.Errorf("adding an existing member is not idempotent: %v", err)
+	}
+	if err := repo.AddMember(ctx, "support", "u-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMember(ctx, "tier-free", "u-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.MembersOf(ctx, "support"); len(got) != 2 || got[0] != "u-1" || got[1] != "u-2" {
+		t.Errorf("MembersOf = %v, want [u-1 u-2] — 'who can export the database' is this query", got)
+	}
+	if got, _ := repo.RolesOf(ctx, "u-1"); len(got) != 2 || got[0] != "support" || got[1] != "tier-free" {
+		t.Errorf("RolesOf = %v, want both roles sorted", got)
+	}
+
+	if err := repo.RemoveMember(ctx, "support", "u-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RemoveMember(ctx, "support", "u-2"); err != nil {
+		t.Errorf("removing an absent member is not idempotent: %v", err)
+	}
+
+	// Deleting a role takes its membership with it.
+	//
+	// Otherwise the rows survive granting nothing — until somebody creates a
+	// role with the same name, at which point a set of people SILENTLY regain a
+	// permission set that was deleted. Nothing reports that, and "support" is
+	// exactly the kind of name that gets recreated.
+	if err := repo.DeleteRole(ctx, "support"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRole(ctx, "support"); err != nil {
+		t.Errorf("deleting an absent role is not idempotent: %v", err)
+	}
+	if got, _ := repo.MembersOf(ctx, "support"); len(got) != 0 {
+		t.Errorf("deleting a role left %v behind — recreating the name would silently restore them", got)
+	}
+	if got, _ := repo.RolesOf(ctx, "u-1"); len(got) != 1 || got[0] != "tier-free" {
+		t.Errorf("RolesOf after the delete = %v, want only tier-free", got)
+	}
+
+	if err := repo.UpsertRole(ctx, domain.Role{Name: ""}); err == nil {
+		t.Error("a role with no name was accepted; nothing could ever reference it")
+	}
+	if err := repo.AddMember(ctx, "tier-free", ""); err == nil {
+		t.Error("a membership with no user was accepted")
+	}
+}
+
+func strPtr(s string) *string { return &s }

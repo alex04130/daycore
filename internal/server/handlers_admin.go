@@ -17,15 +17,19 @@ func init() {
 	})
 }
 
-// adminAuthorized gates the prompt-editing endpoints. With ADMIN_TOKEN set, the
-// X-Admin-Token header must match (constant-time); unset means open in dev,
-// closed in prod.
-func (s *Server) adminAuthorized(r *http.Request) bool {
-	if s.cfg.AdminToken == "" {
-		return !s.cfg.IsProduction()
-	}
-	return subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Admin-Token")), []byte(s.cfg.AdminToken)) == 1
-}
+// The credential check that used to live at the top of every handler in this
+// file is now applied by the router — see admin_gate.go for why it moved and
+// what that makes impossible.
+//
+// ⚠️ There is no "open" branch anywhere in it. There used to be: the check
+// returned !IsProduction() when ADMIN_TOKEN was unset, which made the
+// configuration API unauthenticated on every development box, every staging
+// deployment, and every self-hosted instance whose owner never set APP_ENV.
+// config.Load now invents a token and prints it instead, so "no credential
+// configured" is not a reachable state.
+//
+// If you are here to add a bypass for local development: the generated token in
+// the startup log IS the local-development path.
 
 // adminLocale reads the ?locale= query param, defaulting to i18n.Default.
 // Returns "" when an unsupported locale was requested explicitly.
@@ -46,10 +50,6 @@ type adminPromptItem struct {
 
 // GET /api/admin/prompts — every prompt key × supported locale with its active content.
 func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptList.unauthorized")
-		return
-	}
 	ctx := r.Context()
 	out := []adminPromptItem{}
 	for _, key := range s.prompts.Keys() {
@@ -67,10 +67,6 @@ func (s *Server) handleAdminPromptList(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/admin/prompts/{key}?locale= — one prompt's active content + built-in default.
 func (s *Server) handleAdminPromptGet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptGet.unauthorized")
-		return
-	}
 	locale := adminLocale(r)
 	if locale == "" {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_locale", "err.adminPromptGet.unsupported_locale")
@@ -92,10 +88,6 @@ func (s *Server) handleAdminPromptGet(w http.ResponseWriter, r *http.Request) {
 
 // PUT /api/admin/prompts/{key}?locale= — override a prompt (validated as a template).
 func (s *Server) handleAdminPromptSet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminPromptSet.unauthorized")
-		return
-	}
 	locale := adminLocale(r)
 	if locale == "" {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unsupported_locale", "err.adminPromptSet.unsupported_locale")
@@ -119,4 +111,31 @@ func (s *Server) handleAdminPromptSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// isRootCredential reports whether this request carries ADMIN_TOKEN itself,
+// as opposed to any other admin credential.
+//
+// # Why the distinction exists
+//
+// ADMIN_TOKEN is the root password: it lives in the environment, it cannot be
+// changed from any interface, and it is the recovery path when everything else
+// is gone (the last administrator deleted, the role rows corrupt, the database
+// not open at all). Because it is an environment variable, whoever holds it can
+// already read every other environment variable — including DB_DSN.
+//
+// That is the whole test for what may be shown only to it: **things the holder
+// could read anyway by looking at the same file.** A driver error carrying a
+// DSN password qualifies. Nothing else should be added here without asking that
+// question first — this is not a general "more privileged" flag, and using it
+// as one would make it the place where privilege quietly accumulates.
+func (s *Server) isRootCredential(r *http.Request) bool {
+	if s.cfg == nil || s.cfg.AdminToken == "" {
+		return false
+	}
+	hdr := r.Header.Get("X-Admin-Token")
+	if hdr == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(hdr), []byte(s.cfg.AdminToken)) == 1
 }

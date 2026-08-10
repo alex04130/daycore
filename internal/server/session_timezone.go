@@ -91,10 +91,10 @@ func (s *Server) sessionTimezone(ctx context.Context, sid string) string {
 }
 
 func (s *Server) defaultTimezone() string {
-	if s == nil || s.cfg == nil || s.cfg.WorkerDefaultTZ == "" {
+	if s == nil || s.cfg == nil || s.runtime().WorkerDefaultTZ == "" {
 		return "UTC"
 	}
-	return s.cfg.WorkerDefaultTZ
+	return s.runtime().WorkerDefaultTZ
 }
 
 // validTimezone reports whether a client-supplied string is an IANA zone this

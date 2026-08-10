@@ -27,7 +27,18 @@ components:
         type: { type: string, enum: [task, appointment, break, relax, meal] }
         duration_min: { type: integer, nullable: true }
         time_mode: { type: string, enum: [floating, fixed, local], description: "floating=wall clock (no utc_time); fixed=absolute instant; local=circadian, follows current tz. fixed/local carry utc_time." }
-        timezone: { type: string, example: "Asia/Shanghai" }
+        timezone:
+          type: string
+          example: "Asia/Shanghai"
+          description: >
+            The EVENT's zone — whose wall clocks this rule's time belongs to.
+            A different question from Preferences.timezone, which is where the
+            user is now: a lecture imported from a Shanghai timetable stays
+            09:00 中国时间 when the student is in London, and the two layers are
+            what make that expressible. Empty means floating (whatever the
+            reader's own zone says), which is right for "gym at 7" and wrong for
+            a class in another country. Set by ICS import from X-WR-TIMEZONE and
+            correctable here; a name this build cannot load is rejected.
         utc_time: { type: string, nullable: true, description: "RFC3339 UTC anchor for fixed/local blocks." }
         offset_min: { type: integer, nullable: true }
         offset_ref: { type: string }
@@ -97,7 +108,20 @@ components:
             Four, not three. A silent expiry must stay distinguishable from a
             deliberate no — the ledger keeps everything, and an expired offer
             was never seen.
-        level: { type: string, enum: [L1, L2, L3], description: The attention ladder. L0 never becomes a proposal. }
+        level:
+          type: string
+          enum: [L1, L2, L3]
+          description: >-
+            The attention ladder — the MEDIUM. L1 an in-view ghost bound to a
+            slot, L2 a card in the stack, L3 a push against the ≤3/day budget.
+            L0 never becomes a proposal. Independent of whether the proposal may
+            ESCALATE, which is decided by what it rests on (see origin/btype):
+            a hard-backed one — an appointment, a deadline — may come back louder
+            as the moment approaches; a soft one gets one delivery, ever, because
+            "ignoring is always safe" is a promise and escalation would break it.
+            The distinction is derived server-side from the row, never asserted
+            by the agent: "is this important" is exactly the judgement a model
+            gets wrong in the direction of interrupting more.
         kind: { type: string, enum: [timed, card, decision] }
         title: { type: string }
         summary: { type: string }
@@ -106,7 +130,16 @@ components:
         date: { type: string }
         start: { type: string, description: "HH:MM" }
         dur: { type: integer, nullable: true }
-        btype: { type: string }
+        btype:
+          type: string
+          description: >-
+            The block type this proposal is about. "appointment" is the only
+            HARD one today — a slot somebody else is also holding — and future
+            hard types (meeting, flight, exam) join that set rather than adding a
+            field. task/break/relax/meal are the user's own intentions about
+            their own day. Deliberately NOT the same as lockLevel: a lock says
+            "this cannot move", hardness says "missing this costs somebody other
+            than you".
         lockLevel: { type: string }
         lockReason: { type: string }
         rows:
@@ -138,7 +171,15 @@ components:
             discards an undo window.
         expiresAt: { type: string, format: date-time }
         resolution: { type: string, enum: [user, silence, superseded] }
-        origin: { type: string, enum: [agent, daemon, upload, protector, user] }
+        origin:
+          type: string
+          enum: [agent, daemon, upload, protector, user, deadline]
+          description: >-
+            Which part of the system produced it. "deadline" is the fact track —
+            a due date the user or an import put there, the archetypal hard fact,
+            and the one origin that licenses escalation. "user" means the user
+            asked for this card; it matters for the ledger, since a summoned card
+            should not count against rapport the way an unsolicited one does.
         threadId: { type: string }
         rev: { type: integer, description: Optimistic concurrency — row-level accepts race otherwise. }
         createdAt: { type: string, format: date-time }
@@ -164,6 +205,59 @@ components:
         lockLevel: { type: string, enum: [hard, soft], description: Absent for a petrify refusal. }
         lockReason: { type: string, description: Absent for a petrify refusal. }
         block: { $ref: '#/components/schemas/TimeBlock' }
+    ModelDetail:
+      type: object
+      properties:
+        id: { type: string, description: OUR stable name — what DEFAULT_CHAT_MODEL and the database reference. }
+        format: { type: string }
+        baseUrl: { type: string, description: Where requests go. "Which gateway is this actually hitting" is the second question after "is the key set". }
+        model: { type: string, description: The vendor's name — the perishable half. Shown next to id because that pair is the whole point of having two fields. }
+        apiKeyEnv: { type: string, description: The variable NAME. Not a credential. }
+        keySet: { type: boolean, description: Whether a key was resolved at all. The value never appears. }
+        caps: { type: object, additionalProperties: true }
+        roles:
+          type: array
+          items: { type: string, enum: [chat, vision, planner] }
+          description: The default slots this entry currently fills. Derived, so it cannot disagree with what the process is doing — planner reports where it actually lands, including its fallback to the chat model.
+
+    OAuthProviderView:
+      type: object
+      properties:
+        name: { type: string }
+        clientId: { type: string, description: Not a secret — it travels in the authorize URL of every login. }
+        secretSet: { type: boolean, description: The only thing said about the secret. An id with no secret fails at the token exchange, after the user has already left and come back. }
+        redirectUri: { type: string, description: The callback the vendor must have registered. Built by the same function the login flow uses. }
+        preset: { type: boolean, description: URLs and field mappings came from a built-in template, which is why a two-line entry works. }
+
+    ProviderView:
+      type: object
+      properties:
+        kind: { type: string, enum: [weather, search, channel] }
+        id: { type: string }
+        format: { type: string, enum: [builtin, http] }
+        impl: { type: string, description: 'For format builtin: the compiled-in implementation.' }
+        baseUrl: { type: string, description: For format http. File-only — it is the SSRF entrance. }
+        tokenEnv: { type: string, description: The environment variable NAME. Not a credential. }
+        tokenSet: { type: boolean, description: Whether that variable currently holds anything. The value never appears. }
+        displayName: { type: string }
+        logo: { type: string, description: A raster data URI or empty. SVG is refused — it can carry script, and channel logos render in ordinary user clients. }
+        enabled: { type: boolean }
+        editable: { type: array, items: { type: string }, description: Precomputed so the console does not re-derive a rule that lives on the server. }
+        description: { type: object, additionalProperties: { type: string } }
+        manifestDescription:
+          type: object
+          additionalProperties: { type: string }
+          description: What the ADAPTER says about itself. Shown as a suggestion; never injected into a prompt and never merged into description.
+        approved: { type: boolean }
+        health:
+          type: object
+          properties:
+            up: { type: boolean }
+            reason: { type: string }
+            lastChecked: { type: string, format: date-time }
+            failures: { type: integer }
+            backoffUntil: { type: string, format: date-time }
+        instance: { type: string, description: Which process answered. Health is per process. }
     Session:
       type: object
       properties:
@@ -208,6 +302,36 @@ components:
           enum: ["", user, detected]
           readOnly: true
           description: "Who decided the timezone. Read-only — it is set by which door the value came in through."
+        location:
+          type: string
+          maxLength: 128
+          description: >
+            Where this user is, as free text a weather source can resolve
+            ("北京", "Cambridge, MA"). It exists for ONE caller: the morning and
+            evening briefs, which look up the weather with no model in the loop
+            and therefore cannot ask anybody where to look. The chat tool takes
+            a location as an argument, so the model can already ask about
+            anywhere — a trip's destination, next week's city — and needs
+            nothing stored.
+
+            Same precedence as timezone: setting it here is the USER choosing
+            and outranks the client's reports from then on; "" goes back to
+            following the client. A client reports its place via the location
+            field on POST /api/ai/companion.
+
+            When nothing is known — no setting, and no memory fact stating a
+            home — the brief simply has NO weather line. That is deliberate: a
+            wrong city is worse than no city, because "17°C and raining" is a
+            sentence somebody dresses by.
+
+            Free text rather than coordinates because every weather source here
+            resolves a place name itself; geocoding server-side would mean
+            owning a geocoder and disagreeing with the source.
+        locationSource:
+          type: string
+          enum: ["", user, detected]
+          readOnly: true
+          description: "Who decided the location. Read-only, like timezoneSource."
         primaryLocale:
           type: string
           description: >
@@ -370,7 +494,23 @@ components:
         pointsPossible: { type: number, nullable: true }
         submitted: { type: boolean }
         graded: { type: boolean }
-        status: { type: string, enum: [pending, planned, done, dismissed] }
+        status:
+          type: string
+          enum: [pending, planned, done, dismissed]
+          description: >
+            The planner workflow. "dismissed" means "I am not doing this" — it
+            removes the item from counts and plans. To keep the item but stop
+            being reminded about it, use remindersOff instead.
+        remindersOff:
+          type: boolean
+          description: >
+            Silences the deadline ladder for this one item without changing what
+            it is. STRATEGY §1.3: the fact track can only be turned off one item
+            at a time; the global deadlineAlerts toggle is deliberately blunt and
+            this is what means a user does not have to reach for it.
+            The ladder itself is 24h → 12h → 1h → overdue, one message per rung
+            per item, ever — which is why the fact track needs no daily budget and
+            does not consume the ≤3/day suggestion budget.
     OperationLog:
       type: object
       properties:
@@ -395,6 +535,36 @@ components:
         status: { type: string, enum: [ok, failed] }
         requestId: { type: string }
         createdAt: { type: string, format: date-time }
+    AdminPrincipal:
+      type: object
+      description: >-
+        Who is holding a console session, and what they may do. `root` is the
+        ADMIN_TOKEN (or a cookie minted from it) and passes everything; `owner`
+        is a person marked as super-administrator, which is a MARK rather than a
+        role holding every permission — so a permission added in a later release
+        is held by every owner with no data change. Otherwise `permissions` is
+        the union of the caller's groups.
+      properties:
+        root: { type: boolean }
+        owner: { type: boolean }
+        userId: { type: string, description: Absent for the root credential. }
+        permissions: { type: array, items: { type: string } }
+        ok: { type: boolean, description: Present on login only. }
+        expiresIn: { type: integer, description: 'Seconds; present on login only.' }
+    AdminRole:
+      type: object
+      description: >-
+        A named permission set, and also a user group — one shape for both,
+        because the only difference is whether `permissions` is empty. An empty
+        set is a plain group, which is what a commercial tier is; `admin` is
+        derived from that rather than stored, so it can never go stale in the
+        dangerous direction.
+      properties:
+        name: { type: string, maxLength: 64 }
+        description: { type: string }
+        permissions: { type: array, items: { type: string } }
+        members: { type: array, items: { type: string }, description: User ids. }
+        admin: { type: boolean, description: Derived; true when permissions is non-empty. }
     AdminStats:
       type: object
       properties:

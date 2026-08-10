@@ -18,6 +18,41 @@ const (
 	BlockMeal        BlockType = "meal"
 )
 
+// hardBlockTypes are the ones that carry a commitment to somebody or something
+// outside the user's own head.
+//
+// This is the hard/soft split (STRATEGY §六 adjudication 3), decided now rather
+// than when it is first needed, because the point of deciding it now is that
+// meetings, flights and exams plug in later by joining this SET — no new field,
+// no new rule, no migration. A distinction invented at the moment the first
+// meeting arrives would be a distinction shaped by meetings.
+//
+// The line is NOT "important". It is: **did somebody else's time or a real
+// deadline go into this**.
+//
+//	appointment  a slot another person is also holding — a doctor, a supervisor,
+//	             a class. Missing it costs somebody else something too.
+//	task/break/  the user's own intentions about their own day. Missing one costs
+//	relax/meal   only what they choose to make it cost, which is the whole
+//	             premise of the anti-shame baseline.
+//
+// ⚠️ It is deliberately NOT the same as LockLevel. A lock says "this cannot be
+// moved"; hardness says "missing this has a cost outside you". A hard-locked
+// study block (the user pinned it) is soft; an unlocked dentist appointment is
+// hard. Conflating them would make "I decided this matters to me" and "somebody
+// else is waiting" the same thing, and the product's whole tone rests on them
+// being different.
+var hardBlockTypes = map[BlockType]bool{
+	BlockAppointment: true,
+}
+
+// HardFact reports whether missing this has a cost the user does not control.
+//
+// The fact track (STRATEGY §1.3) is defined over this: things that are hard get
+// an escalating reminder ladder and do not spend the suggestion budget; things
+// that are soft are subject to "ignoring is always safe".
+func (t BlockType) HardFact() bool { return hardBlockTypes[t] }
+
 // TimeMode controls how a block is anchored across timezones.
 type TimeMode string
 

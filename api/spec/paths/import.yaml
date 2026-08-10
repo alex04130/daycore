@@ -9,7 +9,64 @@
     summary: Canvas direct push (extension) or JSON upload.
     responses: { '200': { description: OK } }
 /api/import/ics:
-  post: { operationId: importICS, tags: [import], summary: ICS upload (preview → confirm via rules/batch)., responses: { '200': { description: OK } } }
+  post:
+    operationId: importICS
+    tags: [import]
+    summary: ICS upload (preview → confirm via rules/batch).
+    description: >-
+      Accepts `text/calendar` (raw body, query params) or JSON.
+
+      TWO TIMEZONES, and they answer different questions: the SESSION timezone is
+      where the user is now; the CALENDAR timezone is whose wall clocks the
+      file's times belong to. A "09:00" in a Shanghai timetable means 09:00
+      中国时间 whatever city the student is sitting in, so floating times (no Z,
+      no TZID) are interpreted in the calendar's zone — read from
+      X-WR-TIMEZONE — and `timezone` is only the fallback for a file that does
+      not say.
+
+      When the file names a zone, that zone is not the session's, AND the file
+      has floating times whose meaning therefore depends on the answer, the
+      import stops with 409 `timezone_mismatch` and does nothing. Re-send with
+      `tzConfirmed` (and `timezone` if the user chose the other one) to proceed.
+      It never asks when the two agree or when every time carries its own anchor,
+      and `preview` is never blocked — that is how a client shows the user what
+      they are deciding about.
+
+      An event's zone is editable afterwards through PATCH /api/rules/{id}
+      `timezone`.
+    parameters:
+      - { name: preview, in: query, schema: { type: string, enum: ["1"] } }
+      - { name: timezone, in: query, schema: { type: string }, description: "Fallback zone for floating times; overridden by X-WR-TIMEZONE unless tzConfirmed." }
+      - { name: tzConfirmed, in: query, schema: { type: string, enum: ["1"] } }
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              icsText: { type: string }
+              preview: { type: boolean }
+              timezone: { type: string }
+              tzConfirmed: { type: boolean, description: "The user saw the mismatch; import with the zone given." }
+        text/calendar:
+          schema: { type: string }
+    responses:
+      '200': { description: OK }
+      '400': { description: Not an iCalendar payload. }
+      '409':
+        description: >-
+          timezone_mismatch — the calendar names a zone that is not the
+          session's and has floating times. Nothing was imported.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error: { type: string, enum: [timezone_mismatch] }
+                message: { type: string }
+                calendarTimezone: { type: string }
+                sessionTimezone: { type: string }
+                events: { type: integer }
 /api/import/history:
   get: { operationId: importHistory, tags: [import], responses: { '200': { description: OK } } }
 /api/courses:
@@ -27,6 +84,16 @@
   patch:
     operationId: patchAssignment
     tags: [import]
+    summary: Planner status and/or the per-item reminder switch.
+    description: >-
+      Two independent fields, and the distinction matters: status "dismissed"
+      means "I am not doing this" and removes the item from counts and plans,
+      while remindersOff keeps it and only silences the deadline ladder.
+      At least one of the two must be present. STRATEGY §1.3 — the fact track can
+      only be turned off one item at a time.
     parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-    requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] } } } } } }
-    responses: { '200': { description: OK } }
+    requestBody: { content: { application/json: { schema: { type: object, properties: { status: { type: string, enum: [pending, planned, done, dismissed] }, remindersOff: { type: boolean } } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }
+      '400': { description: Neither field was sent, or an unknown status. }
+      '404': { description: No such assignment in this session. }

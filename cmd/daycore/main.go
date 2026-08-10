@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,16 +20,20 @@ import (
 	"daycore/internal/channels"
 	"daycore/internal/channels/onebot"
 	"daycore/internal/config"
+	"daycore/internal/domain"
 	"daycore/internal/search"
 	"daycore/internal/server"
 	"daycore/internal/storage"
 	"daycore/internal/version"
-	"daycore/internal/weather"
 
 	// Register AI wire formats (self-register via init()).
 	_ "daycore/internal/ai/formats/anthropic"
 	_ "daycore/internal/ai/formats/ollama"
 	_ "daycore/internal/ai/formats/openai"
+
+	// Register web search engines (self-register via init()).
+	_ "daycore/internal/websearch/duckduckgo"
+	_ "daycore/internal/websearch/tavily"
 
 	// Register weather providers (self-register via init()).
 	_ "daycore/internal/weather/openmeteo"
@@ -59,31 +62,55 @@ func main() {
 }
 
 func run(logger *slog.Logger) error {
-	// "install" subcommand: extract defaults, generate config, print admin token.
-	if len(os.Args) > 1 && os.Args[1] == "install" {
-		fs := flag.NewFlagSet("install", flag.ExitOnError)
-		dir := fs.String("dir", "./data", "target directory for extracted files")
-		force := fs.Bool("force", false, "overwrite existing files")
-		fs.Parse(os.Args[2:])
-		return runInstall(*dir, *force)
+	// `install` / `config` never reach config.Load: they exist to WRITE the
+	// configuration, so requiring a valid one first would make the command
+	// unusable in exactly the situation it is for.
+	if handled, err := runSetup(os.Args[1:]); handled {
+		return err
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	if cfg.GeneratedAdminToken {
+		// Printed once, and it has to be printed: a generated credential nobody
+		// is told about is the same as no credential, except harder to diagnose.
+		// This replaces the old "unset ADMIN_TOKEN = open admin API outside
+		// production", which was an unauthenticated configuration API on every
+		// dev box and every self-hosted instance with no APP_ENV set.
+		logger.Warn("no ADMIN_TOKEN configured; generated one for this process only — it changes on every restart",
+			"admin_token", cfg.AdminToken)
+	}
 	if cfg.UsingDevSecrets {
 		logger.Warn("using INSECURE development secrets — set APP_ENV=production with real JWT_SECRET/COOKIE_SECRET/ADMIN_TOKEN before exposing to any network")
 	}
 
+	// Storage. A failure here no longer takes the process with it — see
+	// internal/server/degraded.go for why, and for what is served instead.
+	//
+	// The short version: dying means a crash loop under any supervisor, the only
+	// evidence is a log line somebody has to know to look for, and the screen
+	// that would let you FIX the configuration is served by the process that
+	// keeps dying.
+	var degradedReason string
 	store, err := storage.Open(cfg.DBType, cfg.DBDSN)
 	if err != nil {
-		return fmt.Errorf("open db (%s): %w", cfg.DBType, err)
+		degradedReason = fmt.Sprintf("open db (%s): %v", cfg.DBType, err)
+		store = nil
 	}
-	defer store.Close()
-
-	if err := store.Migrate(context.Background()); err != nil {
-		return fmt.Errorf("migrate: %w", err)
+	if store != nil {
+		defer store.Close()
+		if err := store.Migrate(context.Background()); err != nil {
+			// Migrating is where a wrong DSN, a missing permission or an
+			// incompatible schema usually surfaces — later than Open, and just
+			// as fatal to every feature.
+			degradedReason = fmt.Sprintf("migrate: %v", err)
+		}
+	}
+	if degradedReason != "" {
+		logger.Error("STORAGE UNAVAILABLE — starting in degraded mode: the admin console is served, everything else answers 503. Fix the configuration and restart.",
+			"reason", degradedReason)
 	}
 	// Best-effort migrations (native FTS) log warnings instead of failing.
 	if ws, ok := store.(interface{ MigrationWarnings() []string }); ok {
@@ -94,7 +121,8 @@ func run(logger *slog.Logger) error {
 
 	// A crash leaves async companion placeholders stuck in "pending" forever —
 	// sweep them to "error" so clients stop polling.
-	if n, err := store.Chats().FailPendingMessages(context.Background()); err != nil {
+	if store == nil {
+	} else if n, err := store.Chats().FailPendingMessages(context.Background()); err != nil {
 		// Was swallowed by `err == nil && n > 0`: a database that pings but whose
 		// tables are broken failed here with no trace at all. Not fatal — the
 		// sweep is a convenience, and clients time out on their own — but it must
@@ -115,7 +143,14 @@ func run(logger *slog.Logger) error {
 		return fmt.Errorf("load oauth providers: %w", err)
 	}
 
-	prompts, err := ai.NewPromptService(store.Prompts())
+	// A nil repository means "embedded and disk only" — which is exactly right in
+	// degraded mode: the prompts still render, they just cannot be overridden
+	// from the console until storage is back.
+	var promptRepo domain.PromptRepository
+	if store != nil {
+		promptRepo = store.Prompts()
+	}
+	prompts, err := ai.NewPromptService(promptRepo)
 	if err != nil {
 		return fmt.Errorf("load prompts: %w", err)
 	}
@@ -161,34 +196,73 @@ func run(logger *slog.Logger) error {
 		logger.Info("file bus enabled", "store", blobStore.Name(), "dir", cfg.DataDir)
 	}
 
-	// Weather provider (adapter): configured primary + wttr.in fallback + cache.
-	weatherProvider := weather.New(weather.Options{
-		Provider:          cfg.WeatherProvider,
-		QWeatherKey:       cfg.QWeatherKey,
-		OpenWeatherMapKey: cfg.OpenWeatherMapKey,
-	})
+	// External capability sources (F2-A).
+	//
+	// One place assembles them because the pieces come from three layers that
+	// only make sense together: config/providers.yaml declares identity and
+	// wiring, the provider_overrides table carries what the console may change,
+	// and the environment still supplies the credentials. Resolve merges them
+	// per source; see internal/adapters and docs/ROADMAP.md for why the line
+	// between file and table falls where it does.
+	weatherSources, searchSources, srcWarnings := buildSources(cfg, store, logger)
+	for _, w := range srcWarnings {
+		// A source that will not build is a warning, not a fatal: the others
+		// still work, and refusing to start over one misconfigured weather
+		// adapter would take down the whole deployment for a sentence in a
+		// morning brief.
+		logger.Warn("provider unavailable", "err", w)
+	}
 
 	srv := server.New(server.Deps{
-		Config:   cfg,
-		Store:    store,
-		Catalog:  catalog,
-		Vision:   ai.NewOrchestrator(catalog),
-		Prompts:  prompts,
-		Hasher:   auth.NewHasher(cfg.Pepper),
-		Tokens:   auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
-		Cookies:  auth.NewCookieSigner(cfg.CookieSecret),
-		OAuth:    oauthMgr,
-		Searcher: search.NewMaterialSearcher(store),
-		Weather:  weatherProvider,
-		Blobs:    blobStore,
-		Logger:   logger,
+		Config:    cfg,
+		Store:     store,
+		Catalog:   catalog,
+		Vision:    ai.NewOrchestrator(catalog),
+		Prompts:   prompts,
+		Hasher:    auth.NewHasher(cfg.Pepper),
+		Tokens:    auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
+		Cookies:   auth.NewCookieSigner(cfg.CookieSecret),
+		OAuth:     oauthMgr,
+		Searcher:  search.NewMaterialSearcher(store),
+		Weather:   weatherSources,
+		WebSearch: searchSources,
+		Blobs:     blobStore,
+		Logger:    logger,
 	})
+
+	if degradedReason != "" {
+		srv.EnterDegraded(degradedReason)
+	}
+
+	// Runtime configuration overrides (θ-F4b). Best-effort for the same reason
+	// the locale overrides are: a database that cannot be read is a deployment
+	// already in trouble, and refusing to start over it would take away the
+	// console that could fix it. The environment seeds are still correct.
+	// The override table into the live sources, same shape as ReloadSettings and
+	// for the same reason: a row nothing reads is a console setting the process
+	// ignores. Best-effort — the file's values are still correct.
+	if err := srv.ReloadProviders(context.Background()); err != nil {
+		logger.Warn("could not load provider overrides; using providers.yaml as-is", "err", err)
+	}
+	if err := srv.ReloadSettings(context.Background()); err != nil {
+		logger.Warn("could not load runtime settings; using the environment seeds", "err", err)
+	}
 
 	// Pull the database layer of the message catalog. Best-effort: a translation
 	// override that cannot be read is a degraded language, not a reason to refuse
 	// to boot — the file and embedded layers still render every page.
-	if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
-		logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
+	if store != nil {
+		if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
+			logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
+		}
+	}
+
+	// Everything below reads or writes rows on a timer. In degraded mode it would
+	// be a loop logging the same failure every interval — noise on top of a
+	// problem the operator already knows about, and every tick another chance to
+	// nil-dereference. The console is what this process is for right now.
+	if store == nil {
+		return serveDegraded(logger, cfg, srv)
 	}
 
 	// Background cleanup for stale temp-context entries + expired binding tokens.
@@ -208,6 +282,11 @@ func run(logger *slog.Logger) error {
 	// order of any of this.
 	srv.StartWorkerLease()
 	srv.StartJobRunPrune()
+	// Proposal lifecycle. Its first pass runs at boot, which is what settles the
+	// decision cards orphaned by the process that died — they are already lapsed
+	// (a decision card's TTL is the agent's own wait budget), so they need
+	// expiring, not a special case. See proposal_sweep.go.
+	srv.StartProposalSweep()
 
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
@@ -290,7 +369,7 @@ func run(logger *slog.Logger) error {
 	go func() {
 		logger.Info("listening",
 			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
-			"static", cfg.StaticDir, "models", len(catalog.List()), "vision", catalog.HasVision(),
+			"static", srv.StaticRoot(), "console", server.ConsoleBuilt(), "models", len(catalog.List()), "vision", catalog.HasVision(),
 			"oauth", oauthMgr.Providers())
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
@@ -325,5 +404,41 @@ func run(logger *slog.Logger) error {
 			logger.Warn("background agents did not finish before shutdown deadline", "err", werr)
 		}
 		return err
+	}
+}
+
+// serveDegraded runs the HTTP server with no storage behind it.
+//
+// A separate, much shorter path rather than a set of `if store != nil` guards
+// through the normal one: there is no worker, no lease, no sweep and no channel
+// consumer here, and threading nil past all of them would leave five places
+// where a future change reintroduces the crash. What this process does is
+// answer, at the address the operator already knows, with what is wrong.
+func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) error {
+	httpSrv := &http.Server{
+		Addr:              cfg.ListenAddr(),
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Warn("listening in DEGRADED mode — admin console only; every other route answers 503",
+			"addr", httpSrv.Addr, "version", version.Full(), "db", cfg.DBType, "env", cfg.Env,
+			"reason", srv.DegradedReason())
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		logger.Info("shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
 	}
 }

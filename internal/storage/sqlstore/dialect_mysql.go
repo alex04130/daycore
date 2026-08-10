@@ -195,6 +195,7 @@ func (mysqlDialect) Migrations() []string {
 			is_anonymous INTEGER NOT NULL DEFAULT 0,
 			data_session_id VARCHAR(191) NOT NULL DEFAULT '',
 			token_version INTEGER NOT NULL DEFAULT 0,
+			is_owner TINYINT(1) NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -275,6 +276,7 @@ func (mysqlDialect) Migrations() []string {
 			html_url TEXT,
 			source VARCHAR(16) NOT NULL DEFAULT 'canvas',
 			status VARCHAR(16) NOT NULL DEFAULT 'pending',
+			reminders_off TINYINT(1) NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL,
 			UNIQUE KEY assignments_session_canvas (session_id, canvas_id),
@@ -330,6 +332,36 @@ func (mysqlDialect) Migrations() []string {
 			status VARCHAR(64) NOT NULL DEFAULT '',
 			created_at BIGINT NOT NULL,
 			KEY chat_messages_thread (thread_id, created_at)
+		)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			setting_key VARCHAR(191) PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			name VARCHAR(64) PRIMARY KEY,
+			description TEXT,
+			permissions_json TEXT,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS role_members (
+			role_name VARCHAR(64) NOT NULL,
+			user_id VARCHAR(191) NOT NULL,
+			created_at BIGINT NOT NULL,
+			PRIMARY KEY (role_name, user_id),
+			KEY role_members_user (user_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS provider_overrides (
+			kind VARCHAR(32) NOT NULL,
+			provider_id VARCHAR(128) NOT NULL,
+			enabled TINYINT(1),
+			base_url TEXT,
+			description_json TEXT,
+			description_hash VARCHAR(64) NOT NULL DEFAULT '',
+			approved TINYINT(1) NOT NULL DEFAULT 0,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (kind, provider_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id VARCHAR(191) PRIMARY KEY,
@@ -453,7 +485,7 @@ func (mysqlDialect) NormalizeDSN(dsn string) string {
 func (mysqlDialect) Quote(ident string) string { return "`" + ident + "`" }
 
 func (mysqlDialect) ColumnMigrations() []ColumnMigration {
-	return sessionColumnMigrations("VARCHAR(64)")
+	return sessionColumnMigrations("VARCHAR(64)", "TINYINT(1)")
 }
 
 // ConditionalMigrations adds a FULLTEXT index over materials with the built-in

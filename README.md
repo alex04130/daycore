@@ -1,6 +1,6 @@
 # Daycore v2 — AI 自主规划日程助手 / AI Autonomous Day Planner
 
-**v2.2.0-beta（v2 测试版 / v2 beta）**
+**v2.3.0-beta（v2 测试版 / v2 beta）**
 
 [中文](#中文) · [English](#english)
 
@@ -47,28 +47,49 @@ cd ../.. && go run ./cmd/daycore      # STATIC_DIR 默认 web/frontend/dist，�
 
 ### 部署到服务器（域名）
 
-```bash
-# 构建
-cd web/frontend && npm install && npm run build
-cd ../.. && make build                # CGO_ENABLED=0 → bin/daycore（静态单文件）
+**分发单位是一个二进制。** 零 CGO（`modernc.org/sqlite` 是纯 Go），所以 `go build` 出来的就是静态单文件；提示词模板、L1 硬边界、模型目录种子都在它肚子里。**不需要源码树、不需要 Go 工具链、不需要包管理器。**
 
-# 上传 bin/daycore + config/ + web/frontend/dist 到服务器，然后：
-# 注释一律写在行上方 —— 行尾 `\` 后面跟 `#` 会让续行断掉（见下方警告）
-APP_ENV=production \
-HOST=127.0.0.1 PORT=8080 \
-STATIC_DIR=/opt/daycore/web/frontend/dist \
-PUBLIC_BASE_URL=https://day.example.com \
-JWT_SECRET=$(openssl rand -hex 32) \
-COOKIE_SECRET=$(openssl rand -hex 32) \
-ADMIN_TOKEN=$(openssl rand -hex 32) \
-SECURE_COOKIES=true \
-DEEPSEEK_API_KEY=sk-… \
-./bin/daycore
+> 另有 **lite 构建**（`make build-lite`）：什么都不内嵌，全部从磁盘读，产出 `dist/daycore-lite` + `dist/daycore-data-<版本>.tar.gz`。**pack 不是可选包装，是这个产物的另一半。** 体积只省 31 KB —— 它的意义是内容只有一个真源、可编辑可 diff 可进配置管理，缺文件是带路径的错误而不是静默回落。取数据三条路：解开 pack 放二进制旁边 / `DAYCORE_DATA_DIR` 指向完整版装过的目录 / `daycore install -fetch`。
+
+```bash
+# 在任意一台机器上构建（可交叉编译：GOOS=linux GOARCH=arm64 …）
+CGO_ENABLED=0 go build -ldflags="-s -w" -o daycore ./cmd/daycore   # 23.5 MB
+
+# 只把这一个文件传到服务器，然后
+./daycore install -dir /opt/daycore
 ```
 
-`HOST=127.0.0.1` 只监听本机、由 nginx 对外；`PUBLIC_BASE_URL` 给 OAuth 回调用；**`ADMIN_TOKEN` 不是可选的** —— 不设它时管理面的鉴权退化成「只看 `APP_ENV` 是不是 production」（`handlers_admin.go:24`），而管理面包含 `GET`/`DELETE /api/admin/db/table/{name}` 这样的裸库读删。
+`install` 分八段问完后端配置（数据库 / 模型目录 / AI key / 天气 / 第三方登录 / 消息通道 / 服务器 / 密钥），然后写出一个**能直接启动的目录**。装完之后要改其中一段，用 `daycore config <段名>` —— 同一份问题，不用重跑全部，也不用手改 `.env`。
 
-> ⚠️ **2026-07-29 修正的一个真 bug**：这一段先前把注释写在行尾 `\` 之后。反斜杠转义的是它后面那个空格而不是换行，**续行当场断裂** —— 复制粘贴下来，`APP_ENV`、`HOST`、`PORT`、`STATIC_DIR`、`PUBLIC_BASE_URL` 五项全部丢失，shell 还会报两行 `: command not found`（很容易被当成无害噪音）。丢掉 `APP_ENV=production` 最贵：`IsProduction()` 变 false，于是**没设 `ADMIN_TOKEN` 时整个管理面对外敞开**。照那段部署过的实例请立刻确认这两项。
+CLI 跟着系统语言走（`-lang` 覆盖），语言包就是服务端那套 `LOCALES_DIR/<locale>.json` —— **丢一个 `ja-JP.json` 进去，安装器和 API 一起变成日语**，不用改代码也不用发版。
+
+它写出来的东西：
+
+| 它写什么 | 为什么 |
+|---|---|
+| `config/models.yaml` | **必需** —— 没有它 `LoadCatalog` 直接 exit 1 |
+| `config/oauth.yaml` | 可选；`client_id` 为空的条目会被跳过，所以填之前它是惰性的 |
+| `prompts/**.tmpl` + `prompts/boundaries.json` | 内嵌那份是**地板**，磁盘这份逐文件覆盖它 —— 改一个提示词不必维护全部 22 个 |
+| `.env` | 三把密钥当场生成（`0600`）。重跑 `install` **不会**覆盖你改过的文件，要覆盖用 `-force` |
+
+启动：进到那个目录直接跑（`.env` 由 `godotenv` 从工作目录读），或者交给 systemd 的 `EnvironmentFile=`。
+
+```bash
+cd /opt/daycore && ./daycore
+```
+
+生产上还要在 `.env` 里补这几项 —— 它们 `install` 不问，因为都跟域名绑定：
+
+```ini
+APP_ENV=production
+HOST=127.0.0.1          # 只听本机，由 nginx 对外
+PUBLIC_BASE_URL=https://day.example.com   # OAuth 回调按它拼
+SECURE_COOKIES=true
+```
+
+**前端另外部署。** 后端二进制默认只提供 API（`STATIC_DIR` 指向一个不存在的目录时它就不挂 `/`，启动日志里 `static` 会是空的）。要让同一个进程也托管前端，把 `STATIC_DIR` 指向前端的 `dist`。
+
+> `ADMIN_TOKEN` 不用手填：`config.Load` 在没设时**自动生成一个并打印在启动日志里**。此前不设它等于「管理面在非 production 环境全开」，那一档在 2026-08-07（θ-F4a）已经删掉 —— 「没有凭据」不再是一个可达状态。
 
 nginx（`deploy/nginx.conf` 为容器版样例；裸机把 `server_name` 换成你的域名并加 TLS）：
 
@@ -89,7 +110,7 @@ server {
 
 > 也可以完全不用 nginx：`HOST=`（留空监听所有网卡）+ `PORT=443` 前面挂 Caddy，或直接 `PORT=8080` 裸跑测试。Docker：`make docker && docker compose -f deploy/docker-compose.yml up app`。
 
-> ⚠️ **只跑一个实例。** 后台的主动任务（早报、晚复盘、deadline 巡检）现在由每个进程各自排程，没有选主。起第二份副本 = 用户收到两遍推送。换成 PostgreSQL/MySQL/MongoDB 是为了备份与运维，不代表可以多副本 —— 选主在 `docs/ROADMAP.md` 的 ζ 批次。
+> **多实例已可用**（2026-08-06，ζ-1）。Lease 选主负责节流、`job_runs` 的唯一索引负责正确性，两个机制各背一半承诺，细节见 [ARCHITECTURE.md「多实例：选主与场次占有」](docs/ARCHITECTURE.md)。⚠️ 前提是几个实例**共享同一个数据库** —— SQLite 各跑各的文件不算，那仍然是「用户收到两遍推送」。
 
 浏览器插件直推：打开插件设置，把「Daycore 服务器地址」改成 `https://day.example.com`，粘贴应用设置页生成的 Import Token，点「保存」——**Chrome 会弹窗请求该域名的访问权限，必须允许**（MV3 下没有 host permission 的跨域 fetch 会被 CORS 拦掉）。点「测试连接」可立即验证地址与权限是否就绪。
 
@@ -113,13 +134,11 @@ server {
 
 ### 版本
 
-版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)。**同一个文件里有三层，不要混**：
+版本号唯一来源：[`internal/version/version.go`](internal/version/version.go)，**只有一个数字**（2026-08-09 从三层合并而来）。
 
-| 层 | 常量 | 谁在用 |
-|---|---|---|
-| 构建版本 | `Version` + `Channel`（`2.<minor>.<patch>` + `beta`；minor=功能里程碑，patch=修复） | `GET /api/healthz`、设置页显示「Daycore v2.2.0-beta」 |
-| **API 契约版本** | `APIVersion` / `APIMinor` | `GET /api/version`；**各前端握手用的是这个** —— breaking 升 major，additive 升 minor |
-| 各前端自己的版本 | 不在本仓 | 独立迭代，与上面两层解耦 |
+`APIVersion` / `APIMinor` 仍由 `GET /api/version` 报出、仍是客户端比对的字段，但**从 `Version` 推导** —— 握手形状没变，只是数字来源变了。代价是「契约至少这么新」和「构建至少这么新」不能再分开讲，这在没有任何前端协商的今天不花钱。
+
+⚠️ **它是「第几个修改批次」不是发布号**：`2.2 → 2.3` 的意思是一整份规划从头到尾实现完了。
 
 契约面变了就必须升版，这条由 `api/spec/contract-lock.json` + `go test ./...` 强制（详见 [`api/spec/README.md`](api/spec/README.md)）。
 
@@ -156,25 +175,34 @@ Single-binary mode (closer to production): `cd web/frontend && npm run build`, t
 
 ### Deploy to a server (custom domain)
 
-```bash
-cd web/frontend && npm install && npm run build
-cd ../.. && make build             # CGO_ENABLED=0 → bin/daycore (static binary)
+**The unit of distribution is one binary.** No cgo (`modernc.org/sqlite` is pure Go), so `go build` already produces a static file, and the prompt templates, L1 boundary block and model-catalog seed all ride inside it. No source tree, no Go toolchain, no package manager on the target.
 
-# Ship bin/daycore + config/ + web/frontend/dist, then run:
-APP_ENV=production HOST=127.0.0.1 PORT=8080 \
-STATIC_DIR=/opt/daycore/web/frontend/dist \
-PUBLIC_BASE_URL=https://day.example.com \
-JWT_SECRET=$(openssl rand -hex 32) COOKIE_SECRET=$(openssl rand -hex 32) \
-ADMIN_TOKEN=$(openssl rand -hex 32) \
-SECURE_COOKIES=true DEEPSEEK_API_KEY=sk-… \
-./bin/daycore
+```bash
+# Build anywhere (cross-compiles: GOOS=linux GOARCH=arm64 …)
+CGO_ENABLED=0 go build -ldflags="-s -w" -o daycore ./cmd/daycore   # 23.5 MB
+
+# Copy that one file to the server, then
+./daycore install -dir /opt/daycore
 ```
 
-`ADMIN_TOKEN` is **not optional**: without it, admin auth degrades to "is `APP_ENV` production?" (`handlers_admin.go:24`), and the admin surface includes raw `GET`/`DELETE /api/admin/db/table/{name}`. Keep comments on their own lines — a `#` after a trailing `\` silently breaks the continuation.
+`install` asks eight questions and writes a directory that **starts**: `config/models.yaml` (required — without it `LoadCatalog` exits 1), `config/oauth.yaml` (optional; entries with an empty `client_id` are skipped, so it is inert until edited), the prompt templates and `boundaries.json` (the embedded copies are the floor; these overlay them file by file), and a `.env` with freshly generated secrets at mode `0600`. Re-running it never overwrites your edits — `-force` does.
+
+Start it from that directory (`godotenv` reads `.env` from the working directory), or point systemd's `EnvironmentFile=` at it. Add the domain-bound settings `install` does not ask about:
+
+```ini
+APP_ENV=production
+HOST=127.0.0.1          # nginx fronts it
+PUBLIC_BASE_URL=https://day.example.com
+SECURE_COOKIES=true
+```
+
+**The frontend deploys separately.** The binary is API-only unless `STATIC_DIR` points at a directory containing `index.html`; the startup line reports what is actually being served, not what is configured.
+
+`ADMIN_TOKEN` needs no manual value: when unset, `config.Load` generates one and prints it at startup. The old "unset = admin API open outside production" branch was deleted in θ-F4a (2026-08-07) — "no credential configured" is no longer a reachable state.
 
 Front it with nginx (swap `server_name`, add TLS; `proxy_buffering off` is required for SSE) as shown in the Chinese section above, or skip nginx entirely and expose the Go server directly. Docker: `make docker && docker compose -f deploy/docker-compose.yml up app`.
 
-⚠️ **Run exactly one instance.** Proactive background jobs (morning brief, evening review, deadline sweep) are scheduled per-process with no leader election, so a second replica means every user gets everything twice. Switching to PostgreSQL/MySQL/MongoDB buys you backups and operational tooling, not replicas — leader election is batch ζ in `docs/ROADMAP.md`.
+> **Multiple instances are supported** as of 2026-08-06 (ζ-1): lease-based election handles throttling, the unique index on `job_runs` handles correctness ([ARCHITECTURE.md](docs/ARCHITECTURE.md)). ⚠️ They must share one database — separate SQLite files are not replicas, and every user still gets everything twice.
 
 For the browser extension: open its Options, set the Daycore server URL to `https://day.example.com`, paste the Import Token from the app's Settings, and hit Save — **Chrome will prompt for access to that origin and you must allow it** (under MV3 a cross-origin fetch without a host permission is blocked by CORS). "Test connection" verifies the URL and the grant right away.
 
@@ -184,7 +212,7 @@ Reference material is not duplicated here, because a parallel copy drifts — an
 
 - **Every env var**, with which ones are boot-time versus hot-reloadable → [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#配置internalconfigconfiggo环境变量). [`.env.example`](.env.example) is a commonly-used subset, not the full list.
 - **Local vs server profiles** → the Chinese table above (`APP_ENV`, `HOST`, `SECURE_COOKIES`, `PUBLIC_BASE_URL`, `DB_TYPE`, `ALLOWED_ORIGINS`, rate limits). It reads fine without Chinese: the left column is the variable, the middle is local, the right is production.
-- **Versioning** → single source [`internal/version/version.go`](internal/version/version.go), **three layers in one file**: the build version (`Version`+`Channel`, `2.<minor>.<patch>`+`beta`, shown by `GET /api/healthz`), the **API contract version** (`APIVersion`/`APIMinor` — what frontends handshake on, served by `GET /api/version`), and each frontend's own version (out of tree). A contract-surface change must bump one of the first two; `api/spec/contract-lock.json` plus `go test ./...` enforce that.
+- **Versioning** → single source [`internal/version/version.go`](internal/version/version.go), and as of 2026-08-09 a **single number**. `APIVersion`/`APIMinor` are still served by `GET /api/version` and are still what a client compares against, but they are now DERIVED from `Version` — the handshake did not change shape, only where the number comes from. The cost, stated plainly: a frontend can no longer say "I need a contract at least this new" separately from "I need a build at least this new". That is a real loss of precision, accepted because it costs nothing while no frontend is negotiating anything. A contract-surface change must still bump the version; `api/spec/contract-lock.json` plus `go test ./...` enforce that. ⚠️ The number is a BATCH MARKER, not a release number: 2.2 → 2.3 means one whole plan was implemented end to end.
 
 ---
 

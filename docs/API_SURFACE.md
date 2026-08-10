@@ -6,9 +6,30 @@
 >
 > 三件事由测试兜住，不靠自觉（`internal/server/routes_test.go`）：本表与代码一致、**代码与 `api/openapi.yaml` 双向一致**（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复。REST 细节（请求/响应 schema）以 `api/openapi.yaml` 为准 —— 但**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**，openapi.yaml 是生成物，手改会被覆盖。
 >
-> 当前 **109 条路由 / 24 个组**。
+> 当前 **128 条路由 / 31 个组**。
 
 <!-- BEGIN GENERATED ROUTES -->
+## admin (config)（2 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/config` | handlers_admin_config.go |
+| `PUT /api/admin/config` | handlers_admin_config.go |
+
+## admin (health)（1 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/health` | handlers_admin_health.go |
+
+## admin (models)（3 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/models` | handlers_admin_models.go |
+| `POST /api/admin/models/{id}/test` | handlers_admin_models.go |
+| `GET /api/admin/oauth` | handlers_admin_models.go |
+
 ## admin (prompts)（3 条）
 
 | 路由 | Handler 文件 |
@@ -16,6 +37,32 @@
 | `GET /api/admin/prompts` | handlers_admin.go |
 | `GET /api/admin/prompts/{key}` | handlers_admin.go |
 | `PUT /api/admin/prompts/{key}` | handlers_admin.go |
+
+## admin (providers)（2 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/providers` | handlers_admin_providers.go |
+| `PUT /api/admin/providers` | handlers_admin_providers.go |
+
+## admin (roles)（6 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/permissions` | handlers_admin_roles.go |
+| `GET /api/admin/roles` | handlers_admin_roles.go |
+| `PUT /api/admin/roles/{name}` | handlers_admin_roles.go |
+| `DELETE /api/admin/roles/{name}` | handlers_admin_roles.go |
+| `PUT /api/admin/users/{id}/owner` | handlers_admin_roles.go |
+| `PUT /api/admin/users/{id}/roles` | handlers_admin_roles.go |
+
+## admin (session)（3 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/admin/session` | handlers_admin_session.go |
+| `POST /api/admin/session` | handlers_admin_session.go |
+| `DELETE /api/admin/session` | handlers_admin_session.go |
 
 ## admin (stats, users, DB)（10 条）
 
@@ -95,6 +142,13 @@
 |---|---|
 | `GET /api/companion-history` | handlers_companion_history.go |
 | `POST /api/companion-history` | handlers_companion_history.go |
+
+## console（2 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /admin` | console.go |
+| `GET /admin/` | console.go |
 
 ## custom themes（4 条）
 

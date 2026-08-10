@@ -210,6 +210,7 @@ func (postgresDialect) Migrations() []string {
 			is_anonymous INTEGER NOT NULL DEFAULT 0,
 			data_session_id TEXT NOT NULL DEFAULT '',
 			token_version INTEGER NOT NULL DEFAULT 0,
+			is_owner INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -290,6 +291,7 @@ func (postgresDialect) Migrations() []string {
 			html_url TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL DEFAULT 'canvas',
 			status TEXT NOT NULL DEFAULT 'pending',
+			reminders_off INTEGER NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -346,6 +348,36 @@ func (postgresDialect) Migrations() []string {
 			created_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS chat_messages_thread ON chat_messages(thread_id, created_at)`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			setting_key TEXT PRIMARY KEY,
+			value TEXT NOT NULL DEFAULT '',
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			name TEXT PRIMARY KEY,
+			description TEXT NOT NULL DEFAULT '',
+			permissions_json TEXT NOT NULL DEFAULT '[]',
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS role_members (
+			role_name TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			created_at BIGINT NOT NULL,
+			PRIMARY KEY (role_name, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_role_members_user ON role_members(user_id)`,
+		`CREATE TABLE IF NOT EXISTS provider_overrides (
+			kind TEXT NOT NULL,
+			provider_id TEXT NOT NULL,
+			enabled BOOLEAN,
+			base_url TEXT NOT NULL DEFAULT '',
+			description_json TEXT NOT NULL DEFAULT '',
+			description_hash TEXT NOT NULL DEFAULT '',
+			approved BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at BIGINT NOT NULL,
+			PRIMARY KEY (kind, provider_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS attachments (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
@@ -444,7 +476,9 @@ func (postgresDialect) NormalizeDSN(dsn string) string { return dsn }
 
 func (postgresDialect) Quote(ident string) string { return `"` + ident + `"` }
 
-func (postgresDialect) ColumnMigrations() []ColumnMigration { return sessionColumnMigrations("TEXT") }
+func (postgresDialect) ColumnMigrations() []ColumnMigration {
+	return sessionColumnMigrations("TEXT", "INTEGER")
+}
 
 // ConditionalMigrations adds a generated tsvector column + GIN index over
 // materials (the generated column backfills existing rows automatically).

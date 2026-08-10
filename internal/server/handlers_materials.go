@@ -119,6 +119,14 @@ func (s *Server) handleAssignmentCreate(w http.ResponseWriter, r *http.Request) 
 	s.writeJSON(w, http.StatusOK, a)
 }
 
+func (s *Server) writeAssignmentPatchErr(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, domain.ErrNotFound) {
+		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "assignment_not_found", "err.assignmentPatch.assignment_not_found")
+		return
+	}
+	s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentPatch.internal")
+}
+
 // createManualAssignment reuses UpsertByCanvasID with a unique "manual:" canvas
 // id — the UPDATE-by-canvas-id always misses so it lands on the INSERT branch,
 // no new repository method needed, and Canvas re-imports never touch manual
@@ -145,8 +153,20 @@ func parseFlexibleTime(v string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("unrecognized time %q", v)
 }
 
-// PATCH /api/assignments/{id} — update the planner workflow status
-// ("pending" | "planned" | "done" | "dismissed").
+// PATCH /api/assignments/{id} — the planner workflow status
+// ("pending" | "planned" | "done" | "dismissed") and/or the per-item reminder
+// switch.
+//
+// The two are separate fields because they mean different things, and folding
+// them together is the mistake this endpoint is shaped to avoid: "dismissed"
+// means "I am not doing this" and removes the item from every count and every
+// plan, while remindersOff means "I have this under control, stop telling me
+// about it". A user who only wanted quiet should not have to delete the thing
+// from their own week to get it.
+//
+// STRATEGY §1.3: the fact track can only be turned off one item at a time. The
+// global DeadlineAlerts toggle still exists and is deliberately blunt — this is
+// the instrument that means somebody does not have to reach for it.
 func (s *Server) handleAssignmentPatch(w http.ResponseWriter, r *http.Request) {
 	sid, ok := s.requireSession(w, r)
 	if !ok {
@@ -154,20 +174,32 @@ func (s *Server) handleAssignmentPatch(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.PathValue("id")
 	var body struct {
-		Status string `json:"status"`
+		Status       string `json:"status"`
+		RemindersOff *bool  `json:"remindersOff"`
 	}
-	if err := s.readJSON(r, &body); err != nil || !validAssignmentStatuses[body.Status] {
+	if err := s.readJSON(r, &body); err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentPatch.bad_request")
 		return
 	}
-	err := s.store.Assignments().SetStatus(r.Context(), sid, id, body.Status)
-	if errors.Is(err, domain.ErrNotFound) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "assignment_not_found", "err.assignmentPatch.assignment_not_found")
+	if body.Status == "" && body.RemindersOff == nil {
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentPatch.bad_request")
 		return
 	}
-	if err != nil {
-		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentPatch.internal")
+	if body.Status != "" && !validAssignmentStatuses[body.Status] {
+		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentPatch.bad_request")
 		return
+	}
+	if body.Status != "" {
+		if err := s.store.Assignments().SetStatus(r.Context(), sid, id, body.Status); err != nil {
+			s.writeAssignmentPatchErr(w, r, err)
+			return
+		}
+	}
+	if body.RemindersOff != nil {
+		if err := s.store.Assignments().SetReminders(r.Context(), sid, id, !*body.RemindersOff); err != nil {
+			s.writeAssignmentPatchErr(w, r, err)
+			return
+		}
 	}
 	a, err := s.store.Assignments().Get(r.Context(), sid, id)
 	if err != nil {

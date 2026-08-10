@@ -136,16 +136,25 @@ func (w *Worker) checkProtector(sid, tz string) {
 
 	p := &domain.Proposal{
 		ID: "pr_" + uuid.NewString(), SessionID: sid,
-		State: domain.ProposalPending, Level: domain.LevelL2, Kind: domain.KindCard,
+		// L3: the ladder's own definition of L3 is "a push, budget ≤3/day", and
+		// §5 says this nudge is worth spending one. It was L2 and pushed anyway,
+		// which made the level a label rather than a statement.
+		State: domain.ProposalPending, Level: domain.LevelL3, Kind: domain.KindCard,
 		Origin: domain.OriginProtector,
 		Title:  i18n.T(keyProtectorTitle, locale), Summary: body,
-		// Ask first. The design mock is written in the past tense ("我先帮你顺延
-		// 了"), which would be TTLSilenceAccepts — and that is the wrong polarity
-		// here: at hour twenty this person may equally be mid-deadline and about
-		// to need those blocks. Silence at 4am is not consent, it is somebody
-		// concentrating or asleep, and moving their morning under them costs more
-		// than asking does. Flip it if the product decides otherwise; the shape
-		// is one constant.
+		// Ask first, and the card moves nothing until it is answered.
+		//
+		// The design mock is in the past tense ("我先帮你顺延了") = act-first. The
+		// alternative considered and rejected was "move provisionally, revert if
+		// unanswered", which sounds gentler and is not: the plan would change
+		// twice with the user doing nothing, so what they saw at 09:00 is not
+		// what is there at 10:00, and the ledger carries a move and a revert for
+		// something they never touched. Ask-first keeps one promise instead —
+		// the plan changes only after they press something.
+		//
+		// Flipping it is one constant plus a producer for AppliedOpIDs (an
+		// act-first card must name what it already did, and the store enforces
+		// that).
 		TTLPolicy: domain.TTLSilenceRejects,
 		// One card per stretch, so a second nudge cannot stack on the first.
 		MergeKey: "protector:" + runKey,
@@ -155,6 +164,12 @@ func (w *Worker) checkProtector(sid, tz string) {
 		},
 	}
 	p.ExpiresAt = domain.ProposalExpiry(p, now, loc, nil)
+	// Queued, NOT delivered. It fires at four in the morning because that is when
+	// somebody has been up for twenty hours; stamping it delivered right then
+	// makes it a card "shown" at 4am and read at noon, when it is a remark about
+	// yesterday. It becomes visible on the user's next visit, and if it lapses
+	// before that it is voided having never been shown — which is honest, because
+	// the moment it was about has passed. See proposal_delivery.go.
 	if err := w.s.store.Proposals().Create(ctx, p); err != nil {
 		jobErr = err
 		w.log.Warn("protector: could not create the card", "sid", sid, "err", err)
@@ -172,6 +187,12 @@ func (w *Worker) checkProtector(sid, tz string) {
 
 	// Worth a push budget entry, says §5. Spending it is the caller's call, and
 	// the budget is shared with everything else that pushes today.
+	//
+	// ⚠️ This card is SOFT-backed (BackingOf → soft: it is something the
+	// assistant noticed, not a commitment anybody made), so it gets one delivery
+	// and never comes back louder. It reaches L3 anyway because L3 is about
+	// medium — "this is worth a push" — while backing is about whether it may
+	// ESCALATE. The two are independent and this is the case that shows it.
 	if w.spendPushBudget(ctx, sid, now, loc) {
 		w.sendToChannels(ctx, sid, p.Title+"\n"+body)
 		pushed := time.Now()
