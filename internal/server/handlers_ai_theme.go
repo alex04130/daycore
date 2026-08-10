@@ -108,7 +108,7 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 			vars[k] = sv
 		}
 	}
-	clean, dropped := sanitizeThemeVariables(vars)
+	clean, dropped := s.sanitizeThemeVariables(vars)
 	if len(clean) == 0 {
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "主题解析出了点问题，请重试"})
 		return

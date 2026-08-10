@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 
 	"daycore/internal/domain"
@@ -37,11 +36,27 @@ var themeVarWhitelist = map[string]string{
 	"--error":          "危险状态色",
 }
 
-// themeColorRe accepts only plain color literals: hex, rgb()/rgba(),
-// hsl()/hsla(), or "transparent". The tight charset (no ";", "}", "u", …)
-// makes CSS/HTML injection through a variable value impossible.
-var themeColorRe = regexp.MustCompile(
-	`^(#[0-9a-fA-F]{3,8}|(rgb|rgba|hsl|hsla)\([0-9.,%\s/deg]+\)|transparent)$`)
+// The token space this build knows, as kinds.
+//
+// ⚠️ TRANSITIONAL. It is a hand-written map because there is exactly one
+// frontend today and its token list is the design system's. F7 replaces it with
+// a per-FAMILY token space assembled from what each build declares in its
+// handshake, at which point this map becomes the fallback manifest for the
+// current frontend — see docs/specs/frontend-manifest.md.
+//
+// What has already changed is the important half: the VALIDATOR. It used to be
+// one regexp for one kind (colour), so a token that wanted a length or a ratio
+// had nowhere to go, and the injection guarantee rested on that one regexp's
+// character class. Now every value goes through internal/theme — a kind
+// registry that is data rather than code, plus a character floor that holds
+// whatever the kind says.
+var themeVarKinds = func() map[string]string {
+	m := map[string]string{}
+	for name := range themeVarWhitelist {
+		m[name] = "color"
+	}
+	return m
+}()
 
 // builtinThemePresets mirrors the four shipped themes' tokens so AI generation
 // can start from a real base. Values follow FRONTEND_HANDOFF §5.1/§5.2.
@@ -76,18 +91,24 @@ var builtinThemePresets = map[string]domain.CustomTheme{
 	}},
 }
 
-// validateThemeVariables checks every entry against the whitelist and the
-// color-literal grammar. Empty maps are rejected (a theme must change something).
-func validateThemeVariables(vars map[string]string) error {
+// validateThemeVariables checks every entry against the token space and its
+// kind. Empty maps are rejected (a theme must change something).
+//
+// ⚠️ Every value passes internal/theme's character floor as well as its kind's
+// pattern, and the floor is the part the injection guarantee rests on — see
+// that package. A token whose kind this deployment does not know is REFUSED
+// rather than waved through: an unknown kind means nothing validated it.
+func (s *Server) validateThemeVariables(vars map[string]string) error {
 	if len(vars) == 0 {
 		return fmt.Errorf("variables must not be empty")
 	}
 	for k, v := range vars {
-		if _, ok := themeVarWhitelist[k]; !ok {
+		kind, ok := themeVarKinds[k]
+		if !ok {
 			return fmt.Errorf("unknown variable %q", k)
 		}
-		if !themeColorRe.MatchString(strings.TrimSpace(v)) {
-			return fmt.Errorf("invalid color value for %s: %q", k, v)
+		if err := s.themeKinds.Validate(kind, v); err != nil {
+			return fmt.Errorf("%s: %w", k, err)
 		}
 	}
 	return nil
@@ -96,12 +117,17 @@ func validateThemeVariables(vars map[string]string) error {
 // sanitizeThemeVariables keeps only whitelisted keys with valid color values,
 // reporting what was dropped (used on AI output, which must degrade gracefully
 // rather than hard-fail).
-func sanitizeThemeVariables(vars map[string]string) (map[string]string, []string) {
+func (s *Server) sanitizeThemeVariables(vars map[string]string) (map[string]string, []string) {
 	out := map[string]string{}
 	var dropped []string
 	for k, v := range vars {
 		v = strings.TrimSpace(v)
-		if _, ok := themeVarWhitelist[k]; !ok || !themeColorRe.MatchString(v) {
+		kind, ok := themeVarKinds[k]
+		if !ok {
+			dropped = append(dropped, k)
+			continue
+		}
+		if err := s.themeKinds.Validate(kind, v); err != nil {
 			dropped = append(dropped, k)
 			continue
 		}
@@ -155,7 +181,7 @@ func (s *Server) handleThemeCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := validateThemeVariables(in.Variables); err != nil {
+	if err := s.validateThemeVariables(in.Variables); err != nil {
 		s.writeErr(w, http.StatusBadRequest, "invalid_theme", err.Error())
 		return
 	}
@@ -191,7 +217,7 @@ func (s *Server) handleThemePatch(w http.ResponseWriter, r *http.Request) {
 	}
 	upd.Dark = in.Dark
 	if in.Variables != nil {
-		if err := validateThemeVariables(in.Variables); err != nil {
+		if err := s.validateThemeVariables(in.Variables); err != nil {
 			s.writeErr(w, http.StatusBadRequest, "invalid_theme", err.Error())
 			return
 		}

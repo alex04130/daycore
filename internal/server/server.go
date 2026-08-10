@@ -17,6 +17,7 @@ import (
 	"daycore/internal/config"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
+	"daycore/internal/theme"
 	"daycore/internal/weather"
 	"daycore/internal/websearch"
 )
@@ -43,8 +44,11 @@ type Deps struct {
 	WebSearch *websearch.Sources
 	// Blobs is the file bus. nil is a supported configuration — every feature
 	// that needs bytes checks and says so.
-	Blobs  blob.Store
-	Logger *slog.Logger
+	Blobs blob.Store
+	// ThemeKinds validates theme token values. nil is fine — the server builds
+	// the embedded floor.
+	ThemeKinds *theme.Registry
+	Logger     *slog.Logger
 }
 
 // Server holds the dependencies and exposes an http.Handler.
@@ -115,6 +119,12 @@ type Server struct {
 	// the one deployment shape (front and back deployed separately) the project
 	// is moving towards.
 	staticRoot string
+
+	// themeKinds validates theme token values. Never nil — New builds one from
+	// the embedded floor even when no Deps carry one, because a nil registry
+	// would make every theme write panic in exactly the deployments that have
+	// no extra kinds (which is all of them today).
+	themeKinds *theme.Registry
 
 	// restarter is the process-level restart, installed by cmd/daycore. Nil in
 	// tests and in any build with no process behind it — see restart.go.
@@ -210,8 +220,14 @@ func (s *Server) SetWorker(w *Worker) { s.worker = w }
 
 // New builds a Server.
 func New(d Deps) *Server {
+	kinds := d.ThemeKinds
+	if kinds == nil {
+		// The embedded floor. Never nil — see the field.
+		kinds = theme.NewRegistry()
+	}
 	return &Server{
-		cfg: d.Config, store: d.Store, catalog: d.Catalog, vision: d.Vision,
+		themeKinds: kinds,
+		cfg:        d.Config, store: d.Store, catalog: d.Catalog, vision: d.Vision,
 		prompts: d.Prompts, hasher: d.Hasher, tokens: d.Tokens, cookies: d.Cookies,
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),

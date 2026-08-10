@@ -82,6 +82,8 @@ var Settings = []Setting{
 		Why: "selects a driver; the Store is constructed once"},
 	{Env: "PROMPTS_DIR", Field: "PromptsDir", Layer: LayerBoot,
 		Why: "templates and the hard boundaries are overlaid at startup"},
+	{Env: "THEME_KINDS_DIR", Field: "ThemeKindsDir", Layer: LayerBoot,
+		Why: "主题取值 kind 的文件层，启动时读一次合进注册表；改完要重启。加一种 kind 是丢一个 JSON 文件，不是发一次版"},
 	{Env: "LOCALES_DIR", Field: "LocalesDir", Layer: LayerBoot,
 		Why: "language packs are loaded into the catalog at startup"},
 	{Env: "MODELS_CONFIG", Field: "ModelsConfigPath", Layer: LayerBoot,

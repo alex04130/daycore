@@ -24,6 +24,7 @@ import (
 	"daycore/internal/search"
 	"daycore/internal/server"
 	"daycore/internal/storage"
+	"daycore/internal/theme"
 	"daycore/internal/version"
 
 	// Register AI wire formats (self-register via init()).
@@ -215,21 +216,32 @@ func run(logger *slog.Logger) error {
 		logger.Warn("provider unavailable", "err", w)
 	}
 
+	// Theme value kinds: embedded floor, then whatever THEME_KINDS_DIR adds.
+	// A malformed file there is logged rather than fatal — the same call the
+	// locale directory makes, and for the same reason: one bad file must not
+	// stop a deployment from starting.
+	themeKinds := theme.NewRegistry()
+	if err := themeKinds.LoadDir(cfg.ThemeKindsDir); err != nil {
+		logger.Warn("some theme kinds were not loaded; the built-in ones still apply",
+			"dir", cfg.ThemeKindsDir, "err", err)
+	}
+
 	srv := server.New(server.Deps{
-		Config:    cfg,
-		Store:     store,
-		Catalog:   catalog,
-		Vision:    ai.NewOrchestrator(catalog),
-		Prompts:   prompts,
-		Hasher:    auth.NewHasher(cfg.Pepper),
-		Tokens:    auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
-		Cookies:   auth.NewCookieSigner(cfg.CookieSecret),
-		OAuth:     oauthMgr,
-		Searcher:  search.NewMaterialSearcher(store),
-		Weather:   weatherSources,
-		WebSearch: searchSources,
-		Blobs:     blobStore,
-		Logger:    logger,
+		ThemeKinds: themeKinds,
+		Config:     cfg,
+		Store:      store,
+		Catalog:    catalog,
+		Vision:     ai.NewOrchestrator(catalog),
+		Prompts:    prompts,
+		Hasher:     auth.NewHasher(cfg.Pepper),
+		Tokens:     auth.NewTokenIssuer(cfg.JWTSecret, cfg.JWTTTL),
+		Cookies:    auth.NewCookieSigner(cfg.CookieSecret),
+		OAuth:      oauthMgr,
+		Searcher:   search.NewMaterialSearcher(store),
+		Weather:    weatherSources,
+		WebSearch:  searchSources,
+		Blobs:      blobStore,
+		Logger:     logger,
 	})
 
 	if degradedReason != "" {

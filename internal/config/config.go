@@ -132,6 +132,12 @@ type Config struct {
 	// set of languages the product supports.
 	LocalesDir string
 
+	// ThemeKindsDir holds *.json files declaring extra theme value kinds, read
+	// at startup and merged over the embedded six. Boot-layer for the same
+	// reason LocalesDir is: the registry is built once and handed to the
+	// server.
+	ThemeKindsDir string
+
 	// UsingDevSecrets is true when JWT/Cookie secrets fell back to the insecure
 	// public dev defaults (no real secret configured). main.go warns on it.
 	UsingDevSecrets bool
@@ -269,6 +275,12 @@ func Load() (*Config, error) {
 	}
 	// Message packs load before the pair is validated, because a pack is what
 	// makes a locale valid to pick in the first place.
+	// Theme value kinds: the same three-layer shape as the message catalogue,
+	// so adding one is a file rather than a release. A missing directory is the
+	// default and is not an error; a malformed file in it IS, because somebody
+	// put it there on purpose. See internal/theme.
+	c.ThemeKindsDir = getEnv("THEME_KINDS_DIR", "theme-kinds")
+
 	c.LocalesDir = getEnv("LOCALES_DIR", "locales")
 	if err := i18n.Std().LoadDir(c.LocalesDir); err != nil {
 		return nil, err
