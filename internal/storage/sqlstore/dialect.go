@@ -80,6 +80,14 @@ const legacyPromptCopy = `INSERT INTO prompt_overrides (prompt_key, locale, cont
 // caught reminders_off being TINYINT(1) in one and INTEGER in the other.
 func sessionColumnMigrations(textType, boolType string) []ColumnMigration {
 	migs := []ColumnMigration{
+		// ⚠️ boolType, not a literal: the column a fresh database gets from
+		// CREATE TABLE and the one an upgraded database gets from ALTER must be
+		// the SAME type. dialect_parity_test.go asserts it, and it is the test
+		// that caught reminders_off being TINYINT(1) in one and INTEGER in the
+		// other — a difference that is permanent and invisible until somebody
+		// compares two deployments.
+		{Table: "users", Column: "is_owner",
+			DDL: `ALTER TABLE users ADD COLUMN is_owner ` + boolType + ` NOT NULL DEFAULT 0`},
 		{Table: "sessions", Column: "language",
 			DDL: `ALTER TABLE sessions ADD COLUMN language ` + textType + ` NOT NULL DEFAULT ''`},
 		{Table: "sessions", Column: "import_token",

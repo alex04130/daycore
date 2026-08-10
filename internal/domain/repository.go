@@ -51,6 +51,11 @@ type Store interface {
 	// writes the file.
 	ProviderOverrides() ProviderOverrideRepository
 
+	// Roles is the console permission model: named permission sets, and who is
+	// in them. A role with no permissions is a plain user group — which is what
+	// a commercial tier is. See role.go.
+	Roles() RoleRepository
+
 	// Attachments is the ownership half of the file bus: internal/blob maps refs
 	// to bytes and knows nothing about sessions, so these rows are what makes a
 	// ref safe to resolve. See attachment.go.
@@ -135,6 +140,22 @@ type UserRepository interface {
 	// IncrementTokenVersion bumps the user's token version, invalidating every
 	// previously issued JWT (used on logout).
 	IncrementTokenVersion(ctx context.Context, userID string) error
+	// SetOwner marks or unmarks the super-administrator flag.
+	//
+	// ⚠️ A NARROW setter, and it must stay one. Upsert takes a whole *User and
+	// the OAuth callback builds one out of what the provider returned — so the
+	// moment is_owner appears in Upsert's column list, logging in becomes a
+	// privilege escalation write. The same arrangement already protects
+	// TokenVersion and DataSessionID; unlike those, this one has a conformance
+	// case pinning it across all four back ends.
+	SetOwner(ctx context.Context, userID string, owner bool) error
+	// List returns users for the console, newest first, capped.
+	//
+	// It exists because "who can export the database" has to be answerable, and
+	// every safety rule in the permission model — refusing to remove the last
+	// owner, showing how many people a role edit affects — assumes the set can
+	// be enumerated.
+	List(ctx context.Context, limit int) ([]User, error)
 }
 
 type AuthRepository interface {

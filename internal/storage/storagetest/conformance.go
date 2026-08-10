@@ -125,6 +125,8 @@ var cases = []suiteCase{
 	{"Attachment/PruneReclaimsOnlyUnsentUploads", attachmentPruneUnbound},
 	{"Setting/OverrideRoundTripAndReset", settingRoundTrip},
 	{"ProviderOverride/TriStateEnabledAndApprovalRevoke", providerOverrideRoundTrip},
+	{"User/UpsertNeverTouchesTheOwnerMark", upsertNeverTouchesOwner},
+	{"Role/MembershipAndDeleteTakesItsMembers", roleMembership},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -1980,3 +1982,177 @@ func providerOverrideRoundTrip(t *testing.T, h Harness) {
 		t.Errorf("after one delete: %d rows, want 2", len(all))
 	}
 }
+
+// The OAuth callback builds a *domain.User out of what the provider returned and
+// hands it to Upsert. So if is_owner ever appears in the column list — or if a
+// back end starts replacing the whole document instead of $set-ing a field list
+// — **logging in becomes a privilege escalation write**.
+//
+// This is a convention today (TokenVersion and DataSessionID are protected the
+// same way, and nothing tests them). It gets a conformance case because the
+// consequence is not "a field gets clobbered": it is that a stranger with a
+// Google account can become the super-administrator, and because the Mongo
+// variant of the mistake is invisible on SQL — the four back ends would not
+// fail together.
+func upsertNeverTouchesOwner(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+	repo := s.Users()
+
+	created, err := repo.Upsert(ctx, &domain.User{Name: strPtr("someone")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.IsOwner {
+		t.Fatal("a newly created user is an owner")
+	}
+	if err := repo.SetOwner(ctx, created.ID, true); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+	if got, _ := repo.GetByID(ctx, created.ID); got == nil || !got.IsOwner {
+		t.Fatal("SetOwner did not stick")
+	}
+
+	// The escalation shape, both directions.
+	//
+	// A login carrying IsOwner:false must not CLEAR the mark (that is a
+	// self-inflicted lockout: the last owner logs in through Google and stops
+	// being an owner), and one carrying IsOwner:true must not SET it.
+	if _, err := repo.Upsert(ctx, &domain.User{ID: created.ID, Name: strPtr("renamed"), IsOwner: false}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := repo.GetByID(ctx, created.ID)
+	if after == nil || !after.IsOwner {
+		t.Error("Upsert with IsOwner:false cleared the owner mark — a login would demote the last owner")
+	}
+	if after.Name == nil || *after.Name != "renamed" {
+		t.Error("Upsert did not apply the fields it IS supposed to write")
+	}
+
+	other, err := repo.Upsert(ctx, &domain.User{Name: strPtr("stranger")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Upsert(ctx, &domain.User{ID: other.ID, Name: strPtr("stranger"), IsOwner: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := repo.GetByID(ctx, other.ID)
+	if got == nil || got.IsOwner {
+		t.Error("Upsert with IsOwner:true made somebody an owner — this is the OAuth callback's shape exactly")
+	}
+
+	// And the list the console needs, with the mark on it.
+	users, err := repo.List(ctx, 50)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(users) < 2 {
+		t.Fatalf("List returned %d users, want at least 2", len(users))
+	}
+	owners := 0
+	for _, u := range users {
+		if u.IsOwner {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Errorf("List reports %d owners, want exactly 1 — every 'is this the last owner' check reads this", owners)
+	}
+}
+
+// Roles, membership, and the two properties that are only interesting because
+// getting them wrong is silent.
+func roleMembership(t *testing.T, h Harness) {
+	s := h.Store()
+	ctx := bg()
+	repo := s.Roles()
+
+	if got, err := repo.ListRoles(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a fresh store has %d roles (err=%v); nil must come back as an empty slice", len(got), err)
+	}
+	if _, err := repo.GetRole(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetRole on a missing role returned %v, want ErrNotFound", err)
+	}
+
+	// A role with no permissions is a plain group — a commercial tier — and that
+	// is a meaningful state, not an unfinished one. It has to round-trip as an
+	// empty slice rather than nil, because IsAdminRole() is what the assignment
+	// check reads.
+	if err := repo.UpsertRole(ctx, domain.Role{Name: "tier-free", Description: "免费档"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertRole(ctx, domain.Role{
+		Name: "support", Description: "客服", Permissions: []string{"users.read", "overview.read"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	roles, err := repo.ListRoles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(roles) != 2 || roles[0].Name != "support" || roles[1].Name != "tier-free" {
+		t.Fatalf("ListRoles = %+v, want two sorted by name", roles)
+	}
+	if roles[1].IsAdminRole() {
+		t.Error("a role with no permissions reports as an admin role — the assignment check reads exactly this")
+	}
+	if !roles[0].IsAdminRole() || len(roles[0].Permissions) != 2 {
+		t.Errorf("permissions did not round-trip: %+v", roles[0])
+	}
+
+	// Membership, and its idempotence: two consoles clicking the same button is
+	// ordinary and must not be an error.
+	if err := repo.AddMember(ctx, "support", "u-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMember(ctx, "support", "u-1"); err != nil {
+		t.Errorf("adding an existing member is not idempotent: %v", err)
+	}
+	if err := repo.AddMember(ctx, "support", "u-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddMember(ctx, "tier-free", "u-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.MembersOf(ctx, "support"); len(got) != 2 || got[0] != "u-1" || got[1] != "u-2" {
+		t.Errorf("MembersOf = %v, want [u-1 u-2] — 'who can export the database' is this query", got)
+	}
+	if got, _ := repo.RolesOf(ctx, "u-1"); len(got) != 2 || got[0] != "support" || got[1] != "tier-free" {
+		t.Errorf("RolesOf = %v, want both roles sorted", got)
+	}
+
+	if err := repo.RemoveMember(ctx, "support", "u-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RemoveMember(ctx, "support", "u-2"); err != nil {
+		t.Errorf("removing an absent member is not idempotent: %v", err)
+	}
+
+	// Deleting a role takes its membership with it.
+	//
+	// Otherwise the rows survive granting nothing — until somebody creates a
+	// role with the same name, at which point a set of people SILENTLY regain a
+	// permission set that was deleted. Nothing reports that, and "support" is
+	// exactly the kind of name that gets recreated.
+	if err := repo.DeleteRole(ctx, "support"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteRole(ctx, "support"); err != nil {
+		t.Errorf("deleting an absent role is not idempotent: %v", err)
+	}
+	if got, _ := repo.MembersOf(ctx, "support"); len(got) != 0 {
+		t.Errorf("deleting a role left %v behind — recreating the name would silently restore them", got)
+	}
+	if got, _ := repo.RolesOf(ctx, "u-1"); len(got) != 1 || got[0] != "tier-free" {
+		t.Errorf("RolesOf after the delete = %v, want only tier-free", got)
+	}
+
+	if err := repo.UpsertRole(ctx, domain.Role{Name: ""}); err == nil {
+		t.Error("a role with no name was accepted; nothing could ever reference it")
+	}
+	if err := repo.AddMember(ctx, "tier-free", ""); err == nil {
+		t.Error("a membership with no user was accepted")
+	}
+}
+
+func strPtr(s string) *string { return &s }

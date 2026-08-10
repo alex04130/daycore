@@ -195,6 +195,7 @@ func (mysqlDialect) Migrations() []string {
 			is_anonymous INTEGER NOT NULL DEFAULT 0,
 			data_session_id VARCHAR(191) NOT NULL DEFAULT '',
 			token_version INTEGER NOT NULL DEFAULT 0,
+			is_owner TINYINT(1) NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
@@ -336,6 +337,20 @@ func (mysqlDialect) Migrations() []string {
 			setting_key VARCHAR(191) PRIMARY KEY,
 			value TEXT NOT NULL,
 			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS roles (
+			name VARCHAR(64) PRIMARY KEY,
+			description TEXT,
+			permissions_json TEXT,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS role_members (
+			role_name VARCHAR(64) NOT NULL,
+			user_id VARCHAR(191) NOT NULL,
+			created_at BIGINT NOT NULL,
+			PRIMARY KEY (role_name, user_id),
+			KEY role_members_user (user_id)
 		)`,
 		`CREATE TABLE IF NOT EXISTS provider_overrides (
 			kind VARCHAR(32) NOT NULL,

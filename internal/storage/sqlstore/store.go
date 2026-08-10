@@ -170,6 +170,7 @@ func (s *Store) Rhythm() domain.RhythmRepository                  { return rhyth
 func (s *Store) Locales() domain.LocaleRepository                 { return localeRepo{s} }
 func (s *Store) Attachments() domain.AttachmentRepository         { return attachmentRepo{s} }
 func (s *Store) Settings() domain.SettingRepository               { return settingRepo{s} }
+func (s *Store) Roles() domain.RoleRepository                     { return roleRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}
 }

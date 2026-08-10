@@ -585,6 +585,7 @@ cron 条目里编着**旧时区**的 `CRON_TZ`。一个存了但 cron 不反映�
 | **空字符串 vs 字段缺失**（BSON `omitempty`） | `{"field": ""}` 在 Mongo 上匹配不到省略了该字段的文档，同一个谓词在 SQL 上匹配所有默认行 —— 清扫/筛选静默变成空操作 | 参与查询的字段**不加 `omitempty`**，显式存 `""`。见 `mongostore/attachment_repo.go` 的 doc |
 | **JSON 数字回来的 Go 类型**（BSON int32 vs encoding/json float64） | `args["minutes"].(float64)` 在一个后端上断言失败 | proposals 的 rows/ops 两边都过 `encoding/json`，代价是两边同样有精度上限（>2^53 的整数不能进工具参数） |
 | **nil 切片 vs 空切片** | 一边回 `nil` 一边回 `[]`，JSON 序列化出 `null` 与 `[]` 两种 | 套件已断言统一（`RoundTrip` 类用例），新 repository 照做 |
+| **Mongo 的 sparse 唯一索引不跳过显式 `null`**（2026-08-10 发现，见下） | 写 `{"email": null}` 会让所有无邮箱用户挤进同一个索引键，第二个直接 E11000。SQL 的唯一索引允许多个 NULL，所以**只在一个后端上炸，而且只炸匿名用户** —— 也就是绝大多数用户 | 可空且被唯一索引覆盖的字段，nil 要 `$unset` 而不是 `$set` 成 null。见 `mongostore/user_repo.go` 的 `Upsert` |
 
 **加一条差异时**：先问它能不能变成套件里的一条用例（那样它就消失了）；只有在 `domain.Store` 接口表达不了的时候，才记到这张表上。
 

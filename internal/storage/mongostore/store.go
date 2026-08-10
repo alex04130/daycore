@@ -114,6 +114,7 @@ func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRep
 
 // θ-F4b — the runtime half of configuration layering.
 func (s *Store) Settings() domain.SettingRepository { return settingRepo{s} }
+func (s *Store) Roles() domain.RoleRepository       { return roleRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}
 }
