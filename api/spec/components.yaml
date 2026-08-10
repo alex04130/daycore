@@ -535,6 +535,36 @@ components:
         status: { type: string, enum: [ok, failed] }
         requestId: { type: string }
         createdAt: { type: string, format: date-time }
+    AdminPrincipal:
+      type: object
+      description: >-
+        Who is holding a console session, and what they may do. `root` is the
+        ADMIN_TOKEN (or a cookie minted from it) and passes everything; `owner`
+        is a person marked as super-administrator, which is a MARK rather than a
+        role holding every permission — so a permission added in a later release
+        is held by every owner with no data change. Otherwise `permissions` is
+        the union of the caller's groups.
+      properties:
+        root: { type: boolean }
+        owner: { type: boolean }
+        userId: { type: string, description: Absent for the root credential. }
+        permissions: { type: array, items: { type: string } }
+        ok: { type: boolean, description: Present on login only. }
+        expiresIn: { type: integer, description: 'Seconds; present on login only.' }
+    AdminRole:
+      type: object
+      description: >-
+        A named permission set, and also a user group — one shape for both,
+        because the only difference is whether `permissions` is empty. An empty
+        set is a plain group, which is what a commercial tier is; `admin` is
+        derived from that rather than stored, so it can never go stale in the
+        dangerous direction.
+      properties:
+        name: { type: string, maxLength: 64 }
+        description: { type: string }
+        permissions: { type: array, items: { type: string } }
+        members: { type: array, items: { type: string }, description: User ids. }
+        admin: { type: boolean, description: Derived; true when permissions is non-empty. }
     AdminStats:
       type: object
       properties:

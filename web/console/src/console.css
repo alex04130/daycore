@@ -142,3 +142,36 @@ ul.tight { margin: .3rem 0 0; padding-left: 1.2rem; }
 .suggestion.confirming { border-style: solid; border-color: var(--warn); }
 .quoted { margin: 0; padding: .5rem .6rem; background: var(--bg); border-radius: 6px;
   white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: .85rem; }
+
+/* users & roles */
+.block { border-top: 1px solid var(--line); padding-top: 1rem; margin-top: 1.5rem; }
+.block-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.block-head h2 { font-size: 1rem; margin: 0; }
+.row { border: 1px solid var(--line); border-radius: 8px; padding: .75rem .9rem;
+       margin-top: .6rem; display: flex; gap: 1rem; align-items: flex-start; }
+.row-main { flex: 1; min-width: 0; display: grid; gap: .35rem; }
+.row-title { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+.row-actions { display: flex; gap: .6rem; align-items: flex-start; flex-wrap: wrap; }
+.perm-chips { display: flex; gap: .4rem; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); border-radius: 999px; padding: .1rem .55rem;
+        font-size: .78rem; }
+.chip.toggle { display: inline-flex; gap: .35rem; align-items: center; cursor: pointer; }
+.chip.toggle.on { border-color: var(--accent); color: var(--accent); }
+.pill.small { font-size: .68rem; padding: 0 .35rem; }
+.muted { color: var(--dim); font-size: .82rem; }
+.role-editor { display: grid; gap: .75rem; }
+/* Two columns, so the damage line beside each switch has room to be a sentence.
+   It is not a tooltip on purpose: the person granting is deciding what somebody
+   else can break, and a sentence they must hover to see is one they will not
+   read. */
+.perm-grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+.perm { display: flex; gap: .5rem; align-items: flex-start; padding: .5rem .6rem;
+        border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.perm.on { border-color: var(--accent); }
+.perm code { font-size: .8rem; }
+.perm .sub { margin: .15rem 0 0; font-size: .78rem; }
+.or { color: var(--dim); font-size: .78rem; text-align: center; margin: .8rem 0 .4rem; }
+button.secondary { background: none; border: 1px solid var(--line); color: var(--fg);
+                   border-radius: 6px; padding: .4rem .8rem; cursor: pointer; }
+button.secondary:disabled { opacity: .4; cursor: default; }
+.meta-line.who { font-family: var(--mono); font-size: .72rem; overflow-wrap: anywhere; }

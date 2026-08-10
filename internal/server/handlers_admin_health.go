@@ -51,10 +51,6 @@ var startedAt = time.Now()
 // Everything above is either an internal detail or a timing signal. The
 // unauthenticated endpoint stays exactly as terse as it is.
 func (s *Server) handleAdminHealth(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminHealth.unauthorized")
-		return
-	}
 
 	out := map[string]any{
 		"degraded":  s.Degraded(),

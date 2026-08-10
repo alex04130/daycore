@@ -83,7 +83,25 @@ async function request(path, { method = 'GET', body } = {}) {
 // field for as long as the request takes and then it is gone. Anything else —
 // a variable, storage, a retry buffer — is a long-lived credential in the page.
 export const login = (token) => request('/session', { method: 'POST', body: { token } });
+
+// loginAsMyself exchanges the signed-in user's OWN login for a console session.
+//
+// An empty body is the whole request: the credential is the dc_auth cookie the
+// browser already holds, and this endpoint is what turns it into a console
+// cookie whose permissions come from that person's groups. Somebody with no
+// console permission is refused here rather than handed a credential that can
+// do nothing.
+export const loginAsMyself = () => request('/session', { method: 'POST', body: {} });
+
 export const logout = () => request('/session', { method: 'DELETE' });
+
+// whoami is the first call after a reload: who is holding this session and what
+// may they do.
+//
+// ⚠️ Its answer drives which sections render, and that is a COURTESY. Every
+// endpoint checks for itself — hiding a screen is so nobody clicks into a 403,
+// not a substitute for the server refusing.
+export const whoami = () => request('/session');
 
 // ── the eight sections ─────────────────────────────────────────────────────
 
@@ -97,6 +115,28 @@ export const getModels = () => request('/models');
 export const testModel = (id) => request(`/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
 
 export const getOAuth = () => request('/oauth');
+
+export const getUsers = () => request('/users');
+export const getRoles = () => request('/roles');
+export const getPermissions = () => request('/permissions');
+
+// putRole REPLACES what a group grants — the body is the new set, because a
+// merge cannot express "take this away".
+export const putRole = (name, body) =>
+  request(`/roles/${encodeURIComponent(name)}`, { method: 'PUT', body });
+export const deleteRole = (name) =>
+  request(`/roles/${encodeURIComponent(name)}`, { method: 'DELETE' });
+
+// putUserRoles sends the whole membership set for one person, for the same
+// reason: an add/remove pair is two requests that can half-apply.
+export const putUserRoles = (id, roles) =>
+  request(`/users/${encodeURIComponent(id)}/roles`, { method: 'PUT', body: { roles } });
+
+// putUserOwner is root-credential-only on the server. The console shows the
+// control to everybody and lets the 403 explain, rather than hiding the one
+// path out of a locked-out deployment.
+export const putUserOwner = (id, owner) =>
+  request(`/users/${encodeURIComponent(id)}/owner`, { method: 'PUT', body: { owner } });
 
 // ── meta (not under /api/admin) ────────────────────────────────────────────
 

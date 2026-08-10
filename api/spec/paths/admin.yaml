@@ -96,8 +96,19 @@
   post:
     operationId: adminLogin
     tags: [admin]
-    summary: Exchange the raw admin token for a short-lived console cookie.
+    summary: Obtain a short-lived console cookie, from the admin token or from your own login.
     description: >-
+      TWO WAYS TO LOG IN, and only one of them is a password. Send
+      `{"token": "<ADMIN_TOKEN>"}` for the root credential, which passes
+      everything. Send `{}` while already signed in (dc_auth or a Bearer token)
+      to exchange your OWN login for a console session whose permissions come
+      from your roles — an ordinary user with no permissions is refused rather
+      than handed a credential that can do nothing.
+
+      It is an EXCHANGE, not an acceptance: dc_auth is long-lived and Path=/, so
+      letting it authenticate /api/admin/* directly would give up SameSite=Strict,
+      the narrow cookie path and the short TTL all at once.
+
       TWO WAYS INTO THE ADMIN API, for two callers. Machines (curl, CI, deploy
       scripts) keep sending `X-Admin-Token` on every request — that path is
       unchanged and was never the problem: the token is in a header rather than
@@ -122,12 +133,28 @@
       ⚠️ An unset ADMIN_TOKEN no longer means "open outside production". The
       server generates one at startup and prints it; there is no unauthenticated
       state to fall into.
-    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+    requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { token: { type: string, description: 'ADMIN_TOKEN. Omit to exchange your own login instead.' } } } } } }
     responses:
-      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, expiresIn: { type: integer, description: seconds } } } } } }
-      '401': { description: Wrong token. }
-      '403': { description: Cross-origin request. }
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPrincipal' } } } }
+      '401': { description: Wrong token, or no login to exchange. }
+      '403': { description: Cross-origin request, or a signed-in account with no console permission. }
       '429': { description: Rate limited (shares the auth limiter). }
+  get:
+    operationId: adminWhoAmI
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Who am I, and what may I do.
+    description: >-
+      The console's first call after a reload. Needs a credential but no
+      permission: the answer is the caller's own permission list, which tells
+      them nothing clicking around would not.
+
+      ⚠️ The console uses this to hide sections it cannot open. Hiding is a
+      courtesy — every endpoint checks for itself, and a client that lies to
+      itself about what it holds gets 403s, not access.
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminPrincipal' } } } }
+      '401': { $ref: '#/components/responses/Error' }
   delete:
     operationId: adminLogout
     tags: [admin]
@@ -159,6 +186,138 @@
   get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
 /api/admin/users/{id}:
   delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+/api/admin/permissions:
+  get:
+    operationId: adminPermissions
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Every permission this build defines, with the sentence to grant from.
+    description: >-
+      Each entry carries a `damage` line saying what somebody holding it can do,
+      in terms of CONSEQUENCE rather than endpoints — the person granting is
+      deciding what somebody else can break, usually quickly, so "manage config"
+      is not something a decision can be made from.
+
+      Requires users.read rather than roles.edit: somebody who can see that a
+      person is in the "support" group needs to be able to see what "support"
+      means, or the user list is a screen of names that mean nothing.
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { permissions: { type: array, items: { type: object, properties: { id: { type: string }, damage: { type: string } } } } } } } } }
+      '403': { $ref: '#/components/responses/Error' }
+/api/admin/roles:
+  get:
+    operationId: adminRoles
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Every group, what it grants, and who is in it.
+    description: >-
+      Members come back with the list rather than behind a second call, because
+      the question a role list is read to answer is "who can do this" — and a
+      screen needing N+1 requests to answer it will be built to not answer it.
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { type: object, properties: { roles: { type: array, items: { $ref: '#/components/schemas/AdminRole' } } } } } } }
+      '403': { $ref: '#/components/responses/Error' }
+      '503': { description: 'Degraded: no database, so groups cannot be read.' }
+/api/admin/roles/{name}:
+  put:
+    operationId: adminSetRole
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Create or replace what a group grants. Requires roles.edit.
+    description: >-
+      ⚠️ REPLACE, not merge — the body IS the new permission set. A merge
+      endpoint cannot express "take this away", and the console's editor is a
+      set of switches whose whole content is already the answer.
+
+      ⚠️ roles.edit is OWNER-EQUIVALENT. Whoever can edit a group's permissions
+      can put themselves in an all-powerful one. That is true of every RBAC and
+      is not a flaw here, but granting it is the same decision as making somebody
+      an owner. It is deliberately a different permission from users.assign for
+      exactly that reason: holding both is holding everything.
+
+      An unknown permission id is refused rather than stored — a stored id that
+      nothing matches is a group that grants LESS than its own definition says,
+      and the definition is what the person granting it reads.
+    parameters: [{ name: name, in: path, required: true, schema: { type: string, maxLength: 64 } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { description: { type: string }, permissions: { type: array, items: { type: string } } } } } } }
+    responses:
+      '200': { description: OK }
+      '400': { description: Empty or over-long name, or an unknown permission id. }
+      '403': { $ref: '#/components/responses/Error' }
+      '503': { description: 'Degraded: no database.' }
+  delete:
+    operationId: adminDeleteRole
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Remove a group and everybody's membership in it. Requires roles.edit.
+    description: >-
+      Both, in one call. Orphaned membership rows grant nothing until somebody
+      recreates a group with the same name — at which point a set of people
+      silently regain a permission set that was deleted.
+    parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+    responses:
+      '200': { description: OK }
+      '403': { $ref: '#/components/responses/Error' }
+      '503': { description: 'Degraded: no database.' }
+/api/admin/users/{id}/roles:
+  put:
+    operationId: adminSetUserRoles
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Set which groups one person is in. Requires users.assign.
+    description: >-
+      The commercial operation — moving a customer between tiers — and
+      deliberately reachable without any power to change what those tiers mean.
+
+      ⚠️ ADDITIONALLY requires roles.edit when any group being JOINED OR LEFT
+      carries a permission, evaluated against the group as it is at that moment.
+      Without that, "assign only" would quietly become "grant anything that
+      already exists". The check is on the DIFFERENCE, so leaving somebody in a
+      group they are already in never needs the higher permission.
+
+      The whole set is sent, for the same reason the role editor replaces: an
+      add/remove pair invites two requests that can half-apply.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [roles], properties: { roles: { type: array, items: { type: string } } } } } } }
+    responses:
+      '200': { description: OK }
+      '403': { description: Missing users.assign, or an admin group without roles.edit. }
+      '404': { description: No such user, or no such group. }
+      '503': { description: 'Degraded: no database.' }
+/api/admin/users/{id}/owner:
+  put:
+    operationId: adminSetOwner
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Mark or unmark a super-administrator. ROOT CREDENTIAL ONLY.
+    description: >-
+      Not owner-only, not roles.edit — the ADMIN_TOKEN in the environment and
+      nothing else. Three reasons, and the third is the one that matters:
+
+      (1) The first administrator has to come from somewhere, and
+      "whoever registers first" is a race with the internet on a fresh
+      deployment. So the bootstrap is: the operator, holding the token they
+      configured, marks a person.
+
+      (2) It is the recovery path. Every other route can be locked out — the last
+      owner deleted, the role rows wrong. This one is reachable as long as the
+      process has its environment.
+
+      (3) It cannot be delegated by accident. An owner can still hand out
+      roles.edit, which is owner-equivalent in effect; what they cannot do is
+      create another break-glass holder.
+
+      ⚠️ There is deliberately no "cannot remove the last owner" rule — break-
+      glass grants and revokes, and the root credential can undo it in one
+      request. A missing `owner` field is a 400 rather than read as false.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [owner], properties: { owner: { type: boolean } } } } } }
+    responses:
+      '200': { description: OK }
+      '400': { description: The owner field was missing. }
+      '403': { description: Not the root credential. }
+      '404': { description: No such user. }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/db/tables:
   get: { operationId: adminDBTables, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
 /api/admin/db/table/{name}:

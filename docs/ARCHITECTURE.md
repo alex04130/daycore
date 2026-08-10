@@ -595,7 +595,9 @@ cron 条目里编着**旧时区**的 `CRON_TZ`。一个存了但 cron 不反映�
 recoverMW → requestIDMW → loggingMW → corsMW → sessionMW → userMW → dataSessionMW → mux
 ```
 
-三个身份中间件是**「解析不强制」**：cookie/header 有效才往 ctx 注入，从不拦截。真正的鉴权在 handler 内 `requireSession`（无 sid → 401 no_session）或 `adminAuthorized`。详见 AUTH.md。
+三个身份中间件是**「解析不强制」**：cookie/header 有效才往 ctx 注入，从不拦截。真正的鉴权在 handler 内 `requireSession`（无 sid → 401 no_session）。
+
+**管理面不在这条链上**：`/api/admin/*` 的凭据与权限检查发生在**路由注册**时（`admin_gate.go` 的 `adminGate` 包住 `Mux`），不是中间件。原因是中间件拿不到「匹配到了哪条 pattern」，只能从 URL 反推 —— 那等于把 ServeMux 的优先级规则再实现一遍。详见 [AUTH.md](AUTH.md)「权限本体：落地形状」。
 
 ## 路由注册模式
 
@@ -643,7 +645,9 @@ Daycore 此前**没有地方放一个字节**：上传 ≤1 MiB 的被 base64 �
 
 其中一条值得单独说：**相同内容必须产生不同的 ref**。内容寻址会让两个用户的相同上传共享存储，然后一个人的删除会拿走另一个人的文件 —— 或者更糟，用户能探测某个文件是否已存在。去重不值这个代价。
 
-## 存储不可用时的降级启动（2026-07-29 定案，未实现）
+## 存储不可用时的降级启动（2026-07-29 定案，2026-08-07 落地）
+
+> 下面保留的是**当初的推演**，因为里面每一条「会踩的坑」都在实现时真的踩到了，而实现之后的代码看不出这些是有意为之。落地事实见 `internal/server/degraded.go`、`cmd/daycore/main.go` 与 [`AUTH.md`](AUTH.md)；本节末尾两条已按落地后的事实改写。
 
 **决定**：存储不可用**不拒绝启动**。CLI 把话说明白，HTTP 照常起来只服务控制台与健康面，需要库的端点给统一的不可用信封。协议侧的措辞与理由在 [`docs/specs/transport.md`](specs/transport.md#存储型cli-说清楚--web-ui-仍然能上)，这里记落地事实。
 
@@ -683,19 +687,21 @@ Daycore 此前**没有地方放一个字节**：上传 ≤1 MiB 的被 base64 �
 
 **这会是第一条需要本地化的启动期文案，而它恰好可行**：`config.Load` 在打开存储**之前**就已经 `i18n.Std().LoadDir(LOCALES_DIR)`（`config.go:193-205`），所以那一刻文件层与内嵌层都在，只有 DB 覆盖层没有 —— 这正是「内嵌是地板」当初要覆盖的场景。
 
-### 安全：`ADMIN_TOKEN` 未设 = dev 全开，绝不能带进降级模式
+### 安全：「`ADMIN_TOKEN` 未设 = dev 全开」这一档已经删掉了
 
-`adminAuthorized` 在 `ADMIN_TOKEN` 为空时返回 `!IsProduction()`（`handlers_admin.go:24-26`）。降级模式下 DB 支撑的会话全没了，管理面就是**唯一**的门 —— 一个 `APP_ENV != production` 的部署，存储一挂就变成挂在网上的**无鉴权配置界面**。降级模式必须要求显式凭证，没有就只给一个说明页。与 `docs/AUTH.md`「管理面鉴权待改造」同批设计。
+当初的隐患是 `adminAuthorized` 在 `ADMIN_TOKEN` 为空时返回 `!IsProduction()` —— 降级模式下 DB 支撑的会话全没了，管理面就是**唯一**的门，于是一个 `APP_ENV != production` 的部署，存储一挂就变成挂在网上的**无鉴权配置界面**。
 
-### ⚠️ 今天其实还没有控制台可上
+**已消除，而且是从源头消除的**：`config.Load` 在未设时**自动生成一个并打印**，所以「没有配置凭据」不再是一个可达状态；鉴权那一侧没有任何「全开」分支（见 [`AUTH.md`](AUTH.md)）。两件事必须同批设计的价值在这里兑现 —— 降级模式下控制台登录仍然能用，**正是因为鉴权那一半是按「一处都不碰数据库」做的**。
 
-这一条必须写在前面，否则会以为改完 `main.go` 就完事了：
+⚠️ 由此得到降级模式的一条硬约束：**除 root 凭据外，降级进程里没有任何权限能通过**。角色是从库里读的，库没了就读不到 —— 这不是缺陷而是这套设计的形状：破窗轨存在的理由就是「别的全没了的时候」。
 
-- 控制台 web UI 目前只是 `design-ui/liuli/admin/` 的**纯 mock 原型（零 fetch）**；`web/frontend/src` 里 grep `admin` 零命中 —— **`STATIC_DIR` 里没有可上的控制台**。
-- 8 个分区里无 DB 仍有意义的三个（服务配置 / 模型 / OAuth，都是改文件不是改库）**后端端点一个都不存在**。
-- `DB_DSN` 只能从环境变量／`.env` 来，所以「无库时上 web UI 改配置」还需要写 `.env` + 重启确认（`restart-ack`）这套同样不存在的东西。
+### 控制台：从「还没有可上的」到内嵌进二进制
 
-**所以依赖链是 F1（配置分层）+ F4（admin 端点）+ F5（控制台前端）**。在那之前，降级启动能交付的是诚实的一半：**CLI 说清哪一项错了、该改什么**，并让 `/api/healthz` 的 503 第一次真正可达。
+当初这一条是阻塞项（web UI 只有 `design-ui/liuli/admin/` 的纯 mock 原型，`STATIC_DIR` 里没有可上的控制台，三个无 DB 仍有意义的分区后端端点一个都不存在）。现在：
+
+- 控制台在 `web/console/`，构建产物进 `internal/resources/data/console`，由二进制自己在 `/admin` 托管（见「控制台为什么内嵌」一节）。**「下一个二进制、跑起来、开 /admin」在最需要它的那种情况下成立。**
+- 服务配置 / 能力源两屏有真后端；模型与 OAuth 是只读屏；用户与权限屏随权限本体落地。
+- 无库时改配置仍然要写 `.env` + 重启 —— `POST /api/admin/restart` 尚未实现（见 [ROADMAP](ROADMAP.md)）。这是这条链上**唯一还欠的一块**。
 
 ## 静态托管（static.go）
 

@@ -24,12 +24,23 @@ build-lite: ## Build the lite binary + its data pack into dist/
 	@echo "dist/daycore-lite + dist/daycore-data-$(VERSION).tar.gz"
 	@echo "unpack the pack next to the binary, or point DAYCORE_DATA_DIR at it"
 
+# The two DSNs the SQL conformance suite connects with.
+#
+# `?=` so an existing environment variable WINS. It matters more than it looks:
+# a developer machine that already runs a Postgres or a MySQL for something else
+# has those ports taken, and the daycore containers land on 3307 or 5433. Before
+# this, `make test-sql` overrode whatever was exported and produced 46 identical
+# authentication failures — which reads exactly like a broken suite.
+PG_TEST_DSN ?= postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable
+MYSQL_TEST_DSN ?= root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true
+
 test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
-	@echo "needs a postgres on :5432 and a mysql on :3306 — each case creates and drops its own schema/database"
+	@echo "each case creates and drops its own schema/database; export PG_TEST_DSN / MYSQL_TEST_DSN to point elsewhere"
 	@echo "  docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=daycore -e POSTGRES_USER=daycore -e POSTGRES_DB=daycore postgres:16"
 	@echo "  docker run -d -p 3306:3306 -e MYSQL_ROOT_PASSWORD=daycore -e MYSQL_DATABASE=daycore mysql:8"
-	PG_TEST_DSN='postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable' \
-	MYSQL_TEST_DSN='root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true' \
+	@echo "  pg=$(PG_TEST_DSN)"
+	PG_TEST_DSN='$(PG_TEST_DSN)' \
+	MYSQL_TEST_DSN='$(MYSQL_TEST_DSN)' \
 	go test -count=1 -run 'TestConformancePostgres|TestConformanceMySQL|TestRealDialectNamespaces' -v ./internal/storage/sqlstore/
 
 test-models: ## Live tool-calling check against real models (costs money; never in CI)

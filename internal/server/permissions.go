@@ -126,6 +126,14 @@ func registerPerm(id, damage string) string {
 	if _, dup := permList[id]; dup {
 		panic("server: duplicate permission " + id)
 	}
+	// The three sentinels are route markers, not permissions. Registering one
+	// would make it grantable, and a grant of permAnyCredential is a grant of
+	// every route marked "any credential" — including a route added years later
+	// by somebody who read the marker as "harmless".
+	switch id {
+	case permOpen, permAnyCredential, permRoot:
+		panic("server: " + id + " is a route marker, not a grantable permission")
+	}
 	permList[id] = Permission{ID: id, Damage: damage}
 	return id
 }
@@ -179,13 +187,17 @@ func init() {
 		"看用户列表：邮箱、注册时间、所在的组。不含任何人写下的内容")
 	registerPerm(PermUsersDelete,
 		"删除用户。不可撤销，且会连带删掉那个人的数据")
-	// ⚠️ users.assign / roles.edit / db.user_content 有意暂不注册。
+	registerPerm(PermUsersAssign,
+		"把用户放进不带任何管理员权限的组、或移出来。这是卖套餐那个动作；碰到带权限的组时还要 roles.edit")
+	registerPerm(PermRolesEdit,
+		"⚠️ 改一个组能做什么。**等同于超级管理员** —— 谁有这个，谁就能把自己加进一个全权限的组。授予它和把人设成 owner 是同一个决定")
+	// ⚠️ db.user_content 有意暂不注册。
 	//
-	// 它们的端点还没写，而这个文件的反向闸门要求「每个注册过的权限至少被一条
-	// 路由引用」—— 那条闸门防的正是「控制台上一个什么都不授予的开关」，而一个
-	// 开关如果读起来像保护、实际什么都不管，比没有它更糟。
+	// 它的端点还没写（数据库浏览器的按表拆分尚未实现），而这个文件的反向闸门要求
+	// 「每个注册过的权限至少被一条路由引用」—— 那条闸门防的正是「控制台上一个什么
+	// 都不授予的开关」，而一个开关如果读起来像保护、实际什么都不管，比没有它更糟。
 	//
-	// 所以常量先定义好（形状已经裁决完，见 docs/AUTH.md），注册与路由同批。
+	// 常量先定义好（形状已经裁决完，见 docs/AUTH.md），注册与路由同批。
 	registerPerm(PermDBOperational,
 		"浏览运维类的表：会话、操作日志、任务场次。不含任何用户写下的内容")
 	registerPerm(PermDBDeleteRow,
@@ -195,6 +207,34 @@ func init() {
 	registerPerm(PermDBImport,
 		"导入数据库。可能覆盖现有数据")
 }
+
+// Three route markers that are not permissions.
+//
+// A route's entry in routePermissions is normally a permission id. Three routes
+// cannot be described that way, and giving each a name is better than the
+// alternative of one overloaded empty string:
+//
+//	permOpen           the credential exchange itself. The gate does not wrap
+//	                   these AT ALL — they are how somebody who has no admin
+//	                   credential gets one, so a gate on them is a lock whose
+//	                   key is inside.
+//	permAnyCredential  any valid admin credential, no particular permission.
+//	                   "who am I and what may I do" is the only shape that
+//	                   belongs here: a person who cannot answer it cannot render
+//	                   a console at all, and the answer tells them nothing they
+//	                   do not already hold.
+//	permRoot           the root credential and nothing else. Not "the most
+//	                   powerful permission" — no permission reaches it, and no
+//	                   owner does either. See handlers_admin_roles.go for the
+//	                   one route that uses it and why the owner mark is set from
+//	                   outside the model it governs.
+//
+// ⚠️ These are checked in registerPerm and can never become grantable.
+const (
+	permOpen          = ""
+	permAnyCredential = "*any-admin-credential"
+	permRoot          = "*root-credential-only"
+)
 
 // routePermissions maps a route pattern to the permission it requires.
 //
@@ -213,8 +253,12 @@ func init() {
 var routePermissions = map[string]string{
 	// Session: the credential exchange itself. It cannot require a permission,
 	// because it is what somebody uses before they have any.
-	"POST /api/admin/session":   "",
-	"DELETE /api/admin/session": "",
+	"POST /api/admin/session":   permOpen,
+	"DELETE /api/admin/session": permOpen,
+	// …but reading back who you are does need a credential. It is the console's
+	// first call after a reload, and its answer is the caller's own permission
+	// list — nothing they could not work out by clicking around.
+	"GET /api/admin/session": permAnyCredential,
 
 	"GET /api/admin/health": PermOverview,
 	"GET /api/admin/stats":  PermOverview,
@@ -237,6 +281,30 @@ var routePermissions = map[string]string{
 
 	"GET /api/admin/users":         PermUsersRead,
 	"DELETE /api/admin/users/{id}": PermUsersDelete,
+
+	// The permission list itself, so the console can render a role editor with
+	// each switch's damage line next to it. Gated on users.read rather than
+	// roles.edit: somebody who can see that a person is in the "support" group
+	// needs to be able to see what "support" means, or the user list is a screen
+	// of group names that mean nothing.
+	"GET /api/admin/permissions": PermUsersRead,
+	"GET /api/admin/roles":       PermUsersRead,
+
+	// Changing what a group MEANS. Owner-equivalent — see the note at the top of
+	// this file — and deliberately not the same permission as moving somebody
+	// between groups.
+	"PUT /api/admin/roles/{name}":    PermRolesEdit,
+	"DELETE /api/admin/roles/{name}": PermRolesEdit,
+
+	// Moving somebody between groups. The commercial operation. The handler
+	// additionally requires roles.edit when the group being joined or left
+	// carries any permission at all, which is what keeps this from being a way
+	// to grant yourself everything.
+	"PUT /api/admin/users/{id}/roles": PermUsersAssign,
+
+	// The owner mark. Root credential only, and no permission reaches it — see
+	// handlers_admin_roles.go.
+	"PUT /api/admin/users/{id}/owner": permRoot,
 
 	// The database browser. Which of the two browse permissions applies is
 	// decided per table INSIDE the handler, because the route pattern cannot

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -64,10 +65,53 @@ func (t *TokenIssuer) Issue(userID string, version int) (string, error) {
 	return t.issue(userID, version, ScopeUser, t.ttl)
 }
 
-// IssueAdmin returns a short-lived console token. subject is a label for the
-// ledger, not an identity — there are no admin accounts.
-func (t *TokenIssuer) IssueAdmin(subject string) (string, error) {
-	return t.issue(subject, 0, ScopeAdmin, AdminTokenTTL)
+// A console token's subject WAS "a label for the ledger, not an identity —
+// there are no admin accounts". That stopped being true when permissions
+// landed: a console session minted from a person's own login carries that
+// person's id, and the authorisation path resolves their roles from it on every
+// request.
+//
+// So the subject now names one of two things, and telling them apart has to be
+// impossible to get wrong — it is the line between "passes everything" and
+// "passes what their roles say".
+//
+//	"root"     the root credential (ADMIN_TOKEN). No identity, and none is
+//	           needed: it passes everything by definition.
+//	"u:<id>"   a person. Their permissions are read fresh from the database on
+//	           every request, so revoking one takes effect on their NEXT
+//	           request rather than when this token expires.
+//
+// # Why a prefix rather than a bare user id
+//
+// The tempting encoding is "empty subject means root, anything else is a user
+// id" — and it is wrong twice. parse() refuses an empty subject (a degenerate
+// token should not authenticate anything), and more importantly a bare id and a
+// sentinel share one namespace: the day a user id can be the string "root",
+// signing up with the right id is a privilege escalation. Prefixing every
+// person makes the two sets disjoint by construction, which is the only form of
+// "cannot collide" that does not depend on how ids happen to be generated
+// today.
+//
+// ⚠️ Permissions are deliberately NOT in the token. userMW already reads the
+// user row on every authenticated request (to check TokenVersion), so carrying
+// them here would save no query and would buy a revocation window measured in
+// the TTL. See docs/AUTH.md.
+const (
+	adminRootSubject = "root"
+	adminUserPrefix  = "u:"
+)
+
+// IssueAdminRoot mints a console token for the root credential.
+func (t *TokenIssuer) IssueAdminRoot() (string, error) {
+	return t.issue(adminRootSubject, 0, ScopeAdmin, AdminTokenTTL)
+}
+
+// IssueAdminUser mints a console token for one person.
+func (t *TokenIssuer) IssueAdminUser(userID string) (string, error) {
+	if userID == "" {
+		return "", ErrInvalidToken
+	}
+	return t.issue(adminUserPrefix+userID, 0, ScopeAdmin, AdminTokenTTL)
 }
 
 func (t *TokenIssuer) issue(subject string, version int, scope Scope, ttl time.Duration) (string, error) {
@@ -101,19 +145,35 @@ func (t *TokenIssuer) Parse(tokenString string) (string, int, error) {
 	return claims.Subject, claims.TokenVersion, nil
 }
 
-// ParseAdmin validates a console token. A user session token is refused here
-// even though it is signed with the same key and is otherwise valid — which is
-// the whole reason the scope claim exists, since anybody can obtain a user
-// token by signing up.
-func (t *TokenIssuer) ParseAdmin(tokenString string) error {
+// ParseAdmin validates a console token and reports whose it is. A user session
+// token is refused here even though it is signed with the same key and is
+// otherwise valid — which is the whole reason the scope claim exists, since
+// anybody can obtain a user token by signing up.
+//
+// Exactly one of the two returns is meaningful: root true means the root
+// credential and userID is empty; root false means userID names a person. A
+// subject in neither shape is refused rather than guessed at.
+func (t *TokenIssuer) ParseAdmin(tokenString string) (userID string, root bool, err error) {
 	claims, err := t.parse(tokenString)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if claims.Scope != ScopeAdmin {
-		return ErrInvalidToken
+		return "", false, ErrInvalidToken
 	}
-	return nil
+	if claims.Subject == adminRootSubject {
+		return "", true, nil
+	}
+	id, ok := strings.CutPrefix(claims.Subject, adminUserPrefix)
+	if !ok || id == "" {
+		// Tokens minted before the two shapes existed land here, and refusing
+		// them is right: the old subject was the literal "console", which names
+		// neither a person nor the root credential. The TTL is thirty minutes,
+		// so the whole population of them is gone within half an hour of a
+		// deploy.
+		return "", false, ErrInvalidToken
+	}
+	return id, false, nil
 }
 
 func (t *TokenIssuer) parse(tokenString string) (*sessionClaims, error) {

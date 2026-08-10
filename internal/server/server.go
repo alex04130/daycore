@@ -233,8 +233,12 @@ func (s *Server) Handler() http.Handler {
 	// This used to be one hundred mux.HandleFunc calls in this function, which
 	// made it the single most contended file in the repo — twelve parallel work
 	// items all had to edit the same list.
+	//
+	// ⚠️ Through adminGate, never straight into the mux. It is what applies the
+	// permission each /api/admin/ route declares, and registering past it would
+	// publish that route with no check at all — see admin_gate.go.
 	for _, g := range routeGroups {
-		g.register(s, mux)
+		g.register(s, adminGate{s: s, mux: mux})
 	}
 
 	// static frontend (SPA) — stays here because it is conditional on

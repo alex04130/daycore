@@ -23,7 +23,9 @@ package storagetest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1519,8 +1521,34 @@ func proposalOwnerInstanceIsQueryable(t *testing.T, h Harness) {
 
 // ── attachments (ε) ─────────────────────────────────────────────────────────
 
+// att builds one upload with an id that increases on every call, which is not
+// cosmetic — see below.
+//
+// ⚠️ THE ID IS A MONOTONIC COUNTER, AND THE ORDERING ASSERTION DEPENDS ON IT.
+//
+// The documented order is `(created_at, id)`. created_at is stored to the
+// millisecond, and four inserts over a network round-trip usually land in four
+// different ones — but not always. When two collide, the tie-break decides, and
+// with a repository-generated random UUID the tie-break is a coin toss. That is
+// what made Attachment/HydrateIsOrderedAndScoped fail about one Mongo run in
+// five: not a bug in any back end, a test asserting an order the data could not
+// carry.
+//
+// Sortable ids make the assertion deterministic in BOTH cases, which is
+// strictly more than it checked before — it now pins the tie-break itself
+// rather than avoiding the tie.
+//
+// ⚠️ The production gap this leaves visible, deliberately: real uploads DO get
+// a random uuid, so two attachments landing in the same millisecond (a
+// multi-file drop uploads in parallel) come back in an arbitrary order. Nothing
+// downstream depends on it today. Closing it means a monotonic id, not a
+// stronger sort — sorting harder cannot recover an order the row never stored.
+var attSeq atomic.Int64
+
 func att(sid, name, mime string) *domain.Attachment {
 	return &domain.Attachment{
+		// Zero-padded because the sort is lexicographic on a string column.
+		ID:        fmt.Sprintf("att-%06d", attSeq.Add(1)),
 		SessionID: sid, Ref: "ref-" + name, MIME: mime,
 		Kind: domain.AttachmentKindOf(mime), Size: 11, SHA256: "abc", Filename: name,
 	}

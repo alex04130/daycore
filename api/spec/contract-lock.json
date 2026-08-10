@@ -4,6 +4,7 @@
   "note": "The contract surface as of the last freeze. Refresh with `make api-lock` when bumping the contract version, never to silence a test. See api/spec/README.md.",
   "operations": [
     "DELETE /api/admin/db/table/{name}/{id} adminDBDelete",
+    "DELETE /api/admin/roles/{name} adminDeleteRole",
     "DELETE /api/admin/session adminLogout",
     "DELETE /api/admin/users/{id} adminDeleteUser",
     "DELETE /api/channels/{channel}/unbind unbindChannel",
@@ -27,9 +28,12 @@
     "GET /api/admin/health adminHealth",
     "GET /api/admin/models adminModelsGet",
     "GET /api/admin/oauth adminOAuthGet",
+    "GET /api/admin/permissions adminPermissions",
     "GET /api/admin/prompts adminListPrompts",
     "GET /api/admin/prompts/{key} adminGetPrompt",
     "GET /api/admin/providers adminProvidersGet",
+    "GET /api/admin/roles adminRoles",
+    "GET /api/admin/session adminWhoAmI",
     "GET /api/admin/stats adminStats",
     "GET /api/admin/users adminUsers",
     "GET /api/assignments listAssignments",
@@ -123,6 +127,9 @@
     "PUT /api/admin/config adminConfigPut",
     "PUT /api/admin/prompts/{key} adminSetPrompt",
     "PUT /api/admin/providers adminProvidersPut",
+    "PUT /api/admin/roles/{name} adminSetRole",
+    "PUT /api/admin/users/{id}/owner adminSetOwner",
+    "PUT /api/admin/users/{id}/roles adminSetUserRoles",
     "PUT /api/temp-context putTempContext"
   ]
 }

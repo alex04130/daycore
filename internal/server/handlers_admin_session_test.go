@@ -154,7 +154,7 @@ func TestAUserTokenIsNotAnAdminToken(t *testing.T) {
 		t.Errorf("a user session token authenticated against the admin API: %d", rec.Code)
 	}
 	// And the reverse, so the boundary is guarded from both sides.
-	adminTok, err := s.tokens.IssueAdmin("console")
+	adminTok, err := s.tokens.IssueAdminRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestAUserTokenIsNotAnAdminToken(t *testing.T) {
 // and not authority. SameSite=Strict is the first guard; this is the second.
 func TestAdminCookieRefusesACrossOriginRequest(t *testing.T) {
 	s := adminServer(t)
-	tok, err := s.tokens.IssueAdmin("console")
+	tok, err := s.tokens.IssueAdminRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestAdminLogoutClearsAndIsAlwaysAvailable(t *testing.T) {
 func TestOriginCheckSurvivesAReverseProxy(t *testing.T) {
 	s := adminServer(t)
 	s.cfg.PublicBaseURL = "https://daycore.example.com"
-	tok, err := s.tokens.IssueAdmin("console")
+	tok, err := s.tokens.IssueAdminRoot()
 	if err != nil {
 		t.Fatal(err)
 	}

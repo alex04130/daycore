@@ -44,8 +44,12 @@ func TestEveryAdminRouteDeclaresAPermission(t *testing.T) {
 				r.Pattern, r.Group)
 			continue
 		}
-		if perm == "" {
-			continue // explicitly exempt; the map comment carries the reason
+		switch perm {
+		case permOpen, permAnyCredential, permRoot:
+			// A route marker rather than a permission. Each is named and
+			// documented next to routePermissions, and registerPerm refuses to
+			// make any of them grantable.
+			continue
 		}
 		if !PermissionExists(perm) {
 			t.Errorf("%s requires %q, which is not a registered permission — a typo here is a route nobody can ever reach", r.Pattern, perm)
@@ -106,17 +110,55 @@ func TestTheEscalationBoundaryStaysSplit(t *testing.T) {
 	if PermRolesEdit == PermUsersAssign {
 		t.Fatal("the two group permissions were merged; holding both is equivalent to owner")
 	}
-	// Neither is registered yet — their endpoints do not exist, and the reverse
-	// gate refuses a permission no route uses. The constants exist because the
-	// SHAPE is decided (docs/AUTH.md); registration lands with the routes.
-	//
-	// ⚠️ When they do land, the damage line for roles.edit must say it is
-	// owner-equivalent, or somebody grants it thinking it is one admin
-	// permission among many. That assertion moves here on that day.
-	if PermissionExists(PermRolesEdit) != PermissionExists(PermUsersAssign) {
-		t.Error("the two group permissions landed separately; they are one batch — " +
-			"shipping assign without edit leaves nothing to assign, and edit without assign " +
-			"is owner-equivalence with no commercial operation behind it")
+	if !PermissionExists(PermRolesEdit) || !PermissionExists(PermUsersAssign) {
+		t.Fatal("the two group permissions are one batch — shipping assign without edit leaves " +
+			"nothing to assign, and edit without assign is owner-equivalence with no commercial " +
+			"operation behind it")
+	}
+	// roles.edit has to SAY it is owner-equivalent, next to the switch, or
+	// somebody grants it thinking it is one admin permission among many. It is
+	// the one line in the list where the damage is not what the name suggests.
+	var damage string
+	for _, p := range Permissions() {
+		if p.ID == PermRolesEdit {
+			damage = p.Damage
+		}
+	}
+	if !strings.Contains(damage, "超级管理员") && !strings.Contains(damage, "owner") {
+		t.Errorf("roles.edit's damage line does not say it is owner-equivalent: %q\n"+
+			"  Whoever can edit a role's permissions can put themselves in an all-powerful one.\n"+
+			"  Granting it IS making somebody an owner, and the sentence beside the switch is the\n"+
+			"  only place that gets said.", damage)
+	}
+}
+
+// The two routes whose separation carries that boundary have to stay separate
+// too. A permission split means nothing if one endpoint does both jobs.
+func TestTheEscalationBoundaryIsTwoRoutes(t *testing.T) {
+	edit, editOK := PermissionFor("PUT /api/admin/roles/{name}")
+	assign, assignOK := PermissionFor("PUT /api/admin/users/{id}/roles")
+	if !editOK || !assignOK {
+		t.Fatal("the role-edit and user-assign routes are not both declared")
+	}
+	if edit != PermRolesEdit || assign != PermUsersAssign {
+		t.Fatalf("the boundary routes require %q and %q; expected %q and %q",
+			edit, assign, PermRolesEdit, PermUsersAssign)
+	}
+}
+
+// The owner mark is set with the root credential and nothing else.
+//
+// Not owner-only and not roles.edit: it is the bootstrap (the author ruled out
+// "first to register wins") and the recovery path, so it must be reachable from
+// the environment alone and unreachable by anything the database can grant.
+func TestTheOwnerMarkIsRootOnly(t *testing.T) {
+	perm, ok := PermissionFor("PUT /api/admin/users/{id}/owner")
+	if !ok {
+		t.Fatal("the owner route declares nothing")
+	}
+	if perm != permRoot {
+		t.Fatalf("setting the owner mark requires %q; it must be the root credential only — "+
+			"a permission that reaches it is a permission that can mint break-glass holders", perm)
 	}
 }
 

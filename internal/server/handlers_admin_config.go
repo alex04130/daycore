@@ -86,10 +86,6 @@ var (
 
 // GET /api/admin/config — every knob, both layers, with where its value came from.
 func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminConfig.unauthorized")
-		return
-	}
 	overrides := map[string]bool{}
 	if s.store != nil {
 		if rows, err := s.store.Settings().All(r.Context()); err == nil {
@@ -135,10 +131,6 @@ func (s *Server) handleAdminConfigGet(w http.ResponseWriter, r *http.Request) {
 // only one of them cannot undo a mistake.
 func (s *Server) handleAdminConfigPut(w http.ResponseWriter, r *http.Request) {
 	locale := s.requestLocale(r)
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, locale, http.StatusUnauthorized, "unauthorized", "err.adminConfig.unauthorized")
-		return
-	}
 	if s.store == nil {
 		s.writeErrL(w, locale, http.StatusServiceUnavailable, "degraded", "err.adminConfig.degraded")
 		return

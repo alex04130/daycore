@@ -81,10 +81,6 @@ var (
 // GET /api/admin/providers — every source, including disabled and unhealthy
 // ones, because those are usually the ones being asked about.
 func (s *Server) handleAdminProvidersGet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminProviders.unauthorized")
-		return
-	}
 	views := s.providerViews()
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"providers": views,
@@ -140,10 +136,6 @@ type providerPatch struct {
 // which.
 func (s *Server) handleAdminProvidersPut(w http.ResponseWriter, r *http.Request) {
 	locale := s.requestLocale(r)
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, locale, http.StatusUnauthorized, "unauthorized", "err.adminProviders.unauthorized")
-		return
-	}
 	if s.store == nil {
 		s.writeErrL(w, locale, http.StatusServiceUnavailable, "degraded", "err.adminProviders.degraded")
 		return

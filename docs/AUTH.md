@@ -45,7 +45,7 @@
 
 ## 鉴权旁路
 
-- **管理面双路**（`handlers_admin.go` `adminAuthorized` + `handlers_admin_session.go`）：机器走 `X-Admin-Token`（常量时间比较），人走 `dc_admin` httpOnly cookie。**没有「全开」这一档了** —— 见下。
+- **管理面双路**（`admin_gate.go` + `authorize.go` + `handlers_admin_session.go`）：机器走 `X-Admin-Token`（常量时间比较），人走 `dc_admin` httpOnly cookie —— 后者可以由 `ADMIN_TOKEN` 换，也可以由管理员自己的登录换。**没有「全开」这一档了** —— 见下。检查在路由注册层，不在 handler 里。
 - `X-Import-Token`（handlers_import.go `importSession`）：无 cookie 时按 token 解析会话（扩展直推）。
 
 ### ⚠️ 管理面鉴权待改造（2026-07-29 记，落地在批次 F4）
@@ -130,7 +130,7 @@ argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混
 
 ## 权限与管理员：作者裁决（2026-08-09）
 
-> 状态：**裁决已定，实现未开始。** 落地条件见文末。
+> 状态：**已落地**（2026-08-10）。下面的裁决全部有对应代码与红过的断言；实现形状见本节末尾「权限本体：落地形状」。
 
 ### `ADMIN_TOKEN` 就是 root 密码
 
@@ -201,4 +201,91 @@ argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混
 
 ### 落地条件
 
-⬜ **控制台要先有 ≥2 个真视图**，且存在一个具体的人「你会给他 A 不给他 B」。在此之前权限清单里被真正差异化检查的条目是 **0** —— 那会是本仓第七次「写完、测过、没人调用」。
+✅ **控制台要先有 ≥2 个真视图**，且存在一个具体的人「你会给他 A 不给他 B」。在此之前权限清单里被真正差异化检查的条目是 **0** —— 那会是本仓第七次「写完、测过、没人调用」。
+
+条件在 F5 的「服务配置 / 能力源 / 用户与权限」三屏落地时满足，权限本体随即接线。
+
+---
+
+## 权限本体：落地形状（2026-08-10）
+
+### 检查发生在路由层，不在 handler 里
+
+`internal/server/admin_gate.go` 的 `adminGate` 包住 `Mux`，注册每条 `/api/admin/*` 时按**路由 pattern** 查 `routePermissions` 并套上检查。`Handler()` 里那一行 `g.register(s, adminGate{...})` 是唯一入口。
+
+**它防的是哪个具体失败**：此前 22 个 handler 各写一遍 `if !s.adminAuthorized(r)`。加上权限之后，每一份都要再点名一个权限 —— 22 次点错的机会，而**点错是静默的**：handler 照样拒绝、照样 403、review 里照样正确，只有某个持有 `config.read` 的人发现自己能读提示词时才会暴露。从 pattern 推导之后，handler **根本拿不到权限 id**，这类错误不再存在。
+
+- **边界**：这个包装器**只碰 `/api/admin/`**（`isAdminPattern`）。放宽这个前缀就会给 `/api/plan` 装上管理员检查，把所有用户锁在外面。
+- **取舍**：包装的是**注册**而不是中间件。中间件要从 URL 反推匹配到的 pattern，等于把 ServeMux 的优先级规则再实现一遍、且略有出入；这里用的是注册时那个字面量。代价是「必须从 `Handler()` 走」这条约束，由 `TestHandlerRegistersThroughTheAdminGate`（AST 闸门）守住。
+- 两处**收紧**仍在 handler 里，它们只会更严不会更松：数据库浏览器按表区分运维/用户内容；`PUT /api/admin/users/{id}/roles` 碰到带权限的组时追加要 `roles.edit`。
+
+### 三个路由标记，它们不是权限
+
+`routePermissions` 的值通常是权限 id，三条路由不是：
+
+|标记|含义|为什么不能是权限|
+|---|---|---|
+|`permOpen`（`""`）|**闸门完全不包**|`POST/DELETE /api/admin/session` 是「还没有凭据的人怎么拿到凭据」，给它上锁等于把钥匙锁在里面|
+|`permAnyCredential`|任何有效管理凭据，不要求具体权限|只有 `GET /api/admin/session`（我是谁 / 我能做什么）配得上：答案就是调用者自己已经持有的东西|
+|`permRoot`|**只有 root 凭据**|`PUT /api/admin/users/{id}/owner`。见下|
+
+`registerPerm` 会对这三个字符串 panic —— 它们永远不可能变成可授予的一条。
+
+### 凭据的两种形状，靠前缀而不是空串区分
+
+`dc_admin` 的 JWT subject：
+
+```
+"root"      ← ADMIN_TOKEN 换来的
+"u:<用户id>" ← 某个人自己的登录换来的
+```
+
+**不是「空 subject 表示 root」**，那个编码错两次：`parse()` 本来就拒绝空 subject（一个退化的 token 不该认证任何东西），更要紧的是**裸 id 和哨兵共用一个命名空间** —— 哪天用户 id 可以是字符串 `root`，注册就成了提权。加前缀让两个集合在构造上不相交，这是唯一一种不依赖「今天的 id 是怎么生成的」的「不可能撞车」。
+
+⚠️ 前缀出现之前签发的 token（subject 是字面量 `console`）会被拒绝，这是对的：它既不指人也不指 root。TTL 30 分钟，部署后半小时内自然清空。
+
+### 管理员用自己的账号进控制台：是**兑换**，不是接受
+
+`POST /api/admin/session` 带空 body 时，用浏览器里已有的 `dc_auth` 换一张 `dc_admin`。
+
+**为什么不直接让 `dc_auth` 认证 `/api/admin/*`**：`dc_auth` 是长期的、`Path=/` 的；直接收它等于同时放弃 `SameSite=Strict`、窄 cookie path 和短 TTL 三样。登录这个动作是他自己的，凭据的**形状**不是。
+
+⚠️ **没有任何权限的普通用户在这里被拒（403），而不是拿到一张什么都做不了的凭据。** 一张没用的凭据比没有更糟：后面每一个 403 都看起来像控制台的 bug，而且任何注册的人都拿到了一张 admin scope 的 token 去探。
+
+### owner 是标记，不是「拥有全部权限」的角色
+
+`domain.User.IsOwner`，检查函数里早退。**新加一条权限，当天每个 owner 就都有** —— 零数据变更、零迁移。
+
+设置它只走 **root 凭据**（`permRoot`）。不是 owner-only，也不是 `roles.edit`：
+
+1. **第一个管理员得从外面来。** 「第一个注册的人当管理员」是在跟互联网抢一个新部署。
+2. **它是恢复路径。** 别的路由都能被锁死；这条只要进程还有环境变量就在。
+3. **它不会被顺手下放。** owner 仍然能发 `roles.edit`（效果上等价于 owner，这一点在权限清单里明写），但**造不出第二个破窗持有者**。
+
+⚠️ **有意不做「不许移除最后一个 owner」这条规则。** 破窗可授可撤（作者裁决），而 root 一个请求就能撤销这个状态 —— 拦一个可恢复的状态只是把界面变复杂。控制台改成显示 `ownerCount`，并在取消最后一个时把这句话说出来。
+
+### 提权边界落在两条路由之间
+
+|路由|权限|
+|---|---|
+|`PUT /api/admin/roles/{name}`|`roles.edit` —— 组**是什么意思**|
+|`PUT /api/admin/users/{id}/roles`|`users.assign` —— 谁**在组里**|
+
+第二条**额外**要求：被加入或被移出的组里只要有一个带权限，就还要 `roles.edit`。判定按**差集**做，不按整个集合做 —— 否则「某人既在付费档也在运维组」之后，客服就再也改不了他的档位，而那是最常见的情况。两个方向都算：把人**移出**管理员组同样是在改「谁能做什么」。
+
+判定用的是 `len(Role.Permissions) == 0`，**当场求值**，不是一个存下来的标志位 —— 存下来的那个会在有人改了组权限之后过期，而且是往危险的方向过期。
+
+### 权限现读现算，撤销窗口是 0
+
+`authorize` → `userHasPermission` → `RolesOf` + `ListRoles` 求并集。没有 deny、没有继承、没有 per-user 授予，所以这就是全部计算。
+
+`TestRevokingAPermissionTakesEffectImmediately` 钉住它：同一张 cookie、不改 TTL、不登出，改完组权限**下一个请求**就被拒。这条断言存在的理由是它是那种「优化进 JWT」之后**其它测试全都还绿**的性质。
+
+### 用户组的两种读法，写死在这里
+
+同一张 `roles` 表既是权限载体又是计费载体（作者：「商业化什么的就可以来卖用户组」），而两者生命周期不同：
+
+- **鉴权读法**：`authorize` 每请求现读，撤销窗口 0，**不许加缓存**。
+- **档位读法**：控制台与将来的计费面按需读，可以最终一致。
+
+⚠️ **不要用档位那一侧的缓存去做鉴权。** 这句话写在这里就是为了防那一天。

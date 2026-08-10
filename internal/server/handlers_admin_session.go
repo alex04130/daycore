@@ -13,6 +13,7 @@ import (
 func init() {
 	registerRoutes("admin (session)", func(s *Server, mux Mux) {
 		mux.HandleFunc("POST /api/admin/session", s.handleAdminLogin)
+		mux.HandleFunc("GET /api/admin/session", s.handleAdminWhoAmI)
 		mux.HandleFunc("DELETE /api/admin/session", s.handleAdminLogout)
 	})
 }
@@ -70,9 +71,32 @@ var (
 		"zh-CN": "请求来源不被允许",
 		"en-US": "That request origin is not allowed",
 	})
+	keyAdminNoPermissions = i18n.Reg("admin.session.no_permissions", i18n.Text{
+		"zh-CN": "这个账号还没有被分配任何控制台权限",
+		"en-US": "This account has not been given any console permission",
+	})
 )
 
-// POST /api/admin/session — exchange the raw admin token for a session cookie.
+// POST /api/admin/session — obtain a console session cookie.
+//
+// # Two ways to log in, and only one of them is a password
+//
+//	{"token": "<ADMIN_TOKEN>"}   the root credential. Passes everything.
+//	{}                           the caller's own login, already established by
+//	                             dc_auth or a Bearer token. Their permissions
+//	                             come from their roles.
+//
+// The second is what "administrators can reach the console with their own login
+// token" means. It is an EXCHANGE, not an acceptance: dc_auth is long-lived and
+// Path=/, and letting it authenticate /api/admin/* directly would give up
+// SameSite=Strict, the narrow cookie path, and the short TTL all at once. So a
+// person's login buys them a dc_admin cookie once, and that cookie is what the
+// admin surface sees.
+//
+// ⚠️ An ordinary user with no permissions is refused here rather than handed a
+// cookie that can do nothing. A useless credential is worse than none: it makes
+// every subsequent 403 look like a bug in the console, and it means anybody who
+// signs up gets a valid admin-scope token to probe with.
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	locale := s.requestLocale(r)
 	if !s.sameOriginRequest(r) {
@@ -87,15 +111,45 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.readJSON(r, &body)
 
-	// Constant-time, and it also has to refuse an empty configured token rather
-	// than matching an empty submission — config.Load makes that unreachable,
-	// but a guard that depends on another file staying correct is not a guard.
-	if s.cfg.AdminToken == "" || subtle.ConstantTimeCompare([]byte(body.Token), []byte(s.cfg.AdminToken)) != 1 {
-		s.writeErr(w, http.StatusUnauthorized, "unauthorized", i18n.T(keyAdminBadToken, locale))
-		return
+	var (
+		tok  string
+		err  error
+		view principalView
+	)
+	if body.Token != "" {
+		// Constant-time, and it also has to refuse an empty configured token
+		// rather than matching an empty submission — config.Load makes that
+		// unreachable, but a guard that depends on another file staying correct
+		// is not a guard.
+		if s.cfg.AdminToken == "" || subtle.ConstantTimeCompare([]byte(body.Token), []byte(s.cfg.AdminToken)) != 1 {
+			s.writeErr(w, http.StatusUnauthorized, "unauthorized", i18n.T(keyAdminBadToken, locale))
+			return
+		}
+		tok, err = s.tokens.IssueAdminRoot()
+		view = principalView{Root: true, Permissions: allPermissionIDs()}
+	} else {
+		user := userFrom(r.Context())
+		if user == nil || s.store == nil {
+			// No token and no login. Includes the degraded case, where there is
+			// no user row to read — and where the root credential is the only
+			// way in by design.
+			s.writeErr(w, http.StatusUnauthorized, "unauthorized", i18n.T(keyAdminBadToken, locale))
+			return
+		}
+		view = principalView{UserID: user.ID, Owner: user.IsOwner, Permissions: []string{}}
+		switch {
+		case user.IsOwner:
+			view.Permissions = allPermissionIDs()
+		default:
+			perms := s.effectivePermissions(r.Context(), user.ID)
+			if len(perms) == 0 {
+				s.writeErr(w, http.StatusForbidden, "no_permissions", i18n.T(keyAdminNoPermissions, locale))
+				return
+			}
+			view.Permissions = perms
+		}
+		tok, err = s.tokens.IssueAdminUser(user.ID)
 	}
-
-	tok, err := s.tokens.IssueAdmin("console")
 	if err != nil {
 		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.adminLogin.internal")
 		return
@@ -114,9 +168,33 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(auth.AdminTokenTTL.Seconds()),
 	})
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"ok":        true,
-		"expiresIn": int(auth.AdminTokenTTL.Seconds()),
+		"ok":          true,
+		"expiresIn":   int(auth.AdminTokenTTL.Seconds()),
+		"root":        view.Root,
+		"owner":       view.Owner,
+		"userId":      view.UserID,
+		"permissions": view.Permissions,
 	})
+}
+
+// GET /api/admin/session — who am I, and what may I do.
+//
+// The console's first call after a reload. Its answer is the caller's OWN
+// permission list, which is why it needs a credential but no permission: a
+// person cannot learn anything from it that clicking around would not tell
+// them, and without it the console has to guess which screens to render.
+//
+// ⚠️ The console uses this to hide sections. Hiding is a courtesy — every
+// endpoint checks for itself, and a client that lies to itself about what it
+// holds gets 403s, not access.
+func (s *Server) handleAdminWhoAmI(w http.ResponseWriter, r *http.Request) {
+	view, ok := s.principalView(r)
+	if !ok {
+		// Unreachable: the gate already refused a request with no credential.
+		s.writeErr(w, http.StatusUnauthorized, "unauthorized", i18n.T(keyAdminBadToken, s.requestLocale(r)))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, view)
 }
 
 // DELETE /api/admin/session — log out of the console.

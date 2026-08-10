@@ -77,10 +77,6 @@ var (
 // from the file would describe a file that may have changed since boot — that
 // is, a process that does not exist. This describes the one that is running.
 func (s *Server) handleAdminModelsGet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminModels.unauthorized")
-		return
-	}
 	if s.catalog == nil {
 		s.writeJSON(w, http.StatusOK, map[string]any{"models": []any{}})
 		return
@@ -120,10 +116,6 @@ const modelTestTimeout = 6 * time.Second
 // is not what the operator came here to do.
 func (s *Server) handleAdminModelTest(w http.ResponseWriter, r *http.Request) {
 	locale := s.requestLocale(r)
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, locale, http.StatusUnauthorized, "unauthorized", "err.adminModels.unauthorized")
-		return
-	}
 	id := r.PathValue("id")
 	if s.catalog == nil {
 		s.writeErrf(w, locale, http.StatusBadRequest, "unknown_model", keyAdminModelUnknown, id)
@@ -175,10 +167,6 @@ func (s *Server) handleAdminModelTest(w http.ResponseWriter, r *http.Request) {
 // see from a browser. It is produced by the same function the login flow uses,
 // so it cannot drift into being merely plausible.
 func (s *Server) handleAdminOAuthGet(w http.ResponseWriter, r *http.Request) {
-	if !s.adminAuthorized(r) {
-		s.writeErrL(w, s.requestLocale(r), http.StatusUnauthorized, "unauthorized", "err.adminModels.unauthorized")
-		return
-	}
 	views := []any{}
 	if s.oauth != nil {
 		for _, v := range s.oauth.Views() {
