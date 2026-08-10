@@ -337,6 +337,7 @@ func (sqliteDialect) Migrations() []string {
 			kind TEXT NOT NULL,
 			provider_id TEXT NOT NULL,
 			enabled INTEGER,
+			base_url TEXT NOT NULL DEFAULT '',
 			description_json TEXT NOT NULL DEFAULT '',
 			description_hash TEXT NOT NULL DEFAULT '',
 			approved INTEGER NOT NULL DEFAULT 0,

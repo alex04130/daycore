@@ -114,7 +114,7 @@ func buildProvider(src *adapters.Source, o Options) (domain.WeatherProvider, err
 		return p, nil
 	case adapters.FormatHTTP:
 		return &httpProvider{
-			client: adapters.NewClient(src.Entry.ID, src.Entry.BaseURL, src.Entry.Token(), timeout),
+			client: adapters.NewClient(src.Entry.ID, src.BaseURL(), src.Entry.Token(), timeout),
 			id:     src.Entry.ID,
 		}, nil
 	}

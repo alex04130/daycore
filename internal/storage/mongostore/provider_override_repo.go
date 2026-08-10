@@ -22,6 +22,7 @@ type providerOverrideDoc struct {
 	Kind        string            `bson:"kind"`
 	ID          string            `bson:"provider_id"`
 	Enabled     *bool             `bson:"enabled,omitempty"`
+	BaseURL     string            `bson:"base_url,omitempty"`
 	Description map[string]string `bson:"description,omitempty"`
 	DescHash    string            `bson:"description_hash,omitempty"`
 	Approved    bool              `bson:"approved"`
@@ -46,7 +47,7 @@ func (r providerOverrideRepo) All(ctx context.Context) ([]domain.ProviderOverrid
 			return nil, err
 		}
 		out = append(out, domain.ProviderOverride{
-			Kind: d.Kind, ID: d.ID, Enabled: d.Enabled,
+			Kind: d.Kind, ID: d.ID, Enabled: d.Enabled, BaseURL: d.BaseURL,
 			Description: d.Description, DescriptionHash: d.DescHash,
 			Approved: d.Approved, UpdatedAt: fromMillis(d.UpdatedAt),
 		})
@@ -65,6 +66,7 @@ func (r providerOverrideRepo) Set(ctx context.Context, o domain.ProviderOverride
 		"kind": o.Kind, "provider_id": o.ID,
 		"approved": o.Approved, "updated_at": nowMillis(),
 		"description_hash": o.DescriptionHash,
+		"base_url":         o.BaseURL,
 	}
 	unset := bson.M{}
 	// Absent rather than null for the two optional fields: All decodes a missing

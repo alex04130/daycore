@@ -341,6 +341,7 @@ func (mysqlDialect) Migrations() []string {
 			kind VARCHAR(32) NOT NULL,
 			provider_id VARCHAR(128) NOT NULL,
 			enabled TINYINT(1),
+			base_url TEXT,
 			description_json TEXT,
 			description_hash VARCHAR(64) NOT NULL DEFAULT '',
 			approved TINYINT(1) NOT NULL DEFAULT 0,

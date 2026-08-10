@@ -57,6 +57,10 @@ type Source struct {
 	// enabled is the resolved answer: the override's opinion if it has one,
 	// otherwise the file's, otherwise true.
 	enabled bool
+	// effectiveBaseURL is the override's address when it set one. Kept separate
+	// from Entry.BaseURL so the file's value stays readable — the console shows
+	// both, and "what would this revert to" needs an answer.
+	effectiveBaseURL string
 }
 
 // Enabled reports whether this source may be used at all.
@@ -138,9 +142,10 @@ func kindZH(k Kind) string {
 func Resolve(kind Kind, e Entry, over *domain.ProviderOverride, health *Health) *Source {
 	s := &Source{
 		Kind: kind, Entry: e, Health: health,
-		Description: e.Description,
-		DisplayName: e.ID,
-		enabled:     e.Enabled == nil || *e.Enabled,
+		Description:      e.Description,
+		DisplayName:      e.ID,
+		enabled:          e.Enabled == nil || *e.Enabled,
+		effectiveBaseURL: e.BaseURL,
 	}
 	if over == nil {
 		// A source described only in the file is NOT approved. Approval is "an
@@ -161,7 +166,25 @@ func Resolve(kind Kind, e Entry, over *domain.ProviderOverride, health *Health) 
 	// treat it as unapproved rather than as approved-with-different-words.
 	s.Approved = over.Approved && over.DescriptionHash != "" &&
 		over.DescriptionHash == DescriptionHash(s.Description)
+	if over.BaseURL != "" {
+		s.effectiveBaseURL = over.BaseURL
+	}
 	return s
+}
+
+// BaseURL is where this source is actually reached: the override when there is
+// one, the file otherwise.
+//
+// Every consumer must read THIS and never Entry.BaseURL — the entry is what the
+// file said, which stops being the truth the moment an operator edits the
+// address. A test walks the tree for that mistake.
+func (s *Source) BaseURL() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.effectiveBaseURL != "" {
+		return s.effectiveBaseURL
+	}
+	return s.Entry.BaseURL
 }
 
 // AdminView is what GET /api/admin/providers reports for one source.
@@ -174,11 +197,14 @@ func Resolve(kind Kind, e Entry, over *domain.ProviderOverride, health *Health) 
 // and whether it changed between two reads, and the console needs neither to do
 // its job.
 type AdminView struct {
-	Kind        Kind              `json:"kind"`
-	ID          string            `json:"id"`
-	Format      Format            `json:"format"`
-	Impl        string            `json:"impl,omitempty"`
-	BaseURL     string            `json:"baseUrl,omitempty"`
+	Kind    Kind   `json:"kind"`
+	ID      string `json:"id"`
+	Format  Format `json:"format"`
+	Impl    string `json:"impl,omitempty"`
+	BaseURL string `json:"baseUrl,omitempty"`
+	// FileBaseURL is what providers.yaml says, so the console can offer "revert
+	// to the file" and show what that would mean.
+	FileBaseURL string            `json:"fileBaseUrl,omitempty"`
 	TokenEnv    string            `json:"tokenEnv,omitempty"`
 	TokenSet    bool              `json:"tokenSet"`
 	DisplayName string            `json:"displayName"`
@@ -204,14 +230,15 @@ func (s *Source) View(instance string) AdminView {
 	defer s.mu.RUnlock()
 	v := AdminView{
 		Kind: s.Kind, ID: s.Entry.ID, Format: s.Entry.Format, Impl: s.Entry.Impl,
-		BaseURL: s.Entry.BaseURL, TokenEnv: s.Entry.TokenEnv, TokenSet: s.Entry.Token() != "",
+		BaseURL: s.effectiveBaseURL, FileBaseURL: s.Entry.BaseURL,
+		TokenEnv: s.Entry.TokenEnv, TokenSet: s.Entry.Token() != "",
 		DisplayName: s.DisplayName, Logo: s.Logo,
 		Enabled: s.enabled, Description: s.Description,
 		ManifestDescription: s.ManifestDescription,
 		Approved:            s.Approved,
 		// Precomputed so the console does not re-derive a rule that lives here,
 		// and so "why is this greyed out" has one answer.
-		Editable: []string{"enabled", "description", "approved"},
+		Editable: []string{"enabled", "baseUrl", "description", "approved"},
 		Instance: instance,
 	}
 	if s.Health != nil {
@@ -235,14 +262,23 @@ func (s *Source) View(instance string) AdminView {
 // The three fields here are exactly the ones read fresh at each use. Everything
 // else on Entry was used at startup to build something, which is why the
 // console cannot reach it at all.
-func (s *Source) ApplyOverride(o *domain.ProviderOverride) {
+// It returns whether the ADDRESS changed, because that is the one field a
+// caller cannot absorb in place: an http source's client was built around the
+// old URL and has to be rebuilt, and the health this process learned belongs to
+// the machine at the old address, not this one.
+func (s *Source) ApplyOverride(o *domain.ProviderOverride) (addressChanged bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	before := s.effectiveBaseURL
 	s.enabled = s.Entry.Enabled == nil || *s.Entry.Enabled
 	s.Description = s.Entry.Description
 	s.Approved = false
+	s.effectiveBaseURL = s.Entry.BaseURL
 	if o == nil {
-		return
+		return before != s.effectiveBaseURL
+	}
+	if o.BaseURL != "" {
+		s.effectiveBaseURL = o.BaseURL
 	}
 	if o.Enabled != nil {
 		s.enabled = *o.Enabled
@@ -252,6 +288,7 @@ func (s *Source) ApplyOverride(o *domain.ProviderOverride) {
 	}
 	s.Approved = o.Approved && o.DescriptionHash != "" &&
 		o.DescriptionHash == DescriptionHash(s.Description)
+	return before != s.effectiveBaseURL
 }
 
 // SetManifest records what an adapter said about itself.

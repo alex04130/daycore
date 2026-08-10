@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"daycore/internal/adapters"
 	"daycore/internal/weather"
@@ -96,8 +98,25 @@ func TestProvidersScreenShowsTheUneditableAndWhereItLives(t *testing.T) {
 	for _, e := range editable {
 		got = append(got, e.(string))
 	}
-	if strings.Join(got, ",") != "enabled,description,approved" {
-		t.Errorf("editable = %v; base_url must never be in it — it is the SSRF entrance", got)
+	if strings.Join(got, ",") != "enabled,baseUrl,description,approved" {
+		t.Errorf("editable = %v", got)
+	}
+	// ⚠️ This assertion used to read "base_url must never be in it — it is the
+	// SSRF entrance". That rule was reversed on 2026-08-09, and the reasoning is
+	// worth keeping because the old sentence was persuasive and wrong:
+	// "only shell access may set it" was never the defence. The same batch had
+	// already concluded, about this same field, that anybody who can edit
+	// providers.yaml already has the machine.
+	//
+	// What defends is independent of who typed the value — link-local refused by
+	// ValidateBaseURL, redirects refused by the client — and both run on a
+	// console value exactly as they run on a file value. Those are asserted in
+	// TestBaseURLIsEditableButStillValidated, which is where this test's teeth
+	// moved to.
+	for _, mustNot := range []string{"format", "impl", "tokenEnv", "id"} {
+		if strings.Contains(strings.Join(got, ","), mustNot) {
+			t.Errorf("%s became editable; the process built something out of it at startup", mustNot)
+		}
 	}
 }
 
@@ -279,5 +298,120 @@ func TestProvidersReadInDegradedModeButCannotWrite(t *testing.T) {
 	code, _ := putProviders(t, s, `{"providers":[{"kind":"weather","id":"open-meteo","enabled":false}]}`)
 	if code != http.StatusServiceUnavailable {
 		t.Errorf("PUT in degraded mode: %d, want 503", code)
+	}
+}
+
+// base_url is editable as of 2026-08-09, and the validation that actually holds
+// the SSRF line runs on the console's value exactly as it ran on the file's.
+//
+// The old rule was "only shell access may change this". That reasoning did not
+// hold up: the same batch concluded, about the same field, that an attacker who
+// can edit providers.yaml already has the machine. What defends is independent
+// of who typed it — link-local refused here, redirects refused in the client.
+func TestBaseURLIsEditableButStillValidated(t *testing.T) {
+	s := adminServer(t)
+	src := adapters.Resolve(adapters.KindWeather, adapters.Entry{
+		ID: "wx", Format: adapters.FormatHTTP, BaseURL: "https://old.example.com",
+	}, nil, adapters.NewHealth())
+	ws, problems := weather.NewSources([]*adapters.Source{src}, weather.Options{})
+	if len(problems) > 0 {
+		t.Fatalf("setup: %v", problems)
+	}
+	s.weather = ws
+
+	// A legitimate move.
+	if code, body := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wx","baseUrl":"https://new.example.com"}]}`); code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", code, body)
+	}
+	if got := s.weather.Source("wx").BaseURL(); got != "https://new.example.com" {
+		t.Errorf("the address is still %q — the console reported a change the process ignored", got)
+	}
+	// The file's value stays readable, because "revert to the file" needs to
+	// know what that means.
+	if got := getProviders(t, s)["weather/wx"]["fileBaseUrl"]; got != "https://old.example.com" {
+		t.Errorf("fileBaseUrl = %v; the console cannot offer a revert without it", got)
+	}
+
+	// The checks that matter still refuse, and they refuse a console value the
+	// same way they refuse a file value.
+	for _, tc := range []struct{ name, url, want string }{
+		{"link-local", "http://169.254.169.254/latest/meta-data/", "link-local"},
+		{"embedded credentials", "https://u:p@wx.example.com", "credentials"},
+		{"a non-http scheme", "file:///etc/passwd", "scheme"},
+	} {
+		code, body := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wx","baseUrl":"`+tc.url+`"}]}`)
+		if code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s, want 400", tc.name, code, body)
+			continue
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("%s: the error does not say why: %s", tc.name, body)
+		}
+	}
+	// And none of the refusals moved it.
+	if got := s.weather.Source("wx").BaseURL(); got != "https://new.example.com" {
+		t.Errorf("a refused address changed the source: %q", got)
+	}
+
+	// "" returns the source to the file.
+	if code, body := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wx","baseUrl":""}]}`); code != http.StatusOK {
+		t.Fatalf("revert: %d %s", code, body)
+	}
+	if got := s.weather.Source("wx").BaseURL(); got != "https://old.example.com" {
+		t.Errorf("after clearing the override the address is %q, want the file's", got)
+	}
+}
+
+// Moving a source resets what this process learned about it.
+//
+// The health belongs to the machine at the OLD address. Carrying it over would
+// mark a freshly pointed adapter down before the first call, on evidence about
+// a server it has never spoken to — or, worse, vouch for an address nobody has
+// tried.
+func TestMovingASourceResetsItsHealth(t *testing.T) {
+	s := adminServer(t)
+	src := adapters.Resolve(adapters.KindWeather, adapters.Entry{
+		ID: "wx", Format: adapters.FormatHTTP, BaseURL: "https://old.example.com",
+	}, nil, adapters.NewHealth())
+	ws, _ := weather.NewSources([]*adapters.Source{src}, weather.Options{})
+	s.weather = ws
+
+	for i := 0; i < adapters.FlipAfter; i++ {
+		s.weather.Source("wx").Health.Observe(errors.New("old server is down"), time.Now())
+	}
+	if s.weather.Source("wx").Health.Up() {
+		t.Fatal("setup: the source should be down")
+	}
+
+	if code, body := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wx","baseUrl":"https://new.example.com"}]}`); code != http.StatusOK {
+		t.Fatalf("PUT: %d %s", code, body)
+	}
+	if !s.weather.Source("wx").Health.Up() {
+		t.Error("the new address inherited the old one's failures — it has never been called")
+	}
+
+	// Toggling something else must NOT reset it: that is the case
+	// ApplyOverride is deliberately in-place for.
+	for i := 0; i < adapters.FlipAfter; i++ {
+		s.weather.Source("wx").Health.Observe(errors.New("down"), time.Now())
+	}
+	if code, _ := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wx","enabled":true}]}`); code != http.StatusOK {
+		t.Fatal("enable toggle failed")
+	}
+	if s.weather.Source("wx").Health.Up() {
+		t.Error("toggling enabled reset the health, so a known-dead source silently rejoined the tool band")
+	}
+}
+
+// A built-in source has no address to change, and saying so is better than
+// storing a value nothing reads.
+func TestABuiltinSourceRefusesAnAddress(t *testing.T) {
+	s := providerServer(t)
+	code, body := putProviders(t, s, `{"providers":[{"kind":"weather","id":"wttr","baseUrl":"https://example.com"}]}`)
+	if code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", code)
+	}
+	if !strings.Contains(body, "wttr") {
+		t.Errorf("the error does not name the source: %s", body)
 	}
 }

@@ -14,28 +14,20 @@ import (
 // one F1 drew across the environment variables: **did the process already build
 // something out of it?**
 //
-//	config/providers.yaml   id, format, base_url, token_env, capabilities
-//	provider_overrides      enabled, description, approved
-//
-// The file half is boot-layer — the process constructed an HTTP client from
-// base_url at startup, so a new value cannot change the thing already built,
-// exactly like DB_DSN. The table half is read fresh at each use, so a new value
-// takes effect on the next read.
+//	config/providers.yaml   id, format, token_env, capabilities   the file
+//	provider_overrides      enabled, base_url, description, approved
 //
 // # Boundary: the console never writes providers.yaml
 //
-// Not "not yet" — not at all. Two reasons, and the second is the one that keeps
-// it true:
+// Not "not yet" — not at all, and the reason is NOT about which fields are
+// sensitive. It is that safely rewriting a YAML file an operator also hand-edits
+// is a genuinely hard problem: comments are lost, ordering is lost, concurrent
+// edits clobber each other, and there is a read-to-write gap. Not doing it means
+// not having any of that.
 //
-//  1. base_url is the SSRF entrance. A base_url editable from a web page means a
-//     compromised console can point the backend at 169.254.169.254 and read the
-//     result back out through a weather forecast the model then repeats to the
-//     user. Requiring shell access to change it is the whole defence.
-//  2. Safely rewriting a YAML file that an operator also hand-edits is a genuinely
-//     hard problem — comments are lost, ordering is lost, concurrent edits
-//     clobber, and there is a read-to-write gap. Not doing it means not having
-//     any of that, and the price is only "changing base_url means logging in",
-//     which was always going to be true.
+// So a field the console must be able to change lives in the TABLE, and the
+// table wins over the file. base_url moved here on 2026-08-09 for exactly that
+// reason — see the field comment for what that costs and what still holds.
 //
 // The same rule answers models.yaml and oauth.yaml in F4b: the console writes
 // their runtime overrides, never the files.
@@ -49,6 +41,28 @@ type ProviderOverride struct {
 	// and a half-migrated deployment should not silently lose the operator's
 	// settings. It is reported as orphaned instead.
 	ID string `json:"id"`
+
+	// BaseURL overrides where an http adapter lives. Empty means "use the file".
+	//
+	// # It used to be file-only, and that reasoning did not hold up
+	//
+	// The argument was "base_url is the SSRF entrance, so changing it should
+	// require shell access". But the same batch that wrote it also concluded, in
+	// internal/adapters/baseurl.go, that **an attacker who can edit
+	// providers.yaml already has the machine** — which makes "who may set it" a
+	// weak defence in both directions.
+	//
+	// What actually holds the SSRF line is independent of who set the value:
+	// link-local and credential-bearing URLs are refused by validateBaseURL, and
+	// the HTTP client refuses to follow redirects. Those two apply to a value
+	// typed into a console exactly as they apply to one read from a file.
+	//
+	// ⚠️ What IS genuinely lost, so nobody thinks it was free: reaching this
+	// field used to need shell access, and now it needs a console credential —
+	// which can be phished or stolen through the browser in ways a shell cannot.
+	// The mitigation is that the value is still validated on the way in, and
+	// that changing it is visible (it is an override row with a timestamp).
+	BaseURL string `json:"baseUrl,omitempty"`
 
 	// Enabled is a pointer so "no opinion" and "explicitly off" are different.
 	// Without that, an override row could never mean "fall back to the file",

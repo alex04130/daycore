@@ -356,6 +356,7 @@ func (postgresDialect) Migrations() []string {
 			kind TEXT NOT NULL,
 			provider_id TEXT NOT NULL,
 			enabled BOOLEAN,
+			base_url TEXT NOT NULL DEFAULT '',
 			description_json TEXT NOT NULL DEFAULT '',
 			description_hash TEXT NOT NULL DEFAULT '',
 			approved BOOLEAN NOT NULL DEFAULT FALSE,

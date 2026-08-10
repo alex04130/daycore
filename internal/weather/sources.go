@@ -224,6 +224,36 @@ func (s *Sources) AllIDs() []string {
 	return append([]string(nil), s.order...)
 }
 
+// Rebind rebuilds the source behind an id after its address changed.
+//
+// # Why the health is reset and not carried over
+//
+// Everything this process learned about whether the source answers belongs to
+// the machine at the OLD address. Carrying it across would mean a freshly
+// pointed adapter inheriting three failures from a server it has never spoken
+// to — and it would be marked down before the first call, on evidence about
+// somebody else. The reverse is worse: a healthy record vouching for an address
+// nobody has tried.
+//
+// This is the one case where rebuilding is right. ApplyOverride is deliberately
+// in-place for every other field precisely so that toggling a description does
+// NOT throw away what we know.
+func (s *Sources) Rebind(id string, o Options) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return fmt.Errorf("no source %q", id)
+	}
+	built, err := buildProvider(e.src, o)
+	if err != nil {
+		return err
+	}
+	e.prov = built
+	e.src.Health = adapters.NewHealth()
+	return nil
+}
+
 // Views renders every source for the console, including disabled and unhealthy
 // ones — the operator's question is usually about one of those.
 func (s *Sources) Views(instance string) []adapters.AdminView {

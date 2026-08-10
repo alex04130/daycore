@@ -41,6 +41,14 @@ import (
 // The check is on the literal host in the config. Resolution-time rebinding is
 // not covered here and cannot be — the honest answer is that the redirect
 // refusal in the client is what closes the dynamic half.
+// ValidateBaseURL is the exported gate for a console-supplied address.
+//
+// Exported on 2026-08-09 when base_url became editable. The point is that the
+// SAME check runs whether the value came from the file or from a web form:
+// "who set it" was never the defence — refusing link-local addresses and
+// refusing to follow redirects is, and neither cares where the string came from.
+func ValidateBaseURL(raw string) error { return validateBaseURL(raw) }
+
 func validateBaseURL(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("format http needs base_url")

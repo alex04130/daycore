@@ -10,6 +10,8 @@ import (
 	"daycore/internal/adapters"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
+	"daycore/internal/weather"
+	"daycore/internal/websearch"
 )
 
 func init() {
@@ -62,6 +64,14 @@ var (
 		"zh-CN": "%s/%s 的描述超过 %d 字 —— 它是要进提示词的一句话，不是一段说明",
 		"en-US": "%s/%s: the description exceeds %d characters — it is one sentence going into a prompt, not a page",
 	})
+	keyAdminProvBadBaseURL = i18n.Reg("admin.providers.bad_base_url", i18n.Text{
+		"zh-CN": "%s/%s 的地址不合法：%s",
+		"en-US": "%s/%s: that address is not usable — %s",
+	})
+	keyAdminProvBaseURLNotHTTP = i18n.Reg("admin.providers.base_url_not_http", i18n.Text{
+		"zh-CN": "%s/%s 是内置实现，没有地址可改",
+		"en-US": "%s/%s is a built-in implementation and has no address to change",
+	})
 	keyAdminProvApproveEmpty = i18n.Reg("admin.providers.approve_empty", i18n.Text{
 		"zh-CN": "%s/%s 没有描述可批准 —— 批准的意思是「这段文字我读过」",
 		"en-US": "%s/%s has no description to approve — approving means \"I have read this text\"",
@@ -110,9 +120,13 @@ func (s *Server) providerViews() []adapters.AdminView {
 }
 
 type providerPatch struct {
-	Kind        string             `json:"kind"`
-	ID          string             `json:"id"`
-	Enabled     *bool              `json:"enabled"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Enabled *bool  `json:"enabled"`
+	// BaseURL is editable as of 2026-08-09. "" clears the override and returns
+	// the source to what providers.yaml says — the same null-vs-empty
+	// distinction the config endpoint draws, and for the same reason.
+	BaseURL     *string            `json:"baseUrl"`
 	Description *map[string]string `json:"description"`
 	Approved    *bool              `json:"approved"`
 }
@@ -188,6 +202,26 @@ func (s *Server) buildOverride(src *adapters.Source, p providerPatch, locale str
 		enabled = *p.Enabled
 	}
 	row.Enabled = &enabled
+
+	// The address, validated exactly as the file's would be.
+	row.BaseURL = view.BaseURL
+	if view.BaseURL == view.FileBaseURL {
+		row.BaseURL = "" // no override in force; do not manufacture one
+	}
+	if p.BaseURL != nil {
+		next := strings.TrimSpace(*p.BaseURL)
+		switch {
+		case next == "":
+			row.BaseURL = "" // back to the file
+		case view.Format != adapters.FormatHTTP:
+			return row, errors.New(i18n.Tf(keyAdminProvBaseURLNotHTTP, locale, p.Kind, p.ID))
+		default:
+			if err := adapters.ValidateBaseURL(next); err != nil {
+				return row, errors.New(i18n.Tf(keyAdminProvBadBaseURL, locale, p.Kind, p.ID, err.Error()))
+			}
+			row.BaseURL = next
+		}
+	}
 
 	desc := view.Description
 	if p.Description != nil {
@@ -296,18 +330,36 @@ func (s *Server) ReloadProviders(ctx context.Context) error {
 	for i := range rows {
 		byKey[rows[i].Kind+"/"+rows[i].ID] = &rows[i]
 	}
-	apply := func(kind adapters.Kind, ids []string, get func(string) *adapters.Source) {
-		for _, id := range ids {
-			if src := get(id); src != nil {
-				src.ApplyOverride(byKey[string(kind)+"/"+id])
+	// An address change cannot be absorbed in place: the client was built around
+	// the old URL, and the health this process learned belongs to the machine at
+	// that address rather than to this one. Rebind rebuilds both.
+	if s.weather != nil {
+		for _, id := range s.weather.AllIDs() {
+			src := s.weather.Source(id)
+			if src == nil {
+				continue
+			}
+			if moved := src.ApplyOverride(byKey["weather/"+id]); moved {
+				if err := s.weather.Rebind(id, weather.Options{
+					QWeatherKey: s.cfg.QWeatherKey, OpenWeatherMapKey: s.cfg.OpenWeatherMapKey,
+				}); err != nil {
+					s.log.Warn("could not rebind a weather source to its new address", "id", id, "err", err)
+				}
 			}
 		}
 	}
-	if s.weather != nil {
-		apply(adapters.KindWeather, s.weather.AllIDs(), s.weather.Source)
-	}
 	if s.search != nil {
-		apply(adapters.KindSearch, s.search.AllIDs(), s.search.Source)
+		for _, id := range s.search.AllIDs() {
+			src := s.search.Source(id)
+			if src == nil {
+				continue
+			}
+			if moved := src.ApplyOverride(byKey["search/"+id]); moved {
+				if err := s.search.Rebind(id, websearch.Options{TavilyKey: s.cfg.TavilyKey}); err != nil {
+					s.log.Warn("could not rebind a search source to its new address", "id", id, "err", err)
+				}
+			}
+		}
 	}
 	return nil
 }

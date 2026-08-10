@@ -169,7 +169,7 @@ func buildEngine(src *adapters.Source, o Options) (Engine, error) {
 		return e, nil
 	case adapters.FormatHTTP:
 		return &httpEngine{
-			client: adapters.NewClient(src.Entry.ID, src.Entry.BaseURL, src.Entry.Token(), timeout),
+			client: adapters.NewClient(src.Entry.ID, src.BaseURL(), src.Entry.Token(), timeout),
 			id:     src.Entry.ID,
 		}, nil
 	}
@@ -267,6 +267,36 @@ func (s *Sources) AllIDs() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return append([]string(nil), s.order...)
+}
+
+// Rebind rebuilds the source behind an id after its address changed.
+//
+// # Why the health is reset and not carried over
+//
+// Everything this process learned about whether the source answers belongs to
+// the machine at the OLD address. Carrying it across would mean a freshly
+// pointed adapter inheriting three failures from a server it has never spoken
+// to — and it would be marked down before the first call, on evidence about
+// somebody else. The reverse is worse: a healthy record vouching for an address
+// nobody has tried.
+//
+// This is the one case where rebuilding is right. ApplyOverride is deliberately
+// in-place for every other field precisely so that toggling a description does
+// NOT throw away what we know.
+func (s *Sources) Rebind(id string, o Options) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.byID[id]
+	if !ok {
+		return fmt.Errorf("no source %q", id)
+	}
+	built, err := buildEngine(e.src, o)
+	if err != nil {
+		return err
+	}
+	e.engine = built
+	e.src.Health = adapters.NewHealth()
+	return nil
 }
 
 // Views renders every source for the console, disabled and unhealthy included.

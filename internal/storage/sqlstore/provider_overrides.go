@@ -15,7 +15,7 @@ type providerOverrideRepo struct{ *Store }
 // and a bare `id` in a two-column key reads as "the row's id" in every query
 // that joins or debugs against it. The naming cost is one word; the confusion
 // cost is somebody writing WHERE id = ... and getting two rows.
-const providerOverrideCols = `kind, provider_id, enabled, description_json, description_hash, approved, updated_at`
+const providerOverrideCols = `kind, provider_id, enabled, base_url, description_json, description_hash, approved, updated_at`
 
 func (r providerOverrideRepo) All(ctx context.Context) ([]domain.ProviderOverride, error) {
 	rows, err := r.query(ctx, `SELECT `+providerOverrideCols+` FROM provider_overrides ORDER BY kind, provider_id`)
@@ -29,7 +29,7 @@ func (r providerOverrideRepo) All(ctx context.Context) ([]domain.ProviderOverrid
 		var enabled *bool
 		var descJSON string
 		var ua int64
-		if err := rows.Scan(&o.Kind, &o.ID, &enabled, &descJSON, &o.DescriptionHash, &o.Approved, &ua); err != nil {
+		if err := rows.Scan(&o.Kind, &o.ID, &enabled, &o.BaseURL, &descJSON, &o.DescriptionHash, &o.Approved, &ua); err != nil {
 			return nil, err
 		}
 		o.Enabled = enabled
@@ -64,17 +64,17 @@ func (r providerOverrideRepo) Set(ctx context.Context, o domain.ProviderOverride
 	}
 	now := nowMillis()
 	res, err := r.exec(ctx,
-		`UPDATE provider_overrides SET enabled = ?, description_json = ?, description_hash = ?, approved = ?, updated_at = ?
+		`UPDATE provider_overrides SET enabled = ?, base_url = ?, description_json = ?, description_hash = ?, approved = ?, updated_at = ?
 		 WHERE kind = ? AND provider_id = ?`,
-		o.Enabled, desc, o.DescriptionHash, o.Approved, now, o.Kind, o.ID)
+		o.Enabled, o.BaseURL, desc, o.DescriptionHash, o.Approved, now, o.Kind, o.ID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	_, err = r.exec(ctx, `INSERT INTO provider_overrides (`+providerOverrideCols+`) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		o.Kind, o.ID, o.Enabled, desc, o.DescriptionHash, o.Approved, now)
+	_, err = r.exec(ctx, `INSERT INTO provider_overrides (`+providerOverrideCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		o.Kind, o.ID, o.Enabled, o.BaseURL, desc, o.DescriptionHash, o.Approved, now)
 	return err
 }
 
