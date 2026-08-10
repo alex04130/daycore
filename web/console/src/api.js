@@ -175,6 +175,12 @@ export const getPairings = () => request('/pairings');
 export const createPairing = (body) => request('/pairings', { method: 'POST', body });
 export const setPairingRoles = (id, roles) =>
 	request(`/pairings/${encodeURIComponent(id)}/roles`, { method: 'PUT', body: { roles } });
+// ⚠️ Root credential only, server-side. Offered to everyone and the 403
+// explains — the same rule the owner mark follows, so nobody is left wondering
+// where the control went.
+export const setPairingFull = (id, full) =>
+	request(`/pairings/${encodeURIComponent(id)}/full`, { method: 'PUT', body: { full } });
+
 export const deletePairing = (id) =>
 	request(`/pairings/${encodeURIComponent(id)}`, { method: 'DELETE' });
 

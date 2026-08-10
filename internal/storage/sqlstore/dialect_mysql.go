@@ -176,6 +176,7 @@ func (mysqlDialect) Migrations() []string {
 			description LONGTEXT,
 			secret_hash VARCHAR(191) NOT NULL,
 			roles_json LONGTEXT,
+			full_access INTEGER NOT NULL DEFAULT 0,
 			last_seen_at BIGINT NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL

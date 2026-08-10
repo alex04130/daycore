@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -228,5 +229,97 @@ func TestADegradedProcessAcceptsNoPairing(t *testing.T) {
 	// claim.
 	if rec := adminReq(t, s, http.MethodGet, "/api/admin/health", "", withRootHeader(s)); rec.Code != http.StatusOK {
 		t.Errorf("the root credential stopped working in degraded mode: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A full pairing is root for AUTHORISATION, and only root can make one.
+//
+// This is the author's decision — "配对和集群按理来说应该有 admin token 的
+// 权限的，不然集群管理就会乱掉" — and the reason it is GRANTED rather than
+// automatic is the other half of the same argument: a key on somebody else's
+// machine that is unconditionally root leaves no way to attach a console that
+// merely watches, which is the most common reason to attach one at all.
+func TestAFullPairingIsRootAndOnlyRootCanMakeOne(t *testing.T) {
+	s := adminServer(t)
+	ctx := context.Background()
+	key, id := issuePairing(t, s, `{"name":"cluster"}`)
+
+	// It starts with nothing.
+	if rec := adminReq(t, s, http.MethodGet, "/api/admin/health", "", withPairingKey(key)); rec.Code != http.StatusForbidden {
+		t.Fatalf("a fresh pairing already had access: %d", rec.Code)
+	}
+
+	// ⚠️ Nothing short of root may grant it — not the permission that manages
+	// pairings, not the one that is owner-equivalent for people.
+	makeAdminUser(t, s, "manager", []string{PermPairingsRead, PermPairingsManage, PermRolesEdit})
+	rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":true}`, withAdminCookie(t, s, "manager"))
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("pairings.manage + roles.edit granted root-equivalence: %d — the set of things that can "+
+			"do everything now grows without anybody deciding it should", rec.Code)
+	}
+	// An owner cannot either, exactly as an owner cannot mint another owner.
+	owner := makeAdminUser(t, s, "boss", nil)
+	if err := s.store.Users().SetOwner(ctx, owner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":true}`, withAdminCookie(t, s, owner.ID)); rec.Code != http.StatusForbidden {
+		t.Errorf("an owner granted root-equivalence to a pairing: %d", rec.Code)
+	}
+
+	// Root can.
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":true}`, withRootHeader(s)); rec.Code != http.StatusOK {
+		t.Fatalf("root could not grant it: %d %s", rec.Code, rec.Body)
+	}
+
+	// And now the console really is root: it passes an ordinary permission it
+	// was never granted, AND the route no permission reaches.
+	if rec := adminReq(t, s, http.MethodGet, "/api/admin/prompts", "", withPairingKey(key)); rec.Code != http.StatusOK {
+		t.Errorf("a full pairing was refused an ordinary route: %d %s", rec.Code, rec.Body)
+	}
+	target := makeAdminUser(t, s, "somebody", nil)
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/users/"+target.ID+"/owner", `{"owner":true}`, withPairingKey(key)); rec.Code != http.StatusOK {
+		t.Errorf("a full pairing could not reach the root-only route: %d %s — a cluster console that "+
+			"cannot reach them manages nothing, which is what this exists for", rec.Code, rec.Body)
+	}
+
+	// Revoking the mark takes effect on the next request, like every other
+	// permission change.
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":false}`, withRootHeader(s)); rec.Code != http.StatusOK {
+		t.Fatalf("root could not revoke it: %d %s", rec.Code, rec.Body)
+	}
+	if rec := adminReq(t, s, http.MethodGet, "/api/admin/prompts", "", withPairingKey(key)); rec.Code != http.StatusForbidden {
+		t.Errorf("a pairing stripped of root-equivalence still passed: %d", rec.Code)
+	}
+	// A missing field is a 400, not "false" — "grant root" and "send an empty
+	// body" must not be the same request.
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{}`, withRootHeader(s)); rec.Code != http.StatusBadRequest {
+		t.Errorf("an empty body answered %d, want 400", rec.Code)
+	}
+}
+
+// Root for authorisation is NOT root for disclosure.
+//
+// ⚠️ The distinction is deliberate and easy to erase. isRootCredential gates the
+// one thing shown only to ADMIN_TOKEN — a driver error carrying the DSN
+// password — and its rule is "things the holder could read anyway by looking at
+// the same file". That is true of whoever holds the environment variable and
+// FALSE of a console on another machine, however powerful it is otherwise.
+func TestAFullPairingIsNotRootForDisclosure(t *testing.T) {
+	s := adminServer(t)
+	key, id := issuePairing(t, s, `{"name":"cluster"}`)
+	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":true}`, withRootHeader(s)); rec.Code != http.StatusOK {
+		t.Fatal(rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	req.Header.Set(pairingHeader, key)
+	if s.isRootCredential(req) {
+		t.Error("a full pairing satisfies isRootCredential — it would be shown a DSN password it " +
+			"cannot read from the machine it runs on")
+	}
+	// The header holder still does.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	req2.Header.Set("X-Admin-Token", s.cfg.AdminToken)
+	if !s.isRootCredential(req2) {
+		t.Error("the admin token stopped satisfying isRootCredential")
 	}
 }

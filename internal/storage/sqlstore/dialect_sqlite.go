@@ -165,6 +165,7 @@ func (sqliteDialect) Migrations() []string {
 			description TEXT,
 			secret_hash TEXT NOT NULL,
 			roles_json TEXT,
+			full_access INTEGER NOT NULL DEFAULT 0,
 			last_seen_at BIGINT NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL

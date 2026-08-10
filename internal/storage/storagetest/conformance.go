@@ -3173,6 +3173,33 @@ func pairingRoundTrip(t *testing.T, h Harness) {
 		t.Errorf("touching an absent pairing errored: %v", err)
 	}
 
+	// ── root-equivalence ────────────────────────────────────────────────────
+	//
+	// A stored flag, and it must round-trip as one: a back end that dropped it
+	// would silently downgrade a cluster console to whatever its groups happen
+	// to grant, and the symptom would be a console that mostly works.
+	if got, _ = repo.Get(ctx, "pair-1"); got.Full {
+		t.Error("a new pairing is root-equivalent; it must start with nothing")
+	}
+	if err := repo.SetFull(ctx, "pair-1", true); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.Get(ctx, "pair-1"); !got.Full {
+		t.Error("SetFull(true) did not stick")
+	}
+	if list, _ := repo.List(ctx); len(list) != 1 || !list[0].Full {
+		t.Error("the flag survives Get but not List — the console would show it wrong")
+	}
+	if err := repo.SetFull(ctx, "pair-1", false); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.Get(ctx, "pair-1"); got.Full {
+		t.Error("SetFull(false) did not revoke it")
+	}
+	if err := repo.SetFull(ctx, "not-a-pairing", true); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("SetFull on an unknown pairing returned %v, want ErrNotFound", err)
+	}
+
 	// ── revocation ──────────────────────────────────────────────────────────
 	if err := repo.Delete(ctx, "pair-1"); err != nil {
 		t.Fatal(err)

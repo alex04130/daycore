@@ -24,6 +24,7 @@ func init() {
 		mux.HandleFunc("GET /api/admin/pairings", s.handleAdminPairingList)
 		mux.HandleFunc("POST /api/admin/pairings", s.handleAdminPairingCreate)
 		mux.HandleFunc("PUT /api/admin/pairings/{id}/roles", s.handleAdminPairingRoles)
+		mux.HandleFunc("PUT /api/admin/pairings/{id}/full", s.handleAdminPairingFull)
 		mux.HandleFunc("DELETE /api/admin/pairings/{id}", s.handleAdminPairingDelete)
 	})
 }
@@ -120,24 +121,24 @@ func hashPairingSecret(secret string) string {
 // high-entropy input. Not because a timing attack on a 256-bit secret is
 // plausible, but because `==` on a credential is the line somebody copies into
 // the next check, where the input might be a password.
-func (s *Server) verifyPairing(r *http.Request, presented string) (string, bool) {
+func (s *Server) verifyPairing(r *http.Request, presented string) (id string, full, ok bool) {
 	if s.store == nil {
 		// Degraded: pairings live in the database. Only the root credential
 		// works there, which is the arrangement degraded boot was built around.
-		return "", false
+		return "", false, false
 	}
 	parts := strings.SplitN(presented, "_", 3)
 	if len(parts) != 3 || parts[0] != domain.PairingKeyPrefix || parts[1] == "" || parts[2] == "" {
-		return "", false
+		return "", false, false
 	}
 	id, secret := parts[1], parts[2]
 	ctx := r.Context()
 	p, err := s.store.Pairings().Get(ctx, id)
 	if err != nil || p == nil {
-		return "", false
+		return "", false, false
 	}
 	if subtle.ConstantTimeCompare([]byte(hashPairingSecret(secret)), []byte(p.SecretHash)) != 1 {
-		return "", false
+		return "", false, false
 	}
 	// Best-effort, throttled inside the store: "is this still in use" is the
 	// only question anybody asks before revoking one, and it must not cost a
@@ -146,7 +147,7 @@ func (s *Server) verifyPairing(r *http.Request, presented string) (string, bool)
 	if _, terr := s.store.Pairings().TouchLastSeen(ctx, id, time.Now()); terr != nil {
 		s.log.Debug("could not record pairing last-seen", "pairing", id, "err", terr)
 	}
-	return id, true
+	return id, p.Full, true
 }
 
 type pairingView struct {
@@ -154,6 +155,10 @@ type pairingView struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description,omitempty"`
 	Roles       []string `json:"roles"`
+	// Full is root-equivalence. Rendered as its own thing rather than folded
+	// into the permission list, because "everything, including what no
+	// permission reaches" is not a longer list — it is a different claim.
+	Full bool `json:"full"`
 	// Permissions is what those roles actually add up to. Shown because a list
 	// of group names is not something anybody can judge a credential by — the
 	// same reason the role editor prints damage lines rather than ids.
@@ -163,7 +168,7 @@ type pairingView struct {
 }
 
 func (s *Server) pairingView(ctx context.Context, p domain.Pairing) pairingView {
-	v := pairingView{ID: p.ID, Name: p.Name, Description: p.Description, Roles: p.Roles, Permissions: []string{}}
+	v := pairingView{ID: p.ID, Name: p.Name, Description: p.Description, Roles: p.Roles, Full: p.Full, Permissions: []string{}}
 	if perms := s.permissionsOfRoles(ctx, p.Roles); len(perms) > 0 {
 		v.Permissions = perms
 	}
@@ -348,4 +353,44 @@ func (s *Server) checkRoles(w http.ResponseWriter, r *http.Request, want []strin
 		return nil, false
 	}
 	return out, true
+}
+
+// PUT /api/admin/pairings/{id}/full — make an attached console root-equivalent.
+//
+// ⚠️ ROOT CREDENTIAL ONLY (permRoot), like the owner mark on a user, and for
+// the same reason: delegating root has to be an act somebody performed WITH the
+// root credential, or the set of things that can do everything grows without
+// anybody deciding it should.
+//
+// This is what makes a cluster console usable — the author's point that a
+// console which cannot reach the root-only routes manages nothing, and that an
+// operator blocked here will just put ADMIN_TOKEN on the other machine instead,
+// which is strictly worse. The full argument is on domain.Pairing.Full.
+func (s *Server) handleAdminPairingFull(w http.ResponseWriter, r *http.Request) {
+	locale := s.requestLocale(r)
+	if s.store == nil {
+		s.writeErr(w, http.StatusServiceUnavailable, "degraded", i18n.T(keyPairingDegraded, locale))
+		return
+	}
+	var body struct {
+		Full *bool `json:"full"`
+	}
+	if err := s.readJSON(r, &body); err != nil || body.Full == nil {
+		// A missing field is refused rather than read as false. "Grant root" and
+		// "send an empty body" must not be the same request.
+		s.writeErr(w, http.StatusBadRequest, "bad_request", i18n.T(keyPairingBadRequest, locale))
+		return
+	}
+	err := s.store.Pairings().SetFull(r.Context(), r.PathValue("id"), *body.Full)
+	if errors.Is(err, domain.ErrNotFound) {
+		s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyPairingNotFound, locale))
+		return
+	}
+	if err != nil {
+		s.log.Error("pairing full", "err", err)
+		s.writeErr(w, http.StatusInternalServerError, "internal", i18n.T(keyPairingInternal, locale))
+		return
+	}
+	s.log.Warn("a pairing's root-equivalence changed", "pairing", r.PathValue("id"), "full", *body.Full)
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "full": *body.Full})
 }

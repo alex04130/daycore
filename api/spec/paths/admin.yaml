@@ -505,6 +505,52 @@
       '403': { description: Missing pairings.manage, or an admin group without roles.edit. }
       '404': { description: No such pairing, or no such group. }
       '503': { description: 'Degraded: no database.' }
+/api/admin/pairings/{id}/full:
+  put:
+    operationId: adminSetPairingFull
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Make an attached console ROOT-EQUIVALENT. Root credential only.
+    description: >-
+      A full pairing passes everything, including the routes no permission
+      reaches. That is what makes a cluster console usable: one that cannot
+      restart a node or promote an owner manages nothing, and an operator
+      blocked here will put ADMIN_TOKEN on the other machine instead — which is
+      strictly worse than granting this.
+
+      ⚠️ GRANTED, NOT AUTOMATIC. A pairing key lives on somebody else's machine.
+      If every pairing were root, one compromised console would be a total
+      compromise of every deployment it touches, with no way to attach a console
+      that merely watches — and "is anything down" is the most common reason to
+      attach one. Granting costs nothing when it is needed: whoever sets up a
+      cluster console is standing at this console with the root token in hand.
+
+      ⚠️ ROOT CREDENTIAL ONLY — not pairings.manage, not roles.edit, and not an
+      owner. Same reasoning as the owner mark: delegating root has to be an act
+      somebody performed WITH root, or the set of things that can do everything
+      grows without anybody deciding it should. A full pairing CAN mint another
+      full pairing; that is what root-equivalent means, and it is stated rather
+      than prevented.
+
+      ⚠️ Root here is AUTHORISATION root, not DISCLOSURE root. The one thing
+      shown only to ADMIN_TOKEN — a driver error carrying the DSN password —
+      stays that way, because that rule is "things the holder could read anyway
+      from the same machine", which is false of a console running elsewhere.
+
+      A missing `full` field is a 400 rather than read as false: "grant root" and
+      "send an empty body" must not be the same request.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { type: object, required: [full], properties: { full: { type: boolean } } }
+    responses:
+      '200': { description: OK }
+      '400': { description: The full field was missing. }
+      '403': { description: Not the root credential. }
+      '404': { description: No such pairing. }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/permissions:
   get:
     operationId: adminPermissions

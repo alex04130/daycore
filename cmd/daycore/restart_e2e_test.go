@@ -115,6 +115,7 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 		// handle above is not enough — find whatever is listening and stop it,
 		// or the port stays busy for every later run.
 		killListener(t, readLogs())
+		assertNothingLeftListening(t, addr)
 		if t.Failed() {
 			t.Logf("server output:\n%s", readLogs())
 		}
@@ -351,15 +352,18 @@ func waitForNewInstance(t *testing.T, addr, token, old string, within time.Durat
 
 // killListener stops the replacement process this test caused to exist.
 //
-// The replacement was spawned by the server under test, not by this test, so
-// there is no process handle to wait on. Its pid IS in the log though: the
-// parent prints it when it starts the child, and the child inherits the
-// parent's stdout — which is the same buffer this test is reading. Parsing it
-// is exact, needs no OS-specific "who owns this port" call, and therefore stays
-// the same on both platforms this feature has to work on.
+// On Unix there usually is nothing to do: exec keeps the pid, so killing
+// cmd.Process already got it. On Windows — and under any mutation that turns
+// Unix into spawn-and-exit — the replacement is a DIFFERENT process this test
+// has no handle on. Its pid is in the log though: the parent prints it when it
+// starts the child, and the child inherits the parent's stdout, which is the
+// file this test is reading. Parsing it needs no OS-specific "who owns this
+// port" call and stays the same on both platforms.
 //
-// ⚠️ Leaking the replacement would leak a server process per run and eventually
-// take the port with it.
+// ⚠️ Leaking the replacement leaks a server process per run and eventually takes
+// the port with it. That is not hypothetical: a mutation run left one behind
+// for hours, because the mutated code did not print the line this looks for.
+// Hence assertNothingLeftListening, which turns a silent leak into a failure.
 var restartedFromPID = regexp.MustCompile(`restartedFrom"?[=:]\s*"?\d+`)
 
 var spawnedPID = regexp.MustCompile(`started the replacement process.*?pid=(\d+)`)
@@ -432,6 +436,8 @@ func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 		killListener(t, readLogs())
+		assertNothingLeftListening(t, oldAddr)
+		assertNothingLeftListening(t, newAddr)
 		if t.Failed() {
 			t.Logf("server output:\n%s", readLogs())
 		}
@@ -481,4 +487,24 @@ func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
 	}
 	t.Errorf("%s is still accepting connections after the address changed; the inherited socket was "+
 		"not closed.\n%s", oldAddr, readLogs())
+}
+
+// assertNothingLeftListening fails the test if a server survived its cleanup.
+//
+// ⚠️ A leak here is invisible without it: the test passes, a daycore process
+// keeps running, and the next thing to want that port gets a refusal from
+// something nobody remembers starting. It happened — a mutation run left one
+// alive for hours.
+func assertNothingLeftListening(t *testing.T, addr string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			return
+		}
+		c.Close()
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Errorf("something is still listening on %s after cleanup — this test leaked a server process", addr)
 }

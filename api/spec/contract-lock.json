@@ -130,6 +130,7 @@
     "POST /api/themes createTheme",
     "POST /api/wishes createWish",
     "PUT /api/admin/config adminConfigPut",
+    "PUT /api/admin/pairings/{id}/full adminSetPairingFull",
     "PUT /api/admin/pairings/{id}/roles adminSetPairingRoles",
     "PUT /api/admin/prompts/{key} adminSetPrompt",
     "PUT /api/admin/providers adminProvidersPut",

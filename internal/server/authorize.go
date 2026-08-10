@@ -109,8 +109,14 @@ func (s *Server) principalFrom(r *http.Request) (principal, bool) {
 	// been given the root token should still be identified as itself in the
 	// logs and in last-seen. Neither can be mistaken for the other.
 	if key := r.Header.Get(pairingHeader); key != "" {
-		if id, ok := s.verifyPairing(r, key); ok {
-			return principal{pairingID: id}, true
+		if id, full, ok := s.verifyPairing(r, key); ok {
+			// ⚠️ `root` here is AUTHORISATION root, not disclosure root. A full
+			// pairing passes every route including the root-only ones — that is
+			// what the author asked for, because a cluster console that cannot
+			// reach them manages nothing. It does NOT satisfy isRootCredential,
+			// whose rule is "could read it anyway from the same machine"; see
+			// domain.Pairing.Full.
+			return principal{pairingID: id, root: full}, true
 		}
 		// Sent and wrong: refuse rather than fall through, for the same reason
 		// the admin header does — otherwise a bad key silently succeeds whenever
@@ -179,6 +185,8 @@ func (s *Server) principalHasPermission(ctx context.Context, who principal, perm
 		return false
 	}
 	if who.pairingID != "" {
+		// Only reached for a NON-full pairing: authorize returns true for root
+		// before getting here, and a full pairing is root.
 		pr, err := s.store.Pairings().Get(ctx, who.pairingID)
 		if err != nil || pr == nil {
 			// Revoked between the credential check and here, or in the moment
@@ -287,12 +295,19 @@ func (s *Server) principalView(r *http.Request) (principalView, bool) {
 		return principalView{Root: true, Permissions: allPermissionIDs()}, true
 	}
 	if p.pairingID != "" {
-		view := principalView{PairingID: p.pairingID, Permissions: []string{}}
+		view := principalView{PairingID: p.pairingID, Root: p.root, Permissions: []string{}}
+		if p.root {
+			// Root-equivalent: hand it the whole list rather than a flag every
+			// screen would have to interpret, exactly as for the root credential.
+			view.Permissions = allPermissionIDs()
+		}
 		if s.store != nil {
 			if pr, err := s.store.Pairings().Get(r.Context(), p.pairingID); err == nil && pr != nil {
 				view.PairingName = pr.Name
-				if perms := s.permissionsOfRoles(r.Context(), pr.Roles); len(perms) > 0 {
-					view.Permissions = perms
+				if !p.root {
+					if perms := s.permissionsOfRoles(r.Context(), pr.Roles); len(perms) > 0 {
+						view.Permissions = perms
+					}
 				}
 			}
 		}

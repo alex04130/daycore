@@ -652,6 +652,14 @@ components:
         name: { type: string }
         description: { type: string }
         roles: { type: array, items: { type: string } }
+        full:
+          type: boolean
+          description: >-
+            Root-equivalent — passes everything, including the routes no
+            permission reaches. Granted only with the root credential. ⚠️ It is
+            authorisation root, not disclosure root: the DSN-carrying driver
+            error stays ADMIN_TOKEN-only, because that rule is about being able
+            to read the same file, not about being powerful.
         permissions:
           type: array
           items: { type: string }

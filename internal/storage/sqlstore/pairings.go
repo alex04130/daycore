@@ -17,16 +17,18 @@ type pairingRepo struct{ *Store }
 // rows_json: a name that is unreserved on all three engines. The second is
 // there so nobody reading a query ever thinks the column holds the thing
 // itself — it holds a verifier, and the difference is the whole design.
-const pairingCols = `id, name, description, secret_hash, roles_json, last_seen_at, created_at, updated_at`
+const pairingCols = `id, name, description, secret_hash, roles_json, full_access, last_seen_at, created_at, updated_at`
 
 func scanPairing(s scanner) (domain.Pairing, error) {
 	var p domain.Pairing
 	var desc, rolesJSON sql.NullString
+	var full int
 	var lastSeen, created, updated int64
-	if err := s.Scan(&p.ID, &p.Name, &desc, &p.SecretHash, &rolesJSON, &lastSeen, &created, &updated); err != nil {
+	if err := s.Scan(&p.ID, &p.Name, &desc, &p.SecretHash, &rolesJSON, &full, &lastSeen, &created, &updated); err != nil {
 		return p, err
 	}
 	p.Description = desc.String
+	p.Full = full != 0
 	// A role list that will not parse yields an EMPTY set, exactly as a role's
 	// permission list does: a pairing whose grants cannot be read grants
 	// nothing, which is what "we do not know what this permits" should mean.
@@ -94,8 +96,8 @@ func (r pairingRepo) Create(ctx context.Context, p *domain.Pairing) error {
 	}
 	now := nowMillis()
 	_, err = r.exec(ctx,
-		`INSERT INTO pairings (`+pairingCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ID, p.Name, p.Description, p.SecretHash, string(b), int64(0), now, now)
+		`INSERT INTO pairings (`+pairingCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.Name, p.Description, p.SecretHash, string(b), boolToInt(p.Full), int64(0), now, now)
 	if err != nil {
 		return err
 	}
@@ -139,6 +141,20 @@ func (r pairingRepo) TouchLastSeen(ctx context.Context, id string, now time.Time
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// SetFull marks or unmarks root-equivalence. ⚠️ Whether the caller was allowed
+// to is decided above this — see domain.Pairing.Full.
+func (r pairingRepo) SetFull(ctx context.Context, id string, full bool) error {
+	res, err := r.exec(ctx, `UPDATE pairings SET full_access = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(full), nowMillis(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r pairingRepo) Delete(ctx context.Context, id string) error {

@@ -57,11 +57,16 @@ export function Pairings({ onUnauthorized, principal }) {
               <div className="row-main">
                 <div className="row-title">
                   <strong>{p.name}</strong>
+                  {p.full && <span className="pill warn">完全权限 · 等同 ADMIN_TOKEN</span>}
                   <code className="muted">{p.id}</code>
                 </div>
                 {p.description && <div className="sub">{p.description}</div>}
                 <div className="perm-chips">
-                  {p.roles.length === 0 ? (
+                  {p.full ? (
+                    <span className="muted">
+                      它通过一切，包括没有任何权限能到达的那几条路由。组对它不再起作用。
+                    </span>
+                  ) : p.roles.length === 0 ? (
                     <span className="muted">不在任何组里 —— 能通过认证，但什么都做不了</span>
                   ) : (
                     p.roles.map((r) => (
@@ -85,6 +90,7 @@ export function Pairings({ onUnauthorized, principal }) {
               </div>
               {canManage && (
                 <div className="row-actions">
+                  <FullToggle pairing={p} onChanged={reload} />
                   <Confirm
                     word={p.name}
                     label="撤销"
@@ -185,6 +191,53 @@ function IssuedKey({ issued, onClose }) {
           </button>
         </div>
       </div>
+    </>
+  );
+}
+
+
+// Root-equivalence for an attached console.
+//
+// # Why this control exists at all
+//
+// A cluster console that cannot restart a node or promote an owner manages
+// nothing — and an operator blocked here does not give up, they put ADMIN_TOKEN
+// on the other machine instead, which is strictly worse than granting this
+// deliberately and being able to see and revoke it.
+//
+// # ⚠️ Server-side this is ROOT CREDENTIAL ONLY
+//
+// The button is shown to anybody who can manage pairings, and the 403 explains
+// — the same choice the owner mark makes. Hiding it would leave somebody
+// hunting for a control that is simply not theirs to press, which is worse than
+// a clear refusal.
+function FullToggle({ pairing, onChanged }) {
+  const [err, setErr] = useState('');
+  const set = (v) =>
+    api.setPairingFull(pairing.id, v).then(onChanged, (e) => setErr(e.message));
+
+  return (
+    <>
+      {err && <Notice kind="error">{err}</Notice>}
+      {pairing.full ? (
+        <Confirm
+          word={pairing.name}
+          label="收回完全权限"
+          danger="收回后它只剩下所在组给的权限。如果那个集群控制台正靠它工作，下一次请求就会开始被拒。"
+          onConfirm={() => set(false)}
+        />
+      ) : (
+        <Confirm
+          word={pairing.name}
+          label="给完全权限"
+          danger={
+            '⚠️ 这等同于把 ADMIN_TOKEN 交给那台机器：它会通过一切，包括没有任何权限能到达的那几条路由，' +
+            '也包括再发一把同样的钥匙出去。集群控制台确实需要这个 —— 只是要清楚这是把 root 委派出去。' +
+            '（只有 ADMIN_TOKEN 本身能做这个动作。）'
+          }
+          onConfirm={() => set(true)}
+        />
+      )}
     </>
   );
 }

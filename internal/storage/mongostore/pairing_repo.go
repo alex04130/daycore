@@ -18,6 +18,7 @@ type pairingDoc struct {
 	Description string   `bson:"description,omitempty"`
 	SecretHash  string   `bson:"secret_hash"`
 	Roles       []string `bson:"roles"`
+	Full        bool     `bson:"full_access,omitempty"`
 	LastSeenAt  int64    `bson:"last_seen_at"`
 	CreatedAt   int64    `bson:"created_at"`
 	UpdatedAt   int64    `bson:"updated_at"`
@@ -30,7 +31,7 @@ func (d pairingDoc) toDomain() domain.Pairing {
 	}
 	p := domain.Pairing{
 		ID: d.ID, Name: d.Name, Description: d.Description,
-		SecretHash: d.SecretHash, Roles: roles,
+		SecretHash: d.SecretHash, Roles: roles, Full: d.Full,
 		CreatedAt: fromMillis(d.CreatedAt), UpdatedAt: fromMillis(d.UpdatedAt),
 	}
 	if d.LastSeenAt > 0 {
@@ -86,7 +87,7 @@ func (r pairingRepo) Create(ctx context.Context, p *domain.Pairing) error {
 	now := nowMillis()
 	_, err := r.c("pairings").InsertOne(ctx, pairingDoc{
 		ID: p.ID, Name: p.Name, Description: p.Description,
-		SecretHash: p.SecretHash, Roles: roles,
+		SecretHash: p.SecretHash, Roles: roles, Full: p.Full,
 		LastSeenAt: 0, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
@@ -123,6 +124,19 @@ func (r pairingRepo) TouchLastSeen(ctx context.Context, id string, now time.Time
 		return false, err
 	}
 	return res.ModifiedCount > 0, nil
+}
+
+// SetFull marks or unmarks root-equivalence — see domain.Pairing.Full.
+func (r pairingRepo) SetFull(ctx context.Context, id string, full bool) error {
+	res, err := r.c("pairings").UpdateOne(ctx, bson.M{"_id": id},
+		bson.M{"$set": bson.M{"full_access": full, "updated_at": nowMillis()}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
 }
 
 func (r pairingRepo) Delete(ctx context.Context, id string) error {

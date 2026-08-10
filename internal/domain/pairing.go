@@ -71,6 +71,47 @@ type Pairing struct {
 	// Roles are the groups this pairing belongs to, resolved through the same
 	// union as a person's.
 	Roles []string `json:"roles"`
+	// Full makes this pairing ROOT-EQUIVALENT: it passes everything, including
+	// the routes no permission reaches.
+	//
+	// # Why it exists (author's decision)
+	//
+	// "配对和集群按理来说应该有 admin token 的权限的，不然集群管理就会乱掉".
+	// That is right and the first version was wrong: a cluster console that
+	// cannot restart a node, promote an owner, or reach a route somebody marked
+	// root-only is a cluster console that manages nothing — and the operator
+	// then works around it by putting ADMIN_TOKEN on the other machine, which
+	// is strictly worse than granting this.
+	//
+	// # ⚠️ Why it is GRANTED rather than automatic
+	//
+	// A pairing key lives on somebody else's machine. If every pairing were
+	// root, one compromised console would be a total compromise of every
+	// deployment it touches, with no way to attach a merely-watching one — and
+	// "is anything down" is the most common reason to attach at all.
+	//
+	// Granting costs nothing at the moment it is needed: whoever sets up a
+	// cluster console is standing at this console with the root token in hand.
+	//
+	// # ⚠️ Setting it requires the ROOT CREDENTIAL, like the owner mark
+	//
+	// Not pairings.manage, not roles.edit. The same reasoning as
+	// User.IsOwner: delegating root has to be an act somebody performed with
+	// the root credential, or the set of things that can do everything grows
+	// without anybody deciding it should.
+	//
+	// A full pairing CAN mint another full pairing — that is what
+	// root-equivalent means, and it is stated rather than prevented, because a
+	// half-root that cannot delegate is a different thing wearing the same name.
+	//
+	// # ⚠️ It is NOT root for information disclosure
+	//
+	// server.isRootCredential stays header-only. Its rule is "things the holder
+	// could read anyway by looking at the same file" — which is true of whoever
+	// holds ADMIN_TOKEN (they can read DB_DSN beside it) and false of a pairing
+	// on another machine. Powerful and co-located are different properties, and
+	// the disclosure rule tracks the second one.
+	Full bool `json:"full"`
 	// LastSeenAt answers the only question anybody asks before revoking one:
 	// is this still being used? Written coarsely — see the repository.
 	LastSeenAt time.Time `json:"lastSeenAt,omitempty"`
@@ -111,6 +152,9 @@ type PairingRepository interface {
 	Create(ctx context.Context, p *Pairing) error
 	// SetRoles replaces which groups a pairing belongs to.
 	SetRoles(ctx context.Context, id string, roles []string) error
+	// SetFull marks or unmarks root-equivalence. ⚠️ The caller must have
+	// verified the ROOT credential — see the field.
+	SetFull(ctx context.Context, id string, full bool) error
 	// TouchLastSeen records that this pairing was used at `now`, but only if the
 	// stored value is older than PairingLastSeenGranularity. It reports whether
 	// it wrote.

@@ -338,6 +338,9 @@ var routePermissions = map[string]string{
 	"POST /api/admin/pairings":           PermPairingsManage,
 	"PUT /api/admin/pairings/{id}/roles": PermPairingsManage,
 	"DELETE /api/admin/pairings/{id}":    PermPairingsManage,
+	// Root-equivalence for an attached console. Root credential only, like the
+	// owner mark — delegating root must be an act performed WITH root.
+	"PUT /api/admin/pairings/{id}/full": permRoot,
 
 	// The database browser. Which of the two browse permissions applies is
 	// decided per table INSIDE the handler, because the route pattern cannot
