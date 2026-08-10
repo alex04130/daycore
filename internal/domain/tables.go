@@ -137,6 +137,11 @@ var Tables = []Table{
 	{Name: "roles", Class: TableOperational, OrderBy: "created_at",
 		// Not just "composite key" — this one would break an invariant.
 		NotDeletableWhy: "删组要连成员一起删（见 domain/role.go），只删定义会让重名的新组静默恢复一批人的权限。走用户与权限那一屏"},
+	{Name: "pairings", Class: TableOperational, OrderBy: "created_at", KeyColumn: "id",
+		// ⚠️ The hash is a verifier, not a secret to steal — but it is still the
+		// only thing standing between a leaked row and an attached console, and
+		// there is no operational question the browser answers by showing it.
+		Redact: []string{"secret_hash"}},
 	{Name: "role_members", Class: TableOperational, OrderBy: "created_at",
 		NotDeletableWhy: "复合主键（role_name + user_id），改成员走用户与权限那一屏"},
 

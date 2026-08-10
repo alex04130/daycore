@@ -150,6 +150,7 @@ var cases = []suiteCase{
 	{"AIUsage/FoldsSurviveThePrune", aiUsageSurvivesPrune},
 	{"AIUsage/ConcurrentFoldsDoNotCollide", aiUsageConcurrentFold},
 	{"SessionUsage/ThreeScalesAndTumblingWindows", sessionUsageScales},
+	{"Pairing/RoundTripRolesAndThrottledLastSeen", pairingRoundTrip},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -3068,5 +3069,128 @@ func sessionUsageScales(t *testing.T, h Harness) {
 	// that into a logged error on every call.
 	if err := repo.AddUsage(ctx, "no-such-session", 1, 1, base); err != nil {
 		t.Errorf("AddUsage on an unknown session errored: %v", err)
+	}
+}
+
+// ── pairings: external consoles attached to this deployment ─────────────────
+
+// Round trip, role replacement, revocation, and the throttled last-seen.
+//
+// The throttle is the part worth a shared test: it is expressed as a CONDITION
+// INSIDE the write on both back ends (a WHERE clause / a filter), because doing
+// it in Go would be read-then-write on the authorisation path of the busiest
+// external console. A back end that dropped the condition would still pass every
+// functional check while writing on every single request.
+func pairingRoundTrip(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.Pairings()
+	ctx := bg()
+
+	if _, err := repo.Get(ctx, "nobody"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Get on an unknown pairing returned %v, want ErrNotFound", err)
+	}
+	// An empty id is refused rather than matching whatever comes first — this is
+	// on the authorisation path, so "no id" must never resolve to a credential.
+	if _, err := repo.Get(ctx, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Get on an empty id returned %v, want ErrNotFound", err)
+	}
+
+	p := &domain.Pairing{ID: "pair-1", Name: "运营台", Description: "the cluster console",
+		SecretHash: "abc123", Roles: []string{"ops"}}
+	if err := repo.Create(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	// Refused without the two things that make it a credential at all.
+	if err := repo.Create(ctx, &domain.Pairing{Name: "no id"}); err == nil {
+		t.Error("a pairing with no id was accepted; nothing could ever present it")
+	}
+	if err := repo.Create(ctx, &domain.Pairing{ID: "x", Name: "no secret"}); err == nil {
+		t.Error("a pairing with no secret hash was accepted; it would verify against nothing")
+	}
+
+	got, err := repo.Get(ctx, "pair-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "运营台" || got.SecretHash != "abc123" || got.Description != "the cluster console" {
+		t.Errorf("round trip lost something: %+v", got)
+	}
+	if len(got.Roles) != 1 || got.Roles[0] != "ops" {
+		t.Errorf("roles came back as %v, want [ops]", got.Roles)
+	}
+	// A fresh pairing has never been seen. Zero must NOT read as the epoch — a
+	// console showing "last used 1970" for something issued a minute ago is a
+	// console nobody believes.
+	if !got.LastSeenAt.IsZero() {
+		t.Errorf("a new pairing reports lastSeen=%v, want the zero time", got.LastSeenAt)
+	}
+
+	// Roles are replaced wholesale, and an empty set is a real state: a pairing
+	// that authenticates and can do nothing.
+	if err := repo.SetRoles(ctx, "pair-1", []string{"ops", "readonly"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.Get(ctx, "pair-1"); len(got.Roles) != 2 {
+		t.Errorf("SetRoles left %v", got.Roles)
+	}
+	if err := repo.SetRoles(ctx, "pair-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.Get(ctx, "pair-1"); len(got.Roles) != 0 {
+		t.Errorf("clearing the roles left %v", got.Roles)
+	}
+	if err := repo.SetRoles(ctx, "not-a-pairing", []string{"ops"}); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("SetRoles on an unknown pairing returned %v, want ErrNotFound", err)
+	}
+
+	// ── the throttle ────────────────────────────────────────────────────────
+	now := time.Now().UTC()
+	wrote, err := repo.TouchLastSeen(ctx, "pair-1", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wrote {
+		t.Fatal("the first touch wrote nothing; last-seen would never be set")
+	}
+	if got, _ = repo.Get(ctx, "pair-1"); got.LastSeenAt.IsZero() {
+		t.Error("last-seen is still unset after a touch that reported a write")
+	}
+	// A second touch a moment later must NOT write. This is the assertion the
+	// whole design rests on — without the condition inside the statement, every
+	// request from every attached console becomes a write.
+	if wrote, err = repo.TouchLastSeen(ctx, "pair-1", now.Add(time.Second)); err != nil || wrote {
+		t.Errorf("a touch one second after the last wrote again (wrote=%v err=%v); the throttle is not "+
+			"in the statement, so every request from an attached console is a write", wrote, err)
+	}
+	// …and one past the granularity must.
+	if wrote, err = repo.TouchLastSeen(ctx, "pair-1", now.Add(domain.PairingLastSeenGranularity+time.Minute)); err != nil || !wrote {
+		t.Errorf("a touch past the granularity did not write (wrote=%v err=%v); last-seen would freeze", wrote, err)
+	}
+	// Touching something that does not exist is not an error: it runs on the
+	// authorisation path, and a revoked-mid-request pairing must not turn into a
+	// logged failure.
+	if _, err := repo.TouchLastSeen(ctx, "gone", now); err != nil {
+		t.Errorf("touching an absent pairing errored: %v", err)
+	}
+
+	// ── revocation ──────────────────────────────────────────────────────────
+	if err := repo.Delete(ctx, "pair-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(ctx, "pair-1"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("a revoked pairing still resolves: %v", err)
+	}
+	// Revoking twice is not an error — two operators revoking the same key is
+	// exactly the situation revocation exists for.
+	if err := repo.Delete(ctx, "pair-1"); err != nil {
+		t.Errorf("revoking an already-revoked pairing errored: %v", err)
+	}
+
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Errorf("List returned %d after everything was revoked", len(list))
 	}
 }

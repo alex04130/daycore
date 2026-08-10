@@ -46,11 +46,19 @@ import (
 // is a second line rather than the only one.
 
 // principal is who is making an admin request.
+//
+// Three shapes, and at most one field is ever set: root, a person, or an
+// attached console. They are deliberately not a rank — an external console is
+// not "less" than a person, it just resolves its permissions from a different
+// row.
 type principal struct {
 	// root means the ADMIN_TOKEN, directly or through a cookie minted from it.
 	root bool
 	// userID is set when a person's own login is behind the cookie.
 	userID string
+	// pairingID is set when an external console presented its key. See
+	// domain/pairing.go: a cluster manager, or somebody else's console.
+	pairingID string
 }
 
 // authorize answers whether this request may do this thing.
@@ -85,7 +93,7 @@ func (s *Server) authorize(r *http.Request, perm string) bool {
 	case permAnyCredential:
 		return true
 	}
-	return s.userHasPermission(r.Context(), p.userID, perm)
+	return s.principalHasPermission(r.Context(), p, perm)
 }
 
 // principalFrom identifies the caller, or reports that there is none.
@@ -94,6 +102,20 @@ func (s *Server) principalFrom(r *http.Request) (principal, bool) {
 		// Unreachable via config.Load, which invents a token when none is set.
 		// Refusing rather than opening is the right direction for a guard whose
 		// precondition another file maintains.
+		return principal{}, false
+	}
+	// An attached console. Checked BEFORE the root header for one reason: they
+	// are different headers, so an attached console that also happens to have
+	// been given the root token should still be identified as itself in the
+	// logs and in last-seen. Neither can be mistaken for the other.
+	if key := r.Header.Get(pairingHeader); key != "" {
+		if id, ok := s.verifyPairing(r, key); ok {
+			return principal{pairingID: id}, true
+		}
+		// Sent and wrong: refuse rather than fall through, for the same reason
+		// the admin header does — otherwise a bad key silently succeeds whenever
+		// the caller happens to also hold something else, and nobody learns the
+		// key is wrong.
 		return principal{}, false
 	}
 	// Machines: a custom header, so cross-origin JavaScript cannot send it
@@ -147,23 +169,40 @@ func (s *Server) principalFrom(r *http.Request) (principal, bool) {
 // The owner mark short-circuits, which is the entire reason it is a mark rather
 // than a role holding every permission: a permission defined today is held by
 // every owner today, with no data change and no migration.
-func (s *Server) userHasPermission(ctx context.Context, userID, perm string) bool {
-	if s.store == nil || userID == "" || perm == "" {
-		// Degraded: there is no database to read roles from. Only the root
-		// credential works in that state, which is the arrangement degraded boot
-		// was built around — the console's login was deliberately made
-		// database-free so that it still functions when nothing else does.
+func (s *Server) principalHasPermission(ctx context.Context, who principal, perm string) bool {
+	if s.store == nil || perm == "" {
+		// Degraded: there is no database to read roles from — nor pairings, which
+		// live in it too. Only the root credential works in that state, which is
+		// the arrangement degraded boot was built around: the console's login was
+		// deliberately made database-free so that it still functions when nothing
+		// else does.
 		return false
 	}
-	u, err := s.store.Users().GetByID(ctx, userID)
+	if who.pairingID != "" {
+		pr, err := s.store.Pairings().Get(ctx, who.pairingID)
+		if err != nil || pr == nil {
+			// Revoked between the credential check and here, or in the moment
+			// after. Denying is right: a pairing is revoked to stop it working.
+			return false
+		}
+		return contains(s.permissionsOfRoles(ctx, pr.Roles), perm)
+	}
+	if who.userID == "" {
+		return false
+	}
+	u, err := s.store.Users().GetByID(ctx, who.userID)
 	if err != nil || u == nil {
 		return false
 	}
 	if u.IsOwner {
 		return true
 	}
-	for _, p := range s.effectivePermissions(ctx, userID) {
-		if p == perm {
+	return contains(s.effectivePermissions(ctx, who.userID), perm)
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
 			return true
 		}
 	}
@@ -182,7 +221,21 @@ func (s *Server) effectivePermissions(ctx context.Context, userID string) []stri
 		return nil
 	}
 	names, err := s.store.Roles().RolesOf(ctx, userID)
-	if err != nil || len(names) == 0 {
+	if err != nil {
+		return nil
+	}
+	return s.permissionsOfRoles(ctx, names)
+}
+
+// permissionsOfRoles is the union, and it is ONE function on purpose.
+//
+// People and attached consoles reach it from different rows — a membership
+// table for one, a JSON column for the other — and converge here. A second copy
+// for pairings would be a second place for "what does this role grant" to mean
+// something slightly different, which is the shape of divergence nobody notices
+// until the two disagree about one permission.
+func (s *Server) permissionsOfRoles(ctx context.Context, names []string) []string {
+	if s.store == nil || len(names) == 0 {
 		return nil
 	}
 	roles, err := s.store.Roles().ListRoles(ctx)
@@ -216,6 +269,8 @@ func (s *Server) effectivePermissions(ctx context.Context, userID string) []stri
 type principalView struct {
 	Root        bool     `json:"root"`
 	UserID      string   `json:"userId,omitempty"`
+	PairingID   string   `json:"pairingId,omitempty"`
+	PairingName string   `json:"pairingName,omitempty"`
 	Owner       bool     `json:"owner"`
 	Permissions []string `json:"permissions"`
 }
@@ -230,6 +285,18 @@ func (s *Server) principalView(r *http.Request) (principalView, bool) {
 		// whole list rather than a special flag it would have to interpret in
 		// every screen.
 		return principalView{Root: true, Permissions: allPermissionIDs()}, true
+	}
+	if p.pairingID != "" {
+		view := principalView{PairingID: p.pairingID, Permissions: []string{}}
+		if s.store != nil {
+			if pr, err := s.store.Pairings().Get(r.Context(), p.pairingID); err == nil && pr != nil {
+				view.PairingName = pr.Name
+				if perms := s.permissionsOfRoles(r.Context(), pr.Roles); len(perms) > 0 {
+					view.Permissions = perms
+				}
+			}
+		}
+		return view, true
 	}
 	view := principalView{UserID: p.userID, Permissions: []string{}}
 	if s.store == nil {

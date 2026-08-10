@@ -116,6 +116,8 @@ func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRep
 func (s *Store) Settings() domain.SettingRepository { return settingRepo{s} }
 func (s *Store) Roles() domain.RoleRepository       { return roleRepo{s} }
 
+func (s *Store) Pairings() domain.PairingRepository { return pairingRepo{s} }
+
 // Browser is the console's collection window — see domain/tables.go.
 func (s *Store) Browser() domain.Browser { return browserRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {

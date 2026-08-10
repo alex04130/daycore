@@ -251,3 +251,10 @@ button.chip { background: none; color: var(--fg); cursor: pointer; }
 .spark-bar:hover { opacity: 1; }
 .usage-line { display: flex; gap: .9rem; flex-wrap: wrap; font-size: .75rem; color: var(--dim); }
 .usage-line b { font-family: var(--mono); font-weight: 500; color: var(--fg); }
+.key-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+              width: min(38rem, 92vw); background: var(--panel); border: 1px solid var(--warn);
+              border-radius: 10px; padding: 1.2rem; display: grid; gap: .8rem; }
+.key-dialog h3 { margin: 0; font-size: 1rem; }
+.key-value { margin: 0; padding: .7rem .8rem; background: var(--bg); border: 1px solid var(--line);
+             border-radius: 6px; font-family: var(--mono); font-size: .8rem;
+             overflow-wrap: anywhere; white-space: pre-wrap; user-select: all; }

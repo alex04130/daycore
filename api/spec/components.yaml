@@ -641,6 +641,30 @@ components:
         totalCalls: { type: integer, description: Lifetime; never reset. }
         totalPromptTokens: { type: integer }
         totalCompTokens: { type: integer }
+    Pairing:
+      type: object
+      description: >-
+        An external console attached to this deployment. ⚠️ The key is NEVER in
+        this object — it existed once, in the create response, and the server
+        keeps only a hash.
+      properties:
+        id: { type: string, description: The public half of the key; also the lookup key. }
+        name: { type: string }
+        description: { type: string }
+        roles: { type: array, items: { type: string } }
+        permissions:
+          type: array
+          items: { type: string }
+          description: What those groups add up to. A list of group names is not something anybody can judge a credential by.
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: >-
+            Written at a five-minute granularity, not per request: it answers
+            "is this still in use" before a revocation, which does not need to
+            be exact and must not cost a write on every request the attached
+            console makes.
+        createdAt: { type: string, format: date-time }
     AdminDBTable:
       type: object
       description: >-

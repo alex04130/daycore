@@ -1228,6 +1228,132 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
   /api/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/admin/pairings:
+    get:
+      operationId: adminPairings
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: What external consoles are attached to this deployment.
+      description: >-
+        A pairing is an external console — a cluster manager, or somebody else's
+        console — attached with a key THIS backend issued. The direction is the
+        point: the operator creates a pairing here, is shown a key once, and
+        carries it over by hand. A console presenting some shared secret it was
+        configured with has no moment at which anybody decided to attach it, no
+        list of what is attached, and no way to detach one thing.
+
+        It is also what makes the embedded console one client rather than THE
+        client: anybody can write their own and attach it the same way.
+
+        ⚠️ A pairing holds ROLES, resolved through exactly the same union a person's
+        permissions are — one permission model, not two. A pairing with no roles
+        authenticates and can do nothing, which is a useful state: it proves the
+        key works before anything is granted.
+
+        ⚠️ Pairings live in the database, so they do NOT work in degraded mode. Only
+        ADMIN_TOKEN does, which is the arrangement degraded boot was built around.
+
+        `header` is the request header an attached console must send.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairings: { type: array, items: { $ref: '#/components/schemas/Pairing' } }
+                  header: { type: string }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+    post:
+      operationId: adminCreatePairing
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Issue a key. ⚠️ THE ONLY TIME IT IS EVER SHOWN.
+      description: >-
+        The response carries the key once; the server keeps a SHA-256 hash. There
+        is no endpoint that reveals it again because there is nothing left to
+        reveal — which is what makes "this key leaked" a question with one answer
+        (revoke and re-pair) rather than two.
+
+        SHA-256 rather than argon2 is deliberate and is about ENTROPY, not
+        convenience: the secret is 256 bits from crypto/rand, so there is nothing
+        to guess and a slow hash would only burn CPU on every request the attached
+        console makes. If this ever becomes something a human chooses, it needs
+        argon2 that same day.
+
+        The key is `dcp_<id>_<secret>`. The id travels in the clear on purpose —
+        it is what makes verification one indexed read instead of a hash against
+        every pairing. The prefix is there so a key pasted into a log or a
+        screenshot is recognisable as a credential.
+
+        ⚠️ Attaching to a group that carries permissions ADDITIONALLY requires
+        roles.edit, for the same reason putting a PERSON into an admin group does:
+        without it, pairings.manage alone would hand out anything that exists.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 64 }
+                description: { type: string }
+                roles: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Created. The key is in this response and nowhere else, ever.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pairing: { $ref: '#/components/schemas/Pairing' }
+                  key: { type: string, description: 'dcp_<id>_<secret>. Shown once.' }
+                  header: { type: string }
+                  notice: { type: string }
+        '400': { description: Missing or over-long name. }
+        '403': { description: Missing pairings.manage, or an admin group without roles.edit. }
+        '404': { description: One of the named groups does not exist. }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/pairings/{id}:
+    delete:
+      operationId: adminDeletePairing
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Detach a console. This is the revocation.
+      description: >-
+        There is no disabled state: a credential that is "off" is a credential
+        somebody can turn back on without deciding to. Revoking one that is already
+        gone is not an error — two operators revoking the same key is exactly the
+        situation revocation exists for.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/pairings/{id}/roles:
+    put:
+      operationId: adminSetPairingRoles
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Change what an attached console may do.
+      description: >-
+        Replaces the whole set. ⚠️ Naming a group that carries permissions requires
+        roles.edit as well as pairings.manage.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [roles], properties: { roles: { type: array, items: { type: string } } } }
+      responses:
+        '200': { description: OK }
+        '403': { description: Missing pairings.manage, or an admin group without roles.edit. }
+        '404': { description: No such pairing, or no such group. }
+        '503': { description: 'Degraded: no database.' }
   /api/admin/permissions:
     get:
       operationId: adminPermissions
@@ -2520,6 +2646,30 @@ components:
         totalCalls: { type: integer, description: Lifetime; never reset. }
         totalPromptTokens: { type: integer }
         totalCompTokens: { type: integer }
+    Pairing:
+      type: object
+      description: >-
+        An external console attached to this deployment. ⚠️ The key is NEVER in
+        this object — it existed once, in the create response, and the server
+        keeps only a hash.
+      properties:
+        id: { type: string, description: The public half of the key; also the lookup key. }
+        name: { type: string }
+        description: { type: string }
+        roles: { type: array, items: { type: string } }
+        permissions:
+          type: array
+          items: { type: string }
+          description: What those groups add up to. A list of group names is not something anybody can judge a credential by.
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: >-
+            Written at a five-minute granularity, not per request: it answers
+            "is this still in use" before a revocation, which does not need to
+            be exact and must not cost a write on every request the attached
+            console makes.
+        createdAt: { type: string, format: date-time }
     AdminDBTable:
       type: object
       description: >-

@@ -175,6 +175,8 @@ func (s *Store) Roles() domain.RoleRepository                     { return roleR
 // Browser is the console's table window. It is NOT a repository — see
 // domain/tables.go for why it sits beside them and why nothing outside the
 // admin handlers may call it.
+func (s *Store) Pairings() domain.PairingRepository { return pairingRepo{s} }
+
 func (s *Store) Browser() domain.Browser { return browserRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}

@@ -170,6 +170,16 @@ func (mysqlDialect) Migrations() []string {
 			updated_at BIGINT NOT NULL,
 			PRIMARY KEY (day, model, endpoint)
 		)`,
+		`CREATE TABLE IF NOT EXISTS pairings (
+			id VARCHAR(191) PRIMARY KEY,
+			name VARCHAR(191) NOT NULL,
+			description LONGTEXT,
+			secret_hash VARCHAR(191) NOT NULL,
+			roles_json LONGTEXT,
+			last_seen_at BIGINT NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key VARCHAR(191) NOT NULL,
 			locale VARCHAR(64) NOT NULL,

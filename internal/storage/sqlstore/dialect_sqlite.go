@@ -159,6 +159,16 @@ func (sqliteDialect) Migrations() []string {
 			updated_at BIGINT NOT NULL,
 			PRIMARY KEY (day, model, endpoint)
 		)`,
+		`CREATE TABLE IF NOT EXISTS pairings (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			description TEXT,
+			secret_hash TEXT NOT NULL,
+			roles_json TEXT,
+			last_seen_at BIGINT NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key TEXT NOT NULL,
 			locale TEXT NOT NULL,

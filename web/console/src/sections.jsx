@@ -1,4 +1,4 @@
-// The nine sections, in the order the console shows them.
+// The ten sections, in the order the console shows them.
 //
 // Order is not the prototype's: it runs from "what is wrong right now" to "what
 // can I change" to "what can I break". The overview is first because it is the
@@ -22,6 +22,7 @@ import { AILogs } from './sections/ailogs.jsx';
 import { Config } from './sections/config.jsx';
 import { DB } from './sections/db.jsx';
 import { Overview } from './sections/overview.jsx';
+import { Pairings } from './sections/pairings.jsx';
 import { Placeholder } from './sections/placeholder.jsx';
 import { Prompts } from './sections/prompts.jsx';
 import { Providers } from './sections/providers.jsx';
@@ -36,6 +37,7 @@ export const SECTIONS = [
   { id: 'prompts', label: '提示词', view: Prompts, need: 'prompts.read' },
   { id: 'ai-logs', label: 'AI 日志', view: AILogs, need: 'ailogs.read' },
   { id: 'users', label: '用户与权限', view: Users, need: 'users.read' },
+  { id: 'pairings', label: '集群与外部控制台', view: Pairings, need: 'pairings.read' },
   { id: 'db', label: '数据库', view: DB, need: 'db.operational' },
 ];
 

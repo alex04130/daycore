@@ -168,6 +168,16 @@ export const deleteDBRow = (name, id) =>
 // database in memory to hand it back to a download the browser does natively.
 export const exportURL = () => BASE + '/db/export';
 
+export const getPairings = () => request('/pairings');
+
+// createPairing returns the key ONCE. Nothing stores it, nothing can fetch it
+// again — see the notice the server sends back with it.
+export const createPairing = (body) => request('/pairings', { method: 'POST', body });
+export const setPairingRoles = (id, roles) =>
+	request(`/pairings/${encodeURIComponent(id)}/roles`, { method: 'PUT', body: { roles } });
+export const deletePairing = (id) =>
+	request(`/pairings/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
 export const getUsers = () => request('/users');
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');

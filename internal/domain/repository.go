@@ -61,6 +61,12 @@ type Store interface {
 	// ref safe to resolve. See attachment.go.
 	Attachments() AttachmentRepository
 
+	// Pairings is how an external console attaches to this deployment — a
+	// cluster manager, or somebody else's console. It resolves permissions
+	// through the SAME roles a person does; see pairing.go for why the backend
+	// issues the key rather than the console presenting one.
+	Pairings() PairingRepository
+
 	// Browser is the operations console's window onto the raw tables. It models
 	// no domain concept and deliberately exposes the schema — see tables.go for
 	// the catalogue it is driven by and the rule that keeps a request-supplied

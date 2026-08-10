@@ -89,6 +89,14 @@ const (
 	// Changing what a role can do. See the note above: this is owner-equivalent.
 	PermRolesEdit = "roles.edit"
 
+	// External consoles attached to this deployment — a cluster manager, or
+	// somebody else's console. Read and manage are split like every other pair
+	// in this list, and here the split is unusually easy to justify: the LIST
+	// alone names every external system with access, which somebody auditing
+	// needs and somebody attaching a new one does not.
+	PermPairingsRead   = "pairings.read"
+	PermPairingsManage = "pairings.manage"
+
 	// The database browser, split three ways because the author's decision that
 	// user content is *assignable* only means something if it can be assigned
 	// separately.
@@ -199,6 +207,10 @@ func init() {
 		"把用户放进不带任何管理员权限的组、或移出来。这是卖套餐那个动作；碰到带权限的组时还要 roles.edit")
 	registerPerm(PermRolesEdit,
 		"⚠️ 改一个组能做什么。**等同于超级管理员** —— 谁有这个，谁就能把自己加进一个全权限的组。授予它和把人设成 owner 是同一个决定")
+	registerPerm(PermPairingsRead,
+		"看有哪些外部控制台接在这个部署上：名字、所在的组、上次用是什么时候。看不到钥匙 —— 钥匙只在发出来那一刻存在过")
+	registerPerm(PermPairingsManage,
+		"发一把能操作这个部署的钥匙出去，或者把已经发出去的撤掉。⚠️ 发出去的东西跑在别人的机器上；把它放进带权限的组还要 roles.edit")
 	registerPerm(PermDBOperational,
 		"浏览运维类的表：会话、操作日志、任务场次。不含任何用户写下的内容")
 	registerPerm(PermDBUserContent,
@@ -317,6 +329,15 @@ var routePermissions = map[string]string{
 	// The owner mark. Root credential only, and no permission reaches it — see
 	// handlers_admin_roles.go.
 	"PUT /api/admin/users/{id}/owner": permRoot,
+
+	// External consoles. Issuing a key hands an external program the ability to
+	// act on this deployment, so it is its own permission — and putting one into
+	// a group that carries permissions ADDITIONALLY needs roles.edit, checked in
+	// the handler for the same reason it is for people.
+	"GET /api/admin/pairings":            PermPairingsRead,
+	"POST /api/admin/pairings":           PermPairingsManage,
+	"PUT /api/admin/pairings/{id}/roles": PermPairingsManage,
+	"DELETE /api/admin/pairings/{id}":    PermPairingsManage,
 
 	// The database browser. Which of the two browse permissions applies is
 	// decided per table INSIDE the handler, because the route pattern cannot

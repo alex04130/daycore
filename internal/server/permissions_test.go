@@ -115,8 +115,10 @@ func permissionsMentionedInSource(t *testing.T) map[string]bool {
 		"PermPromptsRead": PermPromptsRead, "PermPromptsWrite": PermPromptsWrite, "PermAILogsRead": PermAILogsRead,
 		"PermUsersRead": PermUsersRead, "PermUsersDelete": PermUsersDelete, "PermUsersAssign": PermUsersAssign,
 		"PermRolesEdit": PermRolesEdit, "PermDBOperational": PermDBOperational,
-		"PermRestart":       PermRestart,
-		"PermDBUserContent": PermDBUserContent, "PermDBDeleteRow": PermDBDeleteRow,
+		"PermRestart":        PermRestart,
+		"PermPairingsRead":   PermPairingsRead,
+		"PermPairingsManage": PermPairingsManage,
+		"PermDBUserContent":  PermDBUserContent, "PermDBDeleteRow": PermDBDeleteRow,
 		"PermDBExport": PermDBExport, "PermDBImport": PermDBImport,
 	}
 	// A permission added to the registry but not to the map above would be
