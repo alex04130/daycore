@@ -115,3 +115,26 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line); }
 th { color: var(--dim); font-weight: 500; font-size: .85rem; }
 .num { font-family: var(--mono); }
+
+/* 分区内的通用块 */
+.group-title { font-size: .9rem; color: var(--dim); font-weight: 500;
+  margin: 1.5rem 0 .6rem; padding-bottom: .35rem; border-bottom: 1px solid var(--line); }
+.group-note { display: block; font-weight: 400; font-size: .8rem; margin-top: .25rem; max-width: 70ch; }
+.card.readonly { opacity: .82; }
+.card.staged { box-shadow: inset 3px 0 0 var(--accent); }
+.badges { display: flex; gap: .4rem; align-items: center; }
+.save-bar { display: flex; gap: .9rem; align-items: center; }
+.save-bar button:not(.linkish) { background: var(--accent); color: #fff; border: 0;
+  border-radius: 8px; padding: .45rem .9rem; cursor: pointer; }
+.field input { width: 100%; max-width: 32rem; padding: .35rem .5rem; background: var(--bg);
+  color: var(--fg); border: 1px solid var(--line); border-radius: 6px; font-family: var(--mono); }
+.reset-note { display: inline-flex; gap: .75rem; align-items: baseline; color: var(--warn); }
+.dim { color: var(--dim); }
+.reason { color: var(--err); overflow-wrap: anywhere; }
+.switch { display: inline-flex; gap: .5rem; align-items: center; cursor: pointer; }
+.desc-edit { display: grid; gap: .5rem; max-width: 34rem; }
+.desc-edit label { display: grid; gap: .2rem; font-size: .82rem; color: var(--dim); }
+.desc-view { display: grid; gap: .2rem; }
+.suggestion { border: 1px dashed var(--line); border-radius: 6px; padding: .5rem .6rem;
+  display: grid; gap: .35rem; }
+ul.tight { margin: .3rem 0 0; padding-left: 1.2rem; }
