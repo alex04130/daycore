@@ -56,10 +56,13 @@
   go build ./... && go vet ./... && go test ./...
   go build -tags lite ./... && go test -tags lite ./internal/resources/ ./internal/setup/
   go test -race ./internal/adapters/ ./internal/weather/
+  make cross                                        # windows / darwin / linux-arm64 编译 + vet
   make test-mongo                                   # 真机 MongoDB
   make test-sql                                     # 真机 PostgreSQL + MySQL
   node web/frontend/scripts/check-i18n.mjs
   ```
+
+  **`make cross` 不是可选的**（2026-08-10 加）：重启按钮开始按平台分实现之后，`cmd/daycore/restart_windows.go` 这类文件在这台机器上**永远不会被编译**，而一个没人编译的 build-tag 文件就是一个会悄悄编不过的文件。`GOOS=windows go vet` 一秒钟就能查出来。
 
   ⚠️ **丢掉的是什么，写清楚免得有人以为还有人在看**：没有任何东西检查这台机器没跑过的分支；前端 `vite build` 与插件 zip 现在只有人跑才跑。别人来提交之前要把它加回去。
 - 历史：v1（Next.js + Eazo SDK）已于建库时移除，可从首个 commit 取回。代码中出现的 `v2` 字样如无特别说明均指外部 API 版本号（如 Google OAuth、QWeather），不要当作目录路径改写。

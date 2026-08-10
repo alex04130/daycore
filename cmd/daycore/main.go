@@ -442,24 +442,60 @@ func run(logger *slog.Logger) error {
 		logger.Warn("background agents did not finish before shutdown deadline", "err", werr)
 	}
 	if replacing {
-		// Only now, with the listener closed and the lease released: the
-		// replacement's first bind attempt should succeed, and it will not be
-		// racing this process for leadership.
-		return finishRestart(logger)
+		// Only now, with the listener closed and the lease released. The store
+		// is handed in rather than left to the deferred Close above, because on
+		// Unix this call replaces the process image and that defer never runs.
+		return finishRestart(logger, func() {
+			if store != nil {
+				if cerr := store.Close(); cerr != nil {
+					logger.Warn("could not close the store before restarting", "err", cerr)
+				}
+			}
+		})
 	}
 	return err
 }
 
-// finishRestart is the tail of both serve loops: bring a replacement up, and
-// only then let this process go.
+// finishRestart is the tail of both serve loops.
 //
-// ⚠️ A failed spawn does NOT exit. This process has already stopped serving so
-// it is no use as it is — but it is still attached to whatever started it, and
-// its logs are still where somebody is looking. Exiting would turn a visible
-// failure into a machine that stopped answering for no stated reason.
-func finishRestart(logger *slog.Logger) error {
-	if err := spawnSelf(logger); err != nil {
-		logger.Error("could not start a replacement process; this one is NOT serving any more, "+
+// # It takes a release function, and that is not optional on Unix
+//
+// The Unix path is syscall.Exec, which replaces the process image — so NOTHING
+// after it runs. Not a deferred store.Close, not a flush, nothing. A restart
+// that relied on `defer store.Close()` would leak a server-side connection on
+// Postgres, MySQL and Mongo every single time, and nothing would report it
+// because from the database's side it looks like an ordinary client that went
+// away.
+//
+// So the caller hands in what it owns, and it is released here, immediately
+// before the point of no return.
+//
+// # The two platforms return differently, on purpose
+//
+//	Unix     replaceSelf does not return on success. The `return nil` below is
+//	         unreachable there.
+//	Windows  replaceSelf returns nil once the replacement is started, and this
+//	         function's nil makes run() return, main exit 0, and the port free.
+//
+// ⚠️ A failed replacement does NOT exit. This process has already stopped
+// serving so it is no use as it is — but it is still attached to whatever
+// started it, and its logs are still where somebody is looking. Exiting would
+// turn a visible failure into a machine that stopped answering for no stated
+// reason.
+func finishRestart(logger *slog.Logger, release func()) error {
+	// Resolved BEFORE releasing anything: if this fails there is nothing to
+	// replace ourselves with, and we would rather find that out while the store
+	// is still open than after.
+	exe, err := os.Executable()
+	if err != nil {
+		logger.Error("cannot resolve this program's own path; not restarting", "err", err)
+		return fmt.Errorf("%w: %v", errRestartNotPossible, err)
+	}
+	if release != nil {
+		release()
+	}
+	if err := replaceSelf(logger, exe); err != nil {
+		logger.Error("could not replace this process; it is NOT serving any more, "+
 			"and is staying up only so this line is somewhere you can find it",
 			"err", err, "hint", "start the binary again by hand")
 		return fmt.Errorf("%w: %v", errRestartNotPossible, err)
@@ -521,7 +557,9 @@ func serveDegraded(logger *slog.Logger, cfg *config.Config, srv *server.Server) 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
-		return finishRestart(logger)
+		// Nothing to release: a degraded process never opened a store, which is
+		// the whole reason it is able to serve at all.
+		return finishRestart(logger, nil)
 	case <-stop:
 		logger.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

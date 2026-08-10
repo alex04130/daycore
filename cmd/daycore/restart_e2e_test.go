@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,10 +26,12 @@ import (
 // real binary really does it, and it is the claim whose failure means somebody
 // has to walk to the machine.
 //
-// It is also the Windows/Linux consistency check the design was chosen for. The
-// implementation is one code path with no build tags and no SysProcAttr, so
-// this test compiles and runs the same on both — if it ever needs a
-// `runtime.GOOS` branch, that is the signal the single-path property was lost.
+// It is also the cross-platform check. The implementation is deliberately NOT
+// one code path — Unix replaces its own image with syscall.Exec, Windows spawns
+// and exits, because that is what each platform actually has — so this test
+// asserts the SHARED outcome (the server comes back as a different instance)
+// plus the per-platform one (whether the pid moved), the latter through a
+// build-tagged constant that lives next to the implementation making it true.
 //
 // # What it does
 //
@@ -76,11 +77,31 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 		"OAUTH_CONFIG="+filepath.Join(dir, "no-oauth.yaml"),
 		"PROVIDERS_CONFIG="+filepath.Join(dir, "no-providers.yaml"),
 	)
-	var logs safeBuffer
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+	// ⚠️ A FILE, not an io.Writer. Handing exec.Cmd a plain Writer makes it
+	// create a pipe and a copying goroutine, and cmd.Wait then blocks until the
+	// pipe closes — which a spawned replacement holds open. That would make
+	// "did the parent exit" unanswerable, and it is the question this test turns
+	// on. A file is inherited as a file descriptor: nothing to copy, and Wait
+	// returns the moment the process does.
+	logPath := filepath.Join(dir, "server.log")
+	logFile, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logFile.Close()
+	cmd.Stdout, cmd.Stderr = logFile, logFile
+	readLogs := func() string {
+		b, _ := os.ReadFile(logPath)
+		return string(b)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
+	// Reaped in the background so the "did it exit" check below sees an exit
+	// rather than a zombie — a zombie answers yes to every liveness probe there
+	// is, which is what made an earlier version of this assertion vacuous.
+	exited := make(chan struct{})
+	go func() { _, _ = cmd.Process.Wait(); close(exited) }()
 	// The child we are about to spawn is NOT this cmd, so cleanup has to kill
 	// whatever is listening rather than just this process handle.
 	t.Cleanup(func() {
@@ -89,15 +110,15 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 		// The replacement is a different process from cmd, so killing the
 		// handle above is not enough — find whatever is listening and stop it,
 		// or the port stays busy for every later run.
-		killListener(t, &logs)
+		killListener(t, readLogs())
 		if t.Failed() {
-			t.Logf("server output:\n%s", logs.String())
+			t.Logf("server output:\n%s", readLogs())
 		}
 	})
 
 	firstID := waitForServer(t, addr, adminToken, 30*time.Second)
 	if firstID == "" {
-		t.Fatalf("the server never came up. output:\n%s", logs.String())
+		t.Fatalf("the server never came up. output:\n%s", readLogs())
 	}
 
 	// ── the button ──────────────────────────────────────────────────────────
@@ -123,7 +144,7 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 	// ── it comes back, and it is not the same process ───────────────────────
 	secondID := waitForNewInstance(t, addr, adminToken, firstID, 60*time.Second)
 	if secondID == "" {
-		t.Fatalf("the server did not come back within a minute. output:\n%s", logs.String())
+		t.Fatalf("the server did not come back within a minute. output:\n%s", readLogs())
 	}
 	// The replacement knows it is one, which is what arms its bind retry.
 	//
@@ -132,10 +153,33 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 	// NON-EMPTY one, meaning DAYCORE_RESTART_FROM actually crossed into the
 	// child — and without it the child would fail its first bind instead of
 	// waiting for the parent to let go.
-	if out := logs.String(); !restartedFromPID.MatchString(out) {
+	if out := readLogs(); !restartedFromPID.MatchString(out) {
 		t.Errorf("no process logged a non-empty restartedFrom; the restart marker is not reaching the child:\n%s", out)
 	}
-	t.Logf("restarted: instance %s → %s", firstID, secondID)
+
+	// ── the platform's own promise ──────────────────────────────────────────
+	//
+	// ⚠️ Without this, an implementation that switched Unix to spawn-and-exit
+	// would still change the instance id and still pass everything above, while
+	// losing the three things exec was chosen for: no coexistence window, no
+	// orphan, and pid 1 in a container staying alive.
+	var didExit bool
+	select {
+	case <-exited:
+		didExit = true
+	case <-time.After(3 * time.Second):
+	}
+	if parentExitsOnRestart && !didExit {
+		t.Errorf("pid %d is still running after the restart; on this platform it should have "+
+			"spawned a replacement and exited, leaving it the port", cmd.Process.Pid)
+	}
+	if !parentExitsOnRestart && didExit {
+		t.Errorf("pid %d exited during the restart. On this platform the restart is syscall.Exec, "+
+			"which replaces the image IN PLACE — an exit means it is spawning instead, and a "+
+			"container running this as pid 1 would have stopped", cmd.Process.Pid)
+	}
+
+	t.Logf("restarted: instance %s → %s (pid %d, parent exited=%v)", firstID, secondID, cmd.Process.Pid, didExit)
 }
 
 // buildDaycore compiles the binary once for this test.
@@ -263,9 +307,9 @@ var restartedFromPID = regexp.MustCompile(`restartedFrom"?[=:]\s*"?\d+`)
 
 var spawnedPID = regexp.MustCompile(`started the replacement process.*?pid=(\d+)`)
 
-func killListener(t *testing.T, logs *safeBuffer) {
+func killListener(t *testing.T, logs string) {
 	t.Helper()
-	for _, m := range spawnedPID.FindAllStringSubmatch(logs.String(), -1) {
+	for _, m := range spawnedPID.FindAllStringSubmatch(logs, -1) {
 		pid, err := strconv.Atoi(m[1])
 		if err != nil || pid <= 0 {
 			continue
@@ -274,21 +318,4 @@ func killListener(t *testing.T, logs *safeBuffer) {
 			_ = p.Kill()
 		}
 	}
-}
-
-type safeBuffer struct {
-	mu  sync.Mutex
-	buf strings.Builder
-}
-
-func (b *safeBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *safeBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }

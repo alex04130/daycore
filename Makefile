@@ -1,4 +1,4 @@
-.PHONY: help run build build-lite test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
@@ -33,6 +33,16 @@ build-lite: ## Build the lite binary + its data pack into dist/
 # authentication failures — which reads exactly like a broken suite.
 PG_TEST_DSN ?= postgres://daycore:daycore@127.0.0.1:5432/daycore?sslmode=disable
 MYSQL_TEST_DSN ?= root:daycore@tcp(127.0.0.1:3306)/daycore?parseTime=true
+
+cross: ## Compile and vet for every released platform (catches build-tagged files this machine never builds)
+	@echo "the restart is per-platform (syscall.Exec on unix, spawn on windows), so these files"
+	@echo "are never compiled by a plain \`go build\` here — see cmd/daycore/restart_*.go"
+	GOOS=windows GOARCH=amd64 go build -o /dev/null ./...
+	GOOS=darwin  GOARCH=arm64 go build -o /dev/null ./...
+	GOOS=darwin  GOARCH=amd64 go build -o /dev/null ./...
+	GOOS=linux   GOARCH=arm64 go build -o /dev/null ./...
+	GOOS=windows go vet ./...
+	GOOS=darwin  go vet ./...
 
 test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
 	@echo "each case creates and drops its own schema/database; export PG_TEST_DSN / MYSQL_TEST_DSN to point elsewhere"
