@@ -243,6 +243,13 @@ type adminUserView struct {
 	Owner     bool     `json:"owner"`
 	Roles     []string `json:"roles"`
 	CreatedAt string   `json:"createdAt,omitempty"`
+	// Usage is this account's AI spend at three scales, read through Live() so
+	// an expired window reads as zero rather than as its stale contents.
+	//
+	// ⚠️ Counts, never content. This endpoint is users.read, whose damage line
+	// promises "不含任何人写下的内容" — how many calls somebody made is an
+	// operational fact about the deployment, what they said is not.
+	Usage *domain.SessionUsage `json:"usage,omitempty"`
 }
 
 // GET /api/admin/users — who exists, who owns this deployment, who is in what.
@@ -266,12 +273,24 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]adminUserView, 0, len(users))
 	owners := 0
+	now := time.Now()
 	for _, u := range users {
 		roles, err := s.store.Roles().RolesOf(ctx, u.ID)
 		if err != nil {
 			roles = []string{}
 		}
 		v := adminUserView{ID: u.ID, Owner: u.IsOwner, Roles: roles}
+		// One extra read per user, which is an N+1 — and an honest one to name
+		// rather than hide: this loop already does RolesOf per user, the list is
+		// capped at 100, and it is a console screen. If a deployment ever has
+		// enough administrators for this to hurt, the fix is a batch read on
+		// both, not dropping the column.
+		if u.DataSessionID != "" {
+			if sess, err := s.store.Sessions().Get(ctx, u.DataSessionID); err == nil && sess != nil {
+				live := sess.Usage.Live(now)
+				v.Usage = &live
+			}
+		}
 		if u.Email != nil {
 			v.Email = *u.Email
 		}
@@ -294,6 +313,10 @@ func (s *Server) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		"users":      out,
 		"ownerCount": owners,
 		"limit":      limit,
+		// The window lengths, so the screen labels the counters with the numbers
+		// the server actually resets on rather than a copy that drifts.
+		"fastWindowHours": int(domain.UsageFastWindow.Hours()),
+		"slowWindowDays":  int(domain.UsageSlowWindow.Hours() / 24),
 	})
 }
 

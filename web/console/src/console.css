@@ -249,3 +249,5 @@ button.chip { background: none; color: var(--fg); cursor: pointer; }
 .spark { display: flex; gap: 2px; align-items: flex-end; height: 3.5rem; margin: .6rem 0 1rem; }
 .spark-bar { flex: 1 1 0; min-width: 3px; background: var(--accent); opacity: .65; border-radius: 2px 2px 0 0; }
 .spark-bar:hover { opacity: 1; }
+.usage-line { display: flex; gap: .9rem; flex-wrap: wrap; font-size: .75rem; color: var(--dim); }
+.usage-line b { font-family: var(--mono); font-weight: 500; color: var(--fg); }

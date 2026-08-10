@@ -149,6 +149,7 @@ var cases = []suiteCase{
 	{"AIUsage/RollUpIsIdempotentAndSkipsToday", aiUsageRollUp},
 	{"AIUsage/FoldsSurviveThePrune", aiUsageSurvivesPrune},
 	{"AIUsage/ConcurrentFoldsDoNotCollide", aiUsageConcurrentFold},
+	{"SessionUsage/ThreeScalesAndTumblingWindows", sessionUsageScales},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -2930,5 +2931,142 @@ func aiUsageConcurrentFold(t *testing.T, h Harness) {
 	days, _ := repo.UsageDays(ctx, "", "", 0)
 	if len(days) != 1 {
 		t.Errorf("two folds produced %d day rows, want 1", len(days))
+	}
+}
+
+// Per-account usage: three scales on the session row, windows that tumble.
+//
+// The property that matters and is easy to lose: the LIFETIME total never
+// resets while the two windows do. A change that reset all three — or none —
+// would still look right on a screen for a whole window, and the number nobody
+// notices is exactly the one a quota rests on.
+func sessionUsageScales(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.Sessions()
+	ctx := bg()
+	sid := "usage-sid"
+	if _, err := repo.GetOrCreate(ctx, sid); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh session counts nothing and has no open window.
+	fresh, err := repo.Get(ctx, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Usage.TotalCalls != 0 || !fresh.Usage.FastExpired(time.Now()) {
+		t.Fatalf("a fresh session already has usage: %+v", fresh.Usage)
+	}
+
+	base := time.Now().UTC()
+	if err := repo.AddUsage(ctx, sid, 100, 20, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddUsage(ctx, sid, 10, 5, base.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.Get(ctx, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := got.Usage
+	if u.TotalCalls != 2 || u.TotalPromptTokens != 110 || u.TotalCompTokens != 25 {
+		t.Errorf("lifetime = %d calls / %d prompt / %d comp, want 2 / 110 / 25",
+			u.TotalCalls, u.TotalPromptTokens, u.TotalCompTokens)
+	}
+	// The windows carry COMBINED tokens — the split is a lifetime-only fact,
+	// because it changes no decision a window is read to make.
+	if u.FastCalls != 2 || u.FastTokens != 135 {
+		t.Errorf("fast window = %d calls / %d tokens, want 2 / 135", u.FastCalls, u.FastTokens)
+	}
+	if u.SlowCalls != 2 || u.SlowTokens != 135 {
+		t.Errorf("slow window = %d calls / %d tokens, want 2 / 135", u.SlowCalls, u.SlowTokens)
+	}
+	// The window opened at the FIRST call, not the most recent one. A stamp that
+	// moved with every call would be a window that never expires on an active
+	// account — which is the one account anybody would want it to.
+	if u.FastWindowStart.IsZero() || u.FastWindowStart.After(base.Add(time.Second)) {
+		t.Errorf("fast window opened at %v, want the first call (%v)", u.FastWindowStart, base)
+	}
+
+	// ── the fast window tumbles, the slow one does not ──────────────────────
+	later := base.Add(domain.UsageFastWindow + time.Minute)
+	if err := repo.AddUsage(ctx, sid, 1, 1, later); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.Get(ctx, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u = got.Usage
+	if u.FastCalls != 1 || u.FastTokens != 2 {
+		t.Errorf("after the fast window expired: %d calls / %d tokens, want the new call alone (1 / 2)",
+			u.FastCalls, u.FastTokens)
+	}
+	if u.SlowCalls != 3 || u.SlowTokens != 137 {
+		t.Errorf("the slow window rolled with the fast one: %d calls / %d tokens, want 3 / 137",
+			u.SlowCalls, u.SlowTokens)
+	}
+	if u.TotalCalls != 3 || u.TotalPromptTokens != 111 || u.TotalCompTokens != 26 {
+		t.Errorf("the lifetime total reset with a window: %d / %d / %d, want 3 / 111 / 26",
+			u.TotalCalls, u.TotalPromptTokens, u.TotalCompTokens)
+	}
+	// The new window opened at the call that started it.
+	if u.FastWindowStart.Before(later.Add(-time.Second)) {
+		t.Errorf("the fast window kept its old stamp (%v) after tumbling", u.FastWindowStart)
+	}
+
+	// ── and the slow one tumbles too, on its own schedule ───────────────────
+	muchLater := base.Add(domain.UsageSlowWindow + time.Hour)
+	if err := repo.AddUsage(ctx, sid, 2, 3, muchLater); err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.Get(ctx, sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Usage.SlowCalls != 1 || got.Usage.SlowTokens != 5 {
+		t.Errorf("after the slow window expired: %d calls / %d tokens, want 1 / 5",
+			got.Usage.SlowCalls, got.Usage.SlowTokens)
+	}
+	if got.Usage.TotalCalls != 4 {
+		t.Errorf("lifetime = %d, want 4 — it must never reset", got.Usage.TotalCalls)
+	}
+
+	// ── a stale window reads as zero without being written ─────────────────
+	//
+	// Nothing runs on expiry; the reset happens on the next WRITE. So a reader
+	// that trusted the stored counter would report a burst from three hours ago
+	// as current. Live() is what every reader must go through.
+	// Four hours on: the fast window has rolled, the slow one has not. Both
+	// directions in one assertion, because a Live() that zeroed everything would
+	// pass a check that only looked at the expired one.
+	soon := got.Usage.Live(muchLater.Add(domain.UsageFastWindow + time.Hour))
+	if soon.FastCalls != 0 {
+		t.Errorf("an expired fast window read as %d calls, want zero", soon.FastCalls)
+	}
+	if soon.SlowCalls != 1 || soon.SlowTokens != 5 {
+		t.Errorf("Live() zeroed a slow window that is still open: %d calls / %d tokens, want 1 / 5",
+			soon.SlowCalls, soon.SlowTokens)
+	}
+	// Eight days on, both are gone and the lifetime total is not.
+	stale := got.Usage.Live(muchLater.Add(domain.UsageSlowWindow + time.Hour))
+	if stale.FastCalls != 0 || stale.SlowCalls != 0 {
+		t.Errorf("an expired window read as %d fast / %d slow, want zeroes", stale.FastCalls, stale.SlowCalls)
+	}
+	if stale.TotalCalls != 4 || stale.TotalPromptTokens == 0 {
+		t.Errorf("Live() zeroed the lifetime total: %+v", stale)
+	}
+
+	// An empty session id is refused rather than updating nothing quietly.
+	if err := repo.AddUsage(ctx, "", 1, 1, base); err == nil {
+		t.Error("AddUsage accepted an empty session id")
+	}
+	// An unknown session is a no-op, not an error: the ledger row is written
+	// even when the session has since been deleted, and failing here would turn
+	// that into a logged error on every call.
+	if err := repo.AddUsage(ctx, "no-such-session", 1, 1, base); err != nil {
+		t.Errorf("AddUsage on an unknown session errored: %v", err)
 	}
 }

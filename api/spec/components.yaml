@@ -609,6 +609,38 @@ components:
             deployment upgrading into this feature the total begins where the
             ledger began — not at the beginning of time. A figure shown without
             this date is the same lie the rollup exists to fix, one level up.
+    SessionUsage:
+      type: object
+      description: >-
+        One account's AI spend at three scales, stored on the session row rather
+        than in a table — nine columns and zero new rows, against a (users ×
+        days) table that grows forever to answer a question almost always asked
+        about NOW.
+
+        ⚠️ The windows TUMBLE, they do not slide: when a window expires the next
+        call RESETS its counter rather than dropping the oldest events. So just
+        after a rollover a busy account reads small. A true sliding window needs
+        per-event rows, which is the table this avoids. It is the right
+        approximation for what these are for — a quota that resets is what a
+        quota IS.
+
+        ⚠️ An expired window is NOT zeroed in storage; nothing runs on expiry.
+        Callers get it already zeroed here, but anything reading the raw row must
+        check the start stamp itself.
+
+        ⚠️ This is a HOOK, not billing. Per-model attribution, an immutable
+        record per period, and a link to an ACCOUNT rather than a session are all
+        deliberately absent — see docs/ROADMAP.md.
+      properties:
+        fastCalls: { type: integer }
+        fastTokens: { type: integer, description: Prompt and completion combined. }
+        fastWindowStart: { type: string, format: date-time }
+        slowCalls: { type: integer }
+        slowTokens: { type: integer }
+        slowWindowStart: { type: string, format: date-time }
+        totalCalls: { type: integer, description: Lifetime; never reset. }
+        totalPromptTokens: { type: integer }
+        totalCompTokens: { type: integer }
     AdminDBTable:
       type: object
       description: >-

@@ -80,6 +80,28 @@ const legacyPromptCopy = `INSERT INTO prompt_overrides (prompt_key, locale, cont
 // caught reminders_off being TINYINT(1) in one and INTEGER in the other.
 func sessionColumnMigrations(textType, boolType string) []ColumnMigration {
 	migs := []ColumnMigration{
+		// Per-account usage counters (see domain/session_usage.go). BIGINT and
+		// NOT NULL DEFAULT 0 on every dialect: they are only ever read as
+		// numbers and arithmetically updated, so a NULL would turn `calls + 1`
+		// into NULL on all three engines and silently stop counting.
+		{Table: "sessions", Column: "usage_fast_calls",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_fast_calls BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_fast_tokens",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_fast_tokens BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_fast_start",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_fast_start BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_slow_calls",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_slow_calls BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_slow_tokens",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_slow_tokens BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_slow_start",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_slow_start BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_calls",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_calls BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_prompt_tokens",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_prompt_tokens BIGINT NOT NULL DEFAULT 0`},
+		{Table: "sessions", Column: "usage_comp_tokens",
+			DDL: `ALTER TABLE sessions ADD COLUMN usage_comp_tokens BIGINT NOT NULL DEFAULT 0`},
 		// ⚠️ boolType, not a literal: the column a fresh database gets from
 		// CREATE TABLE and the one an upgraded database gets from ALTER must be
 		// the SAME type. dialect_parity_test.go asserts it, and it is the test

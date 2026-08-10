@@ -16,6 +16,14 @@ type Session struct {
 	ImportToken      string    `json:"-"` // secret for extension direct-push; never serialized
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
+
+	// Usage is this account's AI spend at three scales — see session_usage.go.
+	//
+	// json:"-" deliberately: it rides along on a row that is already read on
+	// nearly every request (so it costs no extra query), and it is an
+	// OPERATIONS fact rather than something the app frontend has any business
+	// with. The console reads it through the admin user list.
+	Usage SessionUsage `json:"-"`
 }
 
 // SessionUpdate carries optional fields for a partial session update. A nil

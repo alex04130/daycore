@@ -78,6 +78,21 @@ type SessionRepository interface {
 	Update(ctx context.Context, id string, upd SessionUpdate) (*Session, error)
 	IncrementInteraction(ctx context.Context, id string) error
 	GetByImportToken(ctx context.Context, token string) (*Session, error)
+	// AddUsage folds one AI call into this session's three counters, rolling a
+	// window over when it has expired.
+	//
+	// ⚠️ ONE statement, with the reset expressed as arithmetic (CASE), because
+	// two instances handling two calls for the same account at once is ordinary.
+	// A read-modify-write here would lose calls silently, and the number nobody
+	// checks is exactly the number a quota is built on.
+	//
+	// `now` is passed rather than read from the clock so that the window
+	// rollover is testable without sleeping three hours — the same reason
+	// Leases().Acquire takes it.
+	//
+	// Best-effort at the call site: a lost counter update must never fail the
+	// AI call it describes. See internal/server/ailog.go.
+	AddUsage(ctx context.Context, sessionID string, promptTokens, compTokens int, now time.Time) error
 }
 
 type DayPlanRepository interface {

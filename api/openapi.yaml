@@ -1123,7 +1123,46 @@ paths:
         '400': { description: from or to is not YYYY-MM-DD. }
         '403': { $ref: '#/components/responses/Error' }
   /api/admin/users:
-    get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+    get:
+      operationId: adminUsers
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Who exists, who owns this deployment, who is in what, and who is using how much.
+      description: >-
+        ⚠️ Counts, never content. users.read promises "不含任何人写下的内容" — how
+        many calls somebody made is an operational fact about the deployment; what
+        they said is not, and lives behind db.user_content.
+
+        `fastWindowHours` / `slowWindowDays` are the server's own window lengths,
+        returned so a screen labels the counters with the numbers the server
+        actually resets on rather than a copy that drifts.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        email: { type: string }
+                        name: { type: string }
+                        owner: { type: boolean }
+                        roles: { type: array, items: { type: string } }
+                        createdAt: { type: string, format: date-time }
+                        usage: { $ref: '#/components/schemas/SessionUsage' }
+                  ownerCount: { type: integer }
+                  limit: { type: integer }
+                  fastWindowHours: { type: integer }
+                  slowWindowDays: { type: integer }
+        '403': { $ref: '#/components/responses/Error' }
   /api/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
   /api/admin/permissions:
@@ -2386,6 +2425,38 @@ components:
             deployment upgrading into this feature the total begins where the
             ledger began — not at the beginning of time. A figure shown without
             this date is the same lie the rollup exists to fix, one level up.
+    SessionUsage:
+      type: object
+      description: >-
+        One account's AI spend at three scales, stored on the session row rather
+        than in a table — nine columns and zero new rows, against a (users ×
+        days) table that grows forever to answer a question almost always asked
+        about NOW.
+
+        ⚠️ The windows TUMBLE, they do not slide: when a window expires the next
+        call RESETS its counter rather than dropping the oldest events. So just
+        after a rollover a busy account reads small. A true sliding window needs
+        per-event rows, which is the table this avoids. It is the right
+        approximation for what these are for — a quota that resets is what a
+        quota IS.
+
+        ⚠️ An expired window is NOT zeroed in storage; nothing runs on expiry.
+        Callers get it already zeroed here, but anything reading the raw row must
+        check the start stamp itself.
+
+        ⚠️ This is a HOOK, not billing. Per-model attribution, an immutable
+        record per period, and a link to an ACCOUNT rather than a session are all
+        deliberately absent — see docs/ROADMAP.md.
+      properties:
+        fastCalls: { type: integer }
+        fastTokens: { type: integer, description: Prompt and completion combined. }
+        fastWindowStart: { type: string, format: date-time }
+        slowCalls: { type: integer }
+        slowTokens: { type: integer }
+        slowWindowStart: { type: string, format: date-time }
+        totalCalls: { type: integer, description: Lifetime; never reset. }
+        totalPromptTokens: { type: integer }
+        totalCompTokens: { type: integer }
     AdminDBTable:
       type: object
       description: >-

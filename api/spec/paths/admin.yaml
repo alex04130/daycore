@@ -274,7 +274,46 @@
       '400': { description: from or to is not YYYY-MM-DD. }
       '403': { $ref: '#/components/responses/Error' }
 /api/admin/users:
-  get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminUsers
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Who exists, who owns this deployment, who is in what, and who is using how much.
+    description: >-
+      ⚠️ Counts, never content. users.read promises "不含任何人写下的内容" — how
+      many calls somebody made is an operational fact about the deployment; what
+      they said is not, and lives behind db.user_content.
+
+      `fastWindowHours` / `slowWindowDays` are the server's own window lengths,
+      returned so a screen labels the counters with the numbers the server
+      actually resets on rather than a copy that drifts.
+    parameters:
+      - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                users:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string }
+                      email: { type: string }
+                      name: { type: string }
+                      owner: { type: boolean }
+                      roles: { type: array, items: { type: string } }
+                      createdAt: { type: string, format: date-time }
+                      usage: { $ref: '#/components/schemas/SessionUsage' }
+                ownerCount: { type: integer }
+                limit: { type: integer }
+                fastWindowHours: { type: integer }
+                slowWindowDays: { type: integer }
+      '403': { $ref: '#/components/responses/Error' }
 /api/admin/users/{id}:
   delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
 /api/admin/permissions:

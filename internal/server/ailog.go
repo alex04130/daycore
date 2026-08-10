@@ -78,4 +78,20 @@ func (s *Server) logAICall(ctx context.Context, sid, endpoint, model string, sta
 	if err := s.store.AILogs().Add(ctx, l); err != nil && s.log != nil {
 		s.log.Debug("ai call log write failed", "endpoint", endpoint, "err", err)
 	}
+	// The per-account counters, on the session row (domain/session_usage.go).
+	//
+	// A SECOND write on this path, which the deployment-wide rollup deliberately
+	// does not have — and the difference is not inconsistency. That rollup can be
+	// recomputed from the ledger by a GROUP BY, so it is folded once a day. These
+	// cannot: the lifetime total has to outlive the ledger's retention, and the
+	// windows have to be readable in one row read rather than an aggregate over
+	// the busiest table.
+	//
+	// Best-effort like the row above, and for the same reason: an account's
+	// counter is not worth failing somebody's conversation over.
+	if sid != "" {
+		if err := s.store.Sessions().AddUsage(ctx, sid, usage.PromptTokens, usage.CompletionTokens, time.Now()); err != nil && s.log != nil {
+			s.log.Debug("session usage update failed", "session", sid, "err", err)
+		}
+	}
 }

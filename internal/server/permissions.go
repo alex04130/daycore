@@ -184,7 +184,7 @@ func init() {
 	registerPerm(PermAILogsRead,
 		"看 AI 调用记录：模型、用量、耗时、成败。今天不含对话正文")
 	registerPerm(PermUsersRead,
-		"看用户列表：邮箱、注册时间、所在的组。不含任何人写下的内容")
+		"看用户列表：邮箱、注册时间、所在的组、以及各自用了多少 AI（次数与 token）。不含任何人写下的内容")
 	registerPerm(PermUsersDelete,
 		"删除用户。不可撤销，且会连带删掉那个人的数据")
 	registerPerm(PermUsersAssign,

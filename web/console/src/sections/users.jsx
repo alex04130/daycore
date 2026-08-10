@@ -56,6 +56,10 @@ export function Users({ onUnauthorized, principal }) {
             users={state.data.users}
             ownerCount={state.data.ownerCount}
             roles={state.data.roles}
+            windows={{
+              fastHours: state.data.fastWindowHours,
+              slowDays: state.data.slowWindowDays,
+            }}
             onChanged={reload}
           />
         </>
@@ -247,7 +251,7 @@ function RoleEditor({ role, permissions, isNew, onClose, onSaved }) {
   );
 }
 
-function UserTable({ users, ownerCount, roles, onChanged }) {
+function UserTable({ users, ownerCount, roles, windows, onChanged }) {
   return (
     <div className="block">
       <div className="block-head">
@@ -260,13 +264,13 @@ function UserTable({ users, ownerCount, roles, onChanged }) {
       </p>
       {users.length === 0 && <Empty>还没有用户。</Empty>}
       {users.map((u) => (
-        <UserRow key={u.id} user={u} roles={roles} ownerCount={ownerCount} onChanged={onChanged} />
+        <UserRow key={u.id} user={u} roles={roles} ownerCount={ownerCount} windows={windows} onChanged={onChanged} />
       ))}
     </div>
   );
 }
 
-function UserRow({ user, roles, ownerCount, onChanged }) {
+function UserRow({ user, roles, ownerCount, windows, onChanged }) {
   const [set, setSet] = useState(() => new Set(user.roles));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -307,6 +311,7 @@ function UserRow({ user, roles, ownerCount, onChanged }) {
           <code className="muted">{user.id}</code>
           {user.createdAt && <span className="muted"> · {user.createdAt.slice(0, 10)}</span>}
         </div>
+        {user.usage && <UsageLine usage={user.usage} windows={windows} />}
         <div className="perm-chips">
           {roles.length === 0 ? (
             <span className="muted">还没有可分配的组</span>
@@ -359,3 +364,39 @@ function UserRow({ user, roles, ownerCount, onChanged }) {
     </div>
   );
 }
+
+
+// One account's AI spend, at the three scales the server keeps.
+//
+// ⚠️ The window labels come from the SERVER (fastWindowHours / slowWindowDays),
+// not from a constant here. A screen that said "3 小时" over a counter the
+// server resets every four would be wrong in the least visible way available.
+//
+// The windows TUMBLE rather than slide, which is why a busy account can show a
+// small recent number: the counter restarted when the window rolled. The title
+// says so, because the alternative is somebody concluding the number is broken.
+function UsageLine({ usage, windows }) {
+  const fast = `${usage.fastCalls || 0} 次 / ${fmtTok(usage.fastTokens)}`;
+  const slow = `${usage.slowCalls || 0} 次 / ${fmtTok(usage.slowTokens)}`;
+  const total = `${usage.totalCalls || 0} 次 / ${fmtTok(
+    (usage.totalPromptTokens || 0) + (usage.totalCompTokens || 0),
+  )}`;
+  return (
+    <div className="usage-line">
+      <span title={`最近 ${windows.fastHours} 小时。窗口是翻页式的：到点就从零重新开始，所以刚翻过的窗口会显示得很小。`}>
+        近 {windows.fastHours}h <b>{fast}</b>
+      </span>
+      <span title={`最近 ${windows.slowDays} 天，同样是翻页式窗口。`}>
+        近 {windows.slowDays}d <b>{slow}</b>
+      </span>
+      <span title="从这个账号存在起，从不清零。入/出 token 分开记在这里面。">
+        总计 <b>{total}</b>
+      </span>
+    </div>
+  );
+}
+
+const fmtTok = (n) => {
+  const v = n || 0;
+  return v >= 10000 ? (v / 1000).toFixed(1) + 'k' : String(v);
+};
