@@ -92,3 +92,57 @@ func TestAdminHealthNeedsACredential(t *testing.T) {
 		t.Errorf("got %d, want 401 — this endpoint says things healthz refuses to", rec.Code)
 	}
 }
+
+// The driver error goes only to the root credential.
+//
+// ⚠️ This endpoint shipped without this distinction, and it was wrong for the
+// reason its own doc comment states two paragraphs earlier and then walks past:
+// a driver error routinely carries the DSN, and a DSN routinely carries a
+// password. Withholding it from unauthenticated callers and handing it to every
+// console user gets the boundary exactly half right.
+//
+// The root credential is ADMIN_TOKEN — an environment variable. Whoever holds
+// it can read DB_DSN out of the same file, so there is nothing here they cannot
+// already see. Everyone else gets the fact without the string.
+func TestOnlyTheRootCredentialSeesTheDriverError(t *testing.T) {
+	s := degradedServer(t)
+	s.cfg.AdminToken = "the-real-token"
+	s.EnterDegraded(`open db (postgres): password authentication failed for user "daycore" (pw=hunter2)`)
+
+	// Root credential: sees it.
+	rec := adminReq(t, s, http.MethodGet, "/api/admin/health", "", func(r *http.Request) {
+		r.Header.Set("X-Admin-Token", "the-real-token")
+	})
+	if !strings.Contains(rec.Body.String(), "hunter2") {
+		t.Error("the root credential cannot see the driver error, which is the whole point of this endpoint")
+	}
+
+	// A console session — authorised, but not root.
+	login := adminReq(t, s, http.MethodPost, "/api/admin/session", `{"token":"the-real-token"}`, nil)
+	var cookie *http.Cookie
+	for _, c := range login.Result().Cookies() {
+		if c.Name == adminCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("login set no admin cookie")
+	}
+	rec2 := adminReq(t, s, http.MethodGet, "/api/admin/health", "", func(r *http.Request) {
+		r.AddCookie(&http.Cookie{Name: adminCookie, Value: cookie.Value})
+	})
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("a console session cannot read health at all: %d", rec2.Code)
+	}
+	body := rec2.Body.String()
+	if strings.Contains(body, "hunter2") || strings.Contains(body, "password authentication") {
+		t.Errorf("a non-root credential was given the driver error: %s", body)
+	}
+	// And it still learns the FACT, or the screen is useless.
+	if !strings.Contains(body, "degraded") {
+		t.Error("a non-root credential cannot even tell that the deployment is degraded")
+	}
+	if !strings.Contains(body, "reasonWithheld") {
+		t.Error("nothing says the detail was withheld, so it reads as 'there is no reason'")
+	}
+}

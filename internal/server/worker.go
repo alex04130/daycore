@@ -54,6 +54,23 @@ func NewWorker(s *Server, chReg *channels.Registry) *Worker {
 
 // Start begins the cron scheduler.
 func (w *Worker) Start() {
+	// A degraded process has no store, and every job this schedules reads rows.
+	//
+	// Nothing fires today, but only by accident: cron entries are added by
+	// ScheduleUser, which runs off markAwake, which sits behind requireSession —
+	// and degradedMW refuses every route that requires a session. So the worker
+	// is idle because a middleware three layers away happens to keep requests
+	// from reaching it.
+	//
+	// That accident has an expiry date written into docs/ROADMAP.md: enumerating
+	// sessions at boot is a stated future want, and the day somebody adds it the
+	// worker starts running jobs against a nil store in a degraded process.
+	// Refusing here costs one branch and makes the property explicit instead of
+	// emergent.
+	if w.s != nil && w.s.Degraded() {
+		w.s.log.Warn("degraded: proactive jobs are not scheduled (they all read rows); restart after fixing storage")
+		return
+	}
 	w.cron.Start()
 }
 

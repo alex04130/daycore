@@ -56,22 +56,29 @@ var publicRoutes = map[string]string{
 
 	"POST /api/import/canvas": "X-Import-Token (browser extension push)",
 	"POST /api/import/ics":    "X-Import-Token",
-
-	// Own credential, not a session.
-	"GET /api/admin/prompts":                 "X-Admin-Token",
-	"GET /api/admin/prompts/{key}":           "X-Admin-Token",
-	"PUT /api/admin/prompts/{key}":           "X-Admin-Token",
-	"GET /api/admin/stats":                   "X-Admin-Token",
-	"GET /api/admin/ailogs":                  "X-Admin-Token",
-	"GET /api/admin/users":                   "X-Admin-Token",
-	"DELETE /api/admin/users/{id}":           "X-Admin-Token",
-	"GET /api/admin/db/tables":               "X-Admin-Token",
-	"GET /api/admin/db/table/{name}":         "X-Admin-Token",
-	"DELETE /api/admin/db/table/{name}/{id}": "X-Admin-Token",
-	"GET /api/admin/db/export":               "X-Admin-Token",
-	"POST /api/admin/db/import":              "X-Admin-Token",
-	"GET /api/admin/db/backup":               "X-Admin-Token",
 }
+
+// ⚠️ 2026-08-09: thirteen /api/admin/* routes used to sit in the list above,
+// each annotated "X-Admin-Token".
+//
+// That annotation was TRUE and the entry was WRONG, and the difference is the
+// whole point of this file. "Carries its own credential instead of a session"
+// is not the same statement as "answers an unauthenticated request" — and this
+// list only means the second one. Every one of those thirteen DOES check
+// adminAuthorized; listing them here said "and it is fine if one day it does
+// not".
+//
+// It was not hypothetical. Deleting the four-line check from
+// handleAdminDBExport left the ENTIRE suite green — `go test ./internal/server/`
+// ok 15.7s — while `GET /api/admin/db/export` answered 200 to a request with no
+// credential at all. Fifteen of twenty-three admin routes were in that state:
+// a door with a sign reading "locked" and no lock behind it.
+//
+// The import rails above stay, and the difference is worth naming: they answer
+// 401 to an unauthenticated request too, but their credential is a header this
+// test cannot mint, so exempting them keeps the test honest rather than
+// blinding it. Admin routes have exactly the same shape — which is why they are
+// now checked with an empty request instead of exempted.
 
 // Every non-public route must reject a request that carries no credentials.
 //

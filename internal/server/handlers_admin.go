@@ -145,3 +145,30 @@ func (s *Server) handleAdminPromptSet(w http.ResponseWriter, r *http.Request) {
 	}
 	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
+
+// isRootCredential reports whether this request carries ADMIN_TOKEN itself,
+// as opposed to any other admin credential.
+//
+// # Why the distinction exists
+//
+// ADMIN_TOKEN is the root password: it lives in the environment, it cannot be
+// changed from any interface, and it is the recovery path when everything else
+// is gone (the last administrator deleted, the role rows corrupt, the database
+// not open at all). Because it is an environment variable, whoever holds it can
+// already read every other environment variable — including DB_DSN.
+//
+// That is the whole test for what may be shown only to it: **things the holder
+// could read anyway by looking at the same file.** A driver error carrying a
+// DSN password qualifies. Nothing else should be added here without asking that
+// question first — this is not a general "more privileged" flag, and using it
+// as one would make it the place where privilege quietly accumulates.
+func (s *Server) isRootCredential(r *http.Request) bool {
+	if s.cfg == nil || s.cfg.AdminToken == "" {
+		return false
+	}
+	hdr := r.Header.Get("X-Admin-Token")
+	if hdr == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(hdr), []byte(s.cfg.AdminToken)) == 1
+}

@@ -305,7 +305,16 @@ func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (string,
 
 func (s *Server) requestLocale(r *http.Request) string {
 	sid := sessionIDFrom(r.Context())
-	if sid == "" {
+	// s.store is nil in a degraded process, and this is called from the FIRST
+	// line of handlers whose own degraded check is three lines further down —
+	// handleAdminConfigPut is exactly that shape. So a handler that had
+	// carefully considered degraded mode still panicked before reaching the
+	// consideration, and recoverMW turned it into a 500 that said nothing.
+	//
+	// The deployment default is the right answer here rather than an error: a
+	// language is not something to fail a request over, and in a degraded
+	// process there is no stored preference to read anyway.
+	if sid == "" || s.store == nil {
 		return s.defaultLocales.Resolve("", r.Header.Get("Accept-Language"))
 	}
 	sess, err := s.store.Sessions().Get(r.Context(), sid)

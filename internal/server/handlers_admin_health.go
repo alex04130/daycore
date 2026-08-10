@@ -71,7 +71,25 @@ func (s *Server) handleAdminHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.Degraded() {
-		out["reason"] = s.DegradedReason()
+		// ⚠️ The driver error, and only for the root credential.
+		//
+		// This endpoint shipped an hour before this line was written, with the
+		// reason available to anyone holding any admin credential. That was
+		// wrong for a reason the endpoint's own doc comment states two
+		// paragraphs earlier and then walks past: **a driver error routinely
+		// carries the DSN, and a DSN routinely carries a password.** Withholding
+		// it from unauthenticated callers and handing it to every console user
+		// gets the boundary exactly half right.
+		//
+		// The root credential is the environment variable. Somebody who has it
+		// already has the DSN — it is in the same .env file — so there is
+		// nothing here they cannot already read. Everyone else gets the fact
+		// without the string.
+		if s.isRootCredential(r) {
+			out["reason"] = s.DegradedReason()
+		} else {
+			out["reasonWithheld"] = true
+		}
 		// Degraded is entered once and never left — the only way out is a
 		// restart. Saying so here is what stops somebody hunting for a "retry
 		// connection" button that deliberately does not exist.
@@ -85,7 +103,11 @@ func (s *Server) handleAdminHealth(w http.ResponseWriter, r *http.Request) {
 	// others. The overview needs three, not two.
 	if err := s.store.Ping(r.Context()); err != nil {
 		out["dbReachable"] = false
-		out["reason"] = err.Error()
+		if s.isRootCredential(r) {
+			out["reason"] = err.Error()
+		} else {
+			out["reasonWithheld"] = true
+		}
 		s.writeJSON(w, http.StatusOK, out)
 		return
 	}

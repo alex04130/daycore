@@ -133,7 +133,23 @@ func (s *Server) userMW(next http.Handler) http.Handler {
 				token = c.Value
 			}
 		}
-		if token != "" {
+		// ⚠️ s.store is nil in a degraded process, and this middleware runs
+		// OUTSIDE degradedMW — it has to, because the identity middlewares must
+		// not be able to panic before the refusal is written.
+		//
+		// Without this guard a degraded process answered **500 to every request
+		// carrying a valid dc_auth cookie**, including GET /api/version (the
+		// four frontends' handshake, deliberately listed as needing no rows),
+		// GET /api/healthz, and /admin — the console itself. Somebody whose
+		// browser held a login could not reach the one surface degraded boot
+		// exists to serve, and recoverMW turned the nil dereference into a 500
+		// that said nothing.
+		//
+		// Resolving no user is exactly right here: this middleware is
+		// "parse, do not enforce", and in a degraded process there is no user
+		// row to resolve. The admin surface authenticates on its own credential
+		// and never needed one.
+		if token != "" && s.store != nil {
 			if uid, ver, err := s.tokens.Parse(token); err == nil {
 				if user, err := s.store.Users().GetByID(r.Context(), uid); err == nil && user != nil && user.TokenVersion == ver {
 					ctx := context.WithValue(r.Context(), ctxUserID, uid)
