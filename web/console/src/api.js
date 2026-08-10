@@ -116,6 +116,40 @@ export const testModel = (id) => request(`/models/${encodeURIComponent(id)}/test
 
 export const getOAuth = () => request('/oauth');
 
+export const getStats = () => request('/stats');
+
+// getAILogs takes the filter as an object and drops the empty fields, because
+// `?status=` is not the same request as omitting it — the server refuses an
+// unknown status, and an empty string is one.
+export function getAILogs(params = {}) {
+	const q = new URLSearchParams();
+	for (const [k, v] of Object.entries(params)) {
+		if (v !== '' && v !== null && v !== undefined) q.set(k, v);
+	}
+	const s = q.toString();
+	return request('/ailogs' + (s ? '?' + s : ''));
+}
+
+export const getPrompts = () => request('/prompts');
+export const getPrompt = (key, locale) =>
+	request(`/prompts/${encodeURIComponent(key)}?locale=${encodeURIComponent(locale)}`);
+export const putPrompt = (key, locale, content) =>
+	request(`/prompts/${encodeURIComponent(key)}?locale=${encodeURIComponent(locale)}`, {
+		method: 'PUT',
+		body: { content },
+	});
+
+export const getDBTables = () => request('/db/tables');
+export const getDBTable = (name, limit, offset) =>
+	request(`/db/table/${encodeURIComponent(name)}?limit=${limit}&offset=${offset}`);
+export const deleteDBRow = (name, id) =>
+	request(`/db/table/${encodeURIComponent(name)}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+
+// exportDB is a link, not a fetch: the response is a file with a
+// Content-Disposition, and routing it through fetch would mean holding the whole
+// database in memory to hand it back to a download the browser does natively.
+export const exportURL = () => BASE + '/db/export';
+
 export const getUsers = () => request('/users');
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');

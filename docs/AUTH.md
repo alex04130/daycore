@@ -281,6 +281,14 @@ argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混
 
 `TestRevokingAPermissionTakesEffectImmediately` 钉住它：同一张 cookie、不改 TTL、不登出，改完组权限**下一个请求**就被拒。这条断言存在的理由是它是那种「优化进 JWT」之后**其它测试全都还绿**的性质。
 
+### `db.user_content` 现在是注册过的（2026-08-10）
+
+它此前**有意不注册** —— 端点没写，而反向闸门要求每条注册过的权限至少被某处消费。数据库浏览器落地时它才注册，消费者是 `permForTable`。
+
+⚠️ 由此顺带改了反向闸门本身：它原来只看 `routePermissions`，而 `db.user_content` 是**由 handler 消费的**（`GET /api/admin/db/table/{name}` 的 pattern 看不出 `{name}` 是 `operation_logs` 还是 `chat_messages`，所以路由挂弱的那条，handler 按目录的 class 抬高）。只读路由表的闸门会把它判成「没人用」，然后推着人去删掉这个拆分。现在的判据是「**被路由声明，或者在本包非测试源码里被引用**」—— 走 AST，加一行表进不去。
+
+这是本仓唯一一处 handler 收紧路由权限的地方，`admin_gate.go` 里写清了「收紧可以、代替不行」的分界。
+
 ### 用户组的两种读法，写死在这里
 
 同一张 `roles` 表既是权限载体又是计费载体（作者：「商业化什么的就可以来卖用户组」），而两者生命周期不同：

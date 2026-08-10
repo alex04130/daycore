@@ -106,7 +106,7 @@ func TestFoldGolden(t *testing.T) {
 // version the next read takes the same path. It never heals. sqlstore's rapport
 // Get carries the same warning for the same reason.
 func TestResumeDiscardsCursorWithScores(t *testing.T) {
-	live := domain.OpLogCursor{CreatedAt: time.Unix(1700000000, 0).UTC(), ID: "op-9"}
+	live := domain.LogCursor{CreatedAt: time.Unix(1700000000, 0).UTC(), ID: "op-9"}
 	stored := &domain.RapportState{
 		SessionID: "s1",
 		Scores: map[string]domain.RapportScore{
@@ -130,7 +130,7 @@ func TestResumeDiscardsCursorWithScores(t *testing.T) {
 		old := *stored
 		old.FoldVersion = FoldVersion + 1 // could be older or newer; both are unreadable
 		f, c := Resume(&old, nil)
-		if c != (domain.OpLogCursor{}) {
+		if c != (domain.LogCursor{}) {
 			t.Errorf("cursor = %+v, want zero — a kept cursor skips the ledger before it forever", c)
 		}
 		if got := f.Scores().Get(domain.OpDomainSchedule).Value; got != Cold()[domain.OpDomainSchedule].Value {
@@ -142,14 +142,14 @@ func TestResumeDiscardsCursorWithScores(t *testing.T) {
 		old := *stored
 		old.FoldVersion = 0
 		_, c := Resume(&old, nil)
-		if c != (domain.OpLogCursor{}) {
+		if c != (domain.LogCursor{}) {
 			t.Errorf("cursor = %+v, want zero", c)
 		}
 	})
 
 	t.Run("no row at all is a cold start", func(t *testing.T) {
 		f, c := Resume(nil, nil)
-		if c != (domain.OpLogCursor{}) || f == nil {
+		if c != (domain.LogCursor{}) || f == nil {
 			t.Errorf("nil state should fold from cold: cursor %+v", c)
 		}
 	})
@@ -159,9 +159,9 @@ func TestResumeDiscardsCursorWithScores(t *testing.T) {
 		// resume. Treating it as "resume from the beginning" would double-count
 		// the whole ledger on top of the cached scores.
 		noCursor := *stored
-		noCursor.Cursor = domain.OpLogCursor{}
+		noCursor.Cursor = domain.LogCursor{}
 		f, c := Resume(&noCursor, nil)
-		if c != (domain.OpLogCursor{}) {
+		if c != (domain.LogCursor{}) {
 			t.Errorf("cursor = %+v, want zero", c)
 		}
 		if got := f.Scores().Get(domain.OpDomainSchedule).Value; got != Cold()[domain.OpDomainSchedule].Value {
@@ -175,7 +175,7 @@ func TestResumeDiscardsCursorWithScores(t *testing.T) {
 func TestSnapshotRoundTrip(t *testing.T) {
 	in := Cold()
 	in[domain.OpDomainCare] = Score{Domain: domain.OpDomainCare, Value: 0.61, Evidence: 7}
-	cursor := domain.OpLogCursor{CreatedAt: time.Unix(1700000000, 0).UTC(), ID: "op-3"}
+	cursor := domain.LogCursor{CreatedAt: time.Unix(1700000000, 0).UTC(), ID: "op-3"}
 
 	state := Snapshot("s1", in, cursor)
 	if state.FoldVersion != FoldVersion {

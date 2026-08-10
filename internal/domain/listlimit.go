@@ -27,6 +27,17 @@ const (
 	MoodListDefault, MoodListMax   = 10, 500
 	ChatListDefault, ChatListMax   = 50, 500
 
+	// The database browser's page. Small on purpose: every column of every row
+	// is shipped, so a wide table (proposals has 32 columns) makes a page of 50
+	// a large response — and nobody reads a thousand raw rows in a browser.
+	BrowseListDefault, BrowseListMax = 50, 200
+
+	// The AI ledger, driven straight from ?limit= on the console's log screen.
+	// A page of 50 fills a screen; the ceiling is lower than the others because
+	// this is the biggest table in the database and a page of it is the widest
+	// row — a 500-row page is a real amount of JSON to build and ship.
+	AILogListDefault, AILogListMax = 50, 200
+
 	// Internal lists. These already had ceilings on SQL; the numbers are kept
 	// as they were so this change alters no SQL behaviour beyond the two that
 	// were wrong.

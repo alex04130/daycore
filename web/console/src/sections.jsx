@@ -18,21 +18,25 @@
 // users.read does not click "数据库" and get an error page as their welcome.
 //
 // A section with `need: null` is shown to anybody holding a console session.
+import { AILogs } from './sections/ailogs.jsx';
 import { Config } from './sections/config.jsx';
+import { DB } from './sections/db.jsx';
+import { Overview } from './sections/overview.jsx';
 import { Placeholder } from './sections/placeholder.jsx';
+import { Prompts } from './sections/prompts.jsx';
 import { Providers } from './sections/providers.jsx';
 import { Users } from './sections/users.jsx';
 
 export const SECTIONS = [
-  { id: 'overview', label: '总览', view: Placeholder, need: 'overview.read' },
+  { id: 'overview', label: '总览', view: Overview, need: 'overview.read' },
   { id: 'config', label: '服务配置', view: Config, need: 'config.read' },
   { id: 'providers', label: '能力源', view: Providers, need: 'providers.read' },
   { id: 'models', label: '模型', view: Placeholder, need: 'models.read' },
   { id: 'oauth', label: '第三方登录', view: Placeholder, need: 'oauth.read' },
-  { id: 'prompts', label: '提示词', view: Placeholder, need: 'prompts.read' },
-  { id: 'ai-logs', label: 'AI 日志', view: Placeholder, need: 'ailogs.read' },
+  { id: 'prompts', label: '提示词', view: Prompts, need: 'prompts.read' },
+  { id: 'ai-logs', label: 'AI 日志', view: AILogs, need: 'ailogs.read' },
   { id: 'users', label: '用户与权限', view: Users, need: 'users.read' },
-  { id: 'db', label: '数据库', view: Placeholder, need: 'db.operational' },
+  { id: 'db', label: '数据库', view: DB, need: 'db.operational' },
 ];
 
 // visibleSections is what this principal may see.

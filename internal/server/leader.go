@@ -206,3 +206,52 @@ const (
 	JobRunRetention  = 14 * 24 * time.Hour
 	JobRunPruneEvery = 6 * time.Hour
 )
+
+// StartAILogPrune keeps ai_call_logs from growing without bound.
+//
+// It is the fastest-growing table in the database — one row per model call, and
+// an active user generates several per conversation turn — and until now
+// NOTHING deleted from it. That is the same shape of hole proposals had: a
+// table whose growth is invisible because no screen ever shows its size, on a
+// deployment nobody is watching.
+//
+// Leader-gated for the same reason as job_runs: N instances deleting the same
+// rows is N−1 wasted round trips, not an error.
+func (s *Server) StartAILogPrune() {
+	s.everyTick("ai log prune", AILogPruneEvery, func(parent context.Context) {
+		if !s.LeadsWorker() {
+			return
+		}
+		ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+		defer cancel()
+		n, err := s.store.AILogs().Prune(ctx, time.Now().Add(-AILogRetention))
+		if err != nil {
+			s.log.Warn("ai log prune failed", "err", err)
+			return
+		}
+		if n > 0 {
+			s.log.Info("pruned ai call logs", "count", n)
+		}
+	})
+}
+
+// Retention for ai_call_logs.
+//
+// ⚠️ Ninety days is a DECISION with two costs, and both should be said out
+// loud because the console will make the second one visible:
+//
+//   - AdminStats counts and sums this table, so "AI 调用" and "Token 消耗" on
+//     the overview are ninety-day figures, not all-time ones. They will appear
+//     to go DOWN. That is honest — an all-time counter that only rises is a
+//     number nobody can act on — but it has to be labelled on the screen.
+//   - Ninety days is long enough to answer "what did this deployment cost last
+//     quarter", which is the question a hosted tier is billed from, and short
+//     enough that the table does not outgrow the data it is about.
+//
+// If billing ever needs a longer horizon, the answer is a rolled-up monthly
+// aggregate written before the prune — not a longer retention. Keeping every
+// row forever to compute a sum is the expensive way to store a number.
+const (
+	AILogRetention  = 90 * 24 * time.Hour
+	AILogPruneEvery = 12 * time.Hour
+)

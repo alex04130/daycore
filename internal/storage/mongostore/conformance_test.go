@@ -92,6 +92,19 @@ func (h mongoHarness) BackdateProposals(t *testing.T, sessionID string, at time.
 	}
 }
 
+func (h mongoHarness) ForceAILogCreatedAt(t *testing.T, sessionID string, at time.Time) {
+	t.Helper()
+	// Milliseconds, not a BSON date: ai_call_logs stores created_at as an int64
+	// (see aiCallLogDoc), unlike proposals. Writing a time.Time here would make
+	// every later comparison in this collection compare a date against a number
+	// and quietly match nothing.
+	if _, err := h.s.c("ai_call_logs").UpdateMany(context.Background(),
+		bson.M{"session_id": sessionID},
+		bson.M{"$set": bson.M{"created_at": at.UnixMilli()}}); err != nil {
+		t.Fatalf("force ai log created_at: %v", err)
+	}
+}
+
 func (h mongoHarness) ForceProposalCreatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	if _, err := h.s.c("proposals").UpdateMany(context.Background(),

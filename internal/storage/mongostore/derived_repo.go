@@ -52,7 +52,7 @@ func (r rapportRepo) Get(ctx context.Context, sessionID string) (*domain.Rapport
 	}
 	return &domain.RapportState{
 		SessionID: d.SessionID, Scores: d.Scores,
-		Cursor:      domain.OpLogCursor{CreatedAt: d.CursorCreatedAt, ID: d.CursorID},
+		Cursor:      domain.LogCursor{CreatedAt: d.CursorCreatedAt, ID: d.CursorID},
 		FoldVersion: d.FoldVersion, UpdatedAt: d.UpdatedAt,
 	}, nil
 }

@@ -115,6 +115,9 @@ func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRep
 // θ-F4b — the runtime half of configuration layering.
 func (s *Store) Settings() domain.SettingRepository { return settingRepo{s} }
 func (s *Store) Roles() domain.RoleRepository       { return roleRepo{s} }
+
+// Browser is the console's collection window — see domain/tables.go.
+func (s *Store) Browser() domain.Browser { return browserRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}
 }

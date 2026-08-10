@@ -58,9 +58,9 @@ const FoldVersion = 1
 // is the only way "same version + same ledger ⇒ same scores" can be true: a
 // rebuild that folded with a nil Origin would skip reverts whose originals sort
 // before them, and disagree with the catch-up it is supposed to reproduce.
-func Resume(state *domain.RapportState, resolve Origin) (*Folder, domain.OpLogCursor) {
+func Resume(state *domain.RapportState, resolve Origin) (*Folder, domain.LogCursor) {
 	if state == nil || state.FoldVersion != FoldVersion || state.Cursor.ID == "" {
-		return NewFolderFrom(Cold(), resolve), domain.OpLogCursor{}
+		return NewFolderFrom(Cold(), resolve), domain.LogCursor{}
 	}
 	return NewFolderFrom(FromStored(state.Scores), resolve), state.Cursor
 }
@@ -82,7 +82,7 @@ func FromStored(m map[string]domain.RapportScore) Scores {
 // Snapshot packages a folded result for storage. The cursor is the caller's to
 // choose and must come from domain.AdvanceCursor rather than from the last row
 // read — see the hazard documented there.
-func Snapshot(sessionID string, s Scores, cursor domain.OpLogCursor) *domain.RapportState {
+func Snapshot(sessionID string, s Scores, cursor domain.LogCursor) *domain.RapportState {
 	m := make(map[string]domain.RapportScore, len(s))
 	for d, v := range s {
 		m[d] = domain.RapportScore{Value: v.Value, Evidence: v.Evidence}

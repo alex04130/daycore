@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,6 +58,18 @@ type Harness interface {
 	// columns answer different questions and a helper that quietly moved both
 	// would let a Prune test pass without pruning anything.
 	BackdateProposals(t *testing.T, sessionID string, at time.Time)
+	// ForceAILogCreatedAt sets every AI call log in a session to one instant.
+	//
+	// Same purpose as ForceProposalCreatedAt and added for the same reason: the
+	// paging cursor's whole job is to break a same-millisecond tie, and a test
+	// that writes its rows milliseconds apart never produces one — so it passes
+	// identically with the tie-break deleted. Measured: removing the `id` clause
+	// from the SQL cursor left the suite green.
+	//
+	// A burst of AI calls really does land several rows in one millisecond
+	// (parallel tool calls in one agent round), so this is the ordinary case
+	// rather than a contrived one.
+	ForceAILogCreatedAt(t *testing.T, sessionID string, at time.Time)
 }
 
 // Factory returns a fresh Harness.
@@ -129,6 +142,10 @@ var cases = []suiteCase{
 	{"ProviderOverride/TriStateEnabledAndApprovalRevoke", providerOverrideRoundTrip},
 	{"User/UpsertNeverTouchesTheOwnerMark", upsertNeverTouchesOwner},
 	{"Role/MembershipAndDeleteTakesItsMembers", roleMembership},
+	{"AILog/FilterAndBackwardPaging", aiLogFilterAndPaging},
+	{"AILog/PruneIsByAgeAndReportsCount", aiLogPrune},
+	{"Browser/PagesRedactsAndRefusesUnknownTables", browserPagesAndRedacts},
+	{"Browser/DeleteIsByKeyAndRefusesCompositeTables", browserDelete},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -799,7 +816,7 @@ func rapportRoundTrip(t *testing.T, h Harness) {
 			domain.OpDomainSchedule: {Value: 0.34, Evidence: 5},
 			domain.OpDomainArchive:  {Value: 0.61, Evidence: 12},
 		},
-		Cursor:      domain.OpLogCursor{CreatedAt: cursorAt, ID: "op-99"},
+		Cursor:      domain.LogCursor{CreatedAt: cursorAt, ID: "op-99"},
 		FoldVersion: 1,
 	}
 	if err := s.Rapport().Save(bg(), in); err != nil {
@@ -1113,7 +1130,7 @@ func opLogScan(t *testing.T, h Harness) {
 		}
 		time.Sleep(2 * time.Millisecond) // distinct created_at values
 	}
-	all, err := s.OpLogs().Scan(bg(), "s1", domain.OpLogCursor{}, 10)
+	all, err := s.OpLogs().Scan(bg(), "s1", domain.LogCursor{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1127,7 +1144,7 @@ func opLogScan(t *testing.T, h Harness) {
 	}
 	// Resuming from a cursor returns strictly what follows it, with no repeats
 	// and no gaps — which is what makes an append-only log affordable to fold.
-	cursor := domain.OpLogCursor{CreatedAt: all[1].CreatedAt, ID: all[1].ID}
+	cursor := domain.LogCursor{CreatedAt: all[1].CreatedAt, ID: all[1].ID}
 	rest, err := s.OpLogs().Scan(bg(), "s1", cursor, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -2184,3 +2201,434 @@ func roleMembership(t *testing.T, h Harness) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ── AI call ledger ──────────────────────────────────────────────────────────
+
+// aiLog builds one ledger row. created_at is stamped by the repository, so the
+// only way to get distinguishable timestamps is to write them apart in time —
+// which the paging case does deliberately.
+func aiLog(sid, endpoint, model, status string) *domain.AICallLog {
+	return &domain.AICallLog{
+		SessionID: sid, Endpoint: endpoint, Model: model, Status: status,
+		PromptTokens: 100, CompTokens: 20, DurationMs: 1234,
+	}
+}
+
+// Every filter dimension narrows, they combine with AND, the order is newest
+// first, and the backward cursor pages without repeating or dropping a row.
+//
+// The dimensions are checked ONE AT A TIME and then together. A filter test
+// that only ever sets one field passes just as well when the builder ignores
+// every field but the first — which is precisely the bug this back end has
+// shipped before (a second assignment to the same bson key silently dropping
+// the first clause).
+func aiLogFilterAndPaging(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.AILogs()
+	ctx := bg()
+
+	// Written oldest-first with a real gap, because created_at is stored to the
+	// millisecond and the assertion below is about ORDER.
+	want := []*domain.AICallLog{
+		aiLog("s1", "companion", "glm-5", "ok"),
+		aiLog("s1", "brief", "glm-5", "error"),
+		aiLog("s2", "companion", "deepseek-v4", "ok"),
+		aiLog("s1", "companion", "glm-5", "ok"),
+	}
+	for _, l := range want {
+		if err := repo.Add(ctx, l); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	all, err := repo.List(ctx, domain.AILogFilter{}, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("unfiltered list returned %d rows, want 4", len(all))
+	}
+	// Newest first. Without this the paging assertion below is meaningless.
+	for i := 1; i < len(all); i++ {
+		if all[i].CreatedAt.After(all[i-1].CreatedAt) {
+			t.Fatalf("row %d is newer than row %d — the list is not newest-first", i, i-1)
+		}
+	}
+	if all[0].ID != want[3].ID || all[3].ID != want[0].ID {
+		t.Errorf("newest-first order is wrong: got %q first and %q last", all[0].Endpoint, all[3].Endpoint)
+	}
+	// Every field survives the round trip. A ledger that loses the model or the
+	// token counts is a ledger nobody can bill or debug from.
+	got := all[3]
+	if got.SessionID != "s1" || got.Endpoint != "companion" || got.Model != "glm-5" ||
+		got.Status != "ok" || got.PromptTokens != 100 || got.CompTokens != 20 || got.DurationMs != 1234 {
+		t.Errorf("round trip lost something: %+v", got)
+	}
+
+	// Each dimension alone.
+	for _, tc := range []struct {
+		name string
+		f    domain.AILogFilter
+		want int
+	}{
+		{"session", domain.AILogFilter{SessionID: "s1"}, 3},
+		{"endpoint", domain.AILogFilter{Endpoint: "companion"}, 3},
+		{"model", domain.AILogFilter{Model: "deepseek-v4"}, 1},
+		{"status", domain.AILogFilter{Status: "error"}, 1},
+		{"no match", domain.AILogFilter{Model: "nothing-called-this"}, 0},
+	} {
+		rows, err := repo.List(ctx, tc.f, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(rows) != tc.want {
+			t.Errorf("filter by %s returned %d rows, want %d", tc.name, len(rows), tc.want)
+		}
+	}
+	// And together — AND, not OR. s2's row is "companion" too, so an OR would
+	// return four here and a builder that keeps only the last clause would
+	// return three.
+	if rows, _ := repo.List(ctx, domain.AILogFilter{SessionID: "s1", Endpoint: "companion", Status: "ok"}, 0); len(rows) != 2 {
+		t.Errorf("three filters combined returned %d rows, want 2 — they must AND", len(rows))
+	}
+
+	// Since is a lower bound, inclusive of its own instant.
+	if rows, _ := repo.List(ctx, domain.AILogFilter{Since: all[1].CreatedAt}, 0); len(rows) != 2 {
+		t.Errorf("Since returned %d rows, want the newest 2", len(rows))
+	}
+
+	// Backward paging: two pages of two, no repeat, no gap. This is the
+	// assertion the cursor exists for — a page boundary that only compared
+	// timestamps would repeat or drop whenever two rows share a millisecond.
+	first, err := repo.List(ctx, domain.AILogFilter{}, 2)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("first page: %d rows, err=%v", len(first), err)
+	}
+	cursor := domain.LogCursor{CreatedAt: first[1].CreatedAt, ID: first[1].ID}
+	second, err := repo.List(ctx, domain.AILogFilter{Before: cursor}, 2)
+	if err != nil || len(second) != 2 {
+		t.Fatalf("second page: %d rows, err=%v", len(second), err)
+	}
+	seen := map[string]bool{}
+	for _, l := range append(append([]domain.AICallLog{}, first...), second...) {
+		if seen[l.ID] {
+			t.Errorf("row %s came back on both pages", l.ID)
+		}
+		seen[l.ID] = true
+	}
+	if len(seen) != 4 {
+		t.Errorf("two pages of two covered %d distinct rows, want all 4", len(seen))
+	}
+	// Past the end is empty, not an error and not a wrap-around.
+	last := second[len(second)-1]
+	if rows, err := repo.List(ctx, domain.AILogFilter{Before: domain.LogCursor{CreatedAt: last.CreatedAt, ID: last.ID}}, 2); err != nil || len(rows) != 0 {
+		t.Errorf("paging past the oldest row returned %d rows (err=%v)", len(rows), err)
+	}
+
+	// ── the tie the cursor exists for ──────────────────────────────────────
+	//
+	// Everything above is written milliseconds apart, so created_at alone
+	// separates every row and the id clause is never consulted. Deleting that
+	// clause leaves all of it green — measured. So: force all four rows to ONE
+	// instant and page through them again.
+	//
+	// This is the ordinary case, not a contrived one. A single agent round
+	// firing parallel tool calls writes several ledger rows inside one
+	// millisecond.
+	oneInstant := time.Now().Add(-time.Minute)
+	h.ForceAILogCreatedAt(t, "s1", oneInstant)
+	h.ForceAILogCreatedAt(t, "s2", oneInstant)
+
+	tied, err := repo.List(ctx, domain.AILogFilter{}, 0)
+	if err != nil || len(tied) != 4 {
+		t.Fatalf("after forcing one instant: %d rows, err=%v", len(tied), err)
+	}
+	for i := 1; i < len(tied); i++ {
+		if !tied[i].CreatedAt.Equal(tied[0].CreatedAt) {
+			t.Fatalf("the harness did not put every row on one instant; this assertion proves nothing")
+		}
+		// With the timestamps equal, the id is the ONLY thing left to order by,
+		// and the order must still be total and descending.
+		if tied[i].ID >= tied[i-1].ID {
+			t.Errorf("rows sharing a millisecond came back in id order %q then %q — the tie-break is not descending",
+				tied[i-1].ID, tied[i].ID)
+		}
+	}
+	seenTied := map[string]bool{}
+	cur := domain.LogCursor{}
+	for page := 0; page < 4; page++ {
+		got, err := repo.List(ctx, domain.AILogFilter{Before: cur}, 1)
+		if err != nil {
+			t.Fatalf("tied page %d: %v", page, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("tied page %d returned %d rows; four rows in one millisecond must still page one at a time", page, len(got))
+		}
+		if seenTied[got[0].ID] {
+			t.Fatalf("tied page %d repeated %s — the cursor is comparing only the timestamp", page, got[0].ID)
+		}
+		seenTied[got[0].ID] = true
+		cur = domain.LogCursor{CreatedAt: got[0].CreatedAt, ID: got[0].ID}
+	}
+	if len(seenTied) != 4 {
+		t.Errorf("paging four same-millisecond rows one at a time saw %d of them", len(seenTied))
+	}
+	if rows, _ := repo.List(ctx, domain.AILogFilter{Before: cur}, 1); len(rows) != 0 {
+		t.Errorf("paging past the last of four tied rows returned %d rows", len(rows))
+	}
+	// And the cursor composes with a filter rather than replacing it.
+	fp, _ := repo.List(ctx, domain.AILogFilter{SessionID: "s1"}, 1)
+	if len(fp) != 1 {
+		t.Fatalf("filtered first page: %d rows", len(fp))
+	}
+	fq, _ := repo.List(ctx, domain.AILogFilter{
+		SessionID: "s1",
+		Before:    domain.LogCursor{CreatedAt: fp[0].CreatedAt, ID: fp[0].ID},
+	}, 10)
+	if len(fq) != 2 {
+		t.Errorf("cursor plus filter returned %d rows, want 2 — the cursor dropped the filter", len(fq))
+	}
+	for _, l := range fq {
+		if l.SessionID != "s1" {
+			t.Errorf("cursor plus filter crossed sessions: %+v", l)
+		}
+	}
+}
+
+// Prune deletes by age and says how many went.
+//
+// The count is not decoration: it is what the leader logs, and a prune that
+// silently reports zero while deleting rows is indistinguishable from a prune
+// that is not running — which is how a table grows without bound while
+// somebody believes it is being kept.
+func aiLogPrune(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.AILogs()
+	ctx := bg()
+
+	// Add stamps created_at itself, so an "old" row has to be written and then
+	// pruned against a boundary in the future rather than backdated.
+	for i := 0; i < 3; i++ {
+		if err := repo.Add(ctx, aiLog("s1", "companion", "glm-5", "ok")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(5 * time.Millisecond)
+	boundary := time.Now()
+	time.Sleep(5 * time.Millisecond)
+	keep := aiLog("s1", "brief", "glm-5", "ok")
+	if err := repo.Add(ctx, keep); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := repo.Prune(ctx, boundary)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("prune reported %d rows, want 3", n)
+	}
+	rows, _ := repo.List(ctx, domain.AILogFilter{}, 0)
+	if len(rows) != 1 || rows[0].ID != keep.ID {
+		t.Errorf("prune left %+v, want only the row newer than the boundary", rows)
+	}
+	// Pruning again takes nothing and is not an error — it runs on a ticker.
+	if n, err := repo.Prune(ctx, boundary); err != nil || n != 0 {
+		t.Errorf("second prune reported %d rows (err=%v), want 0", n, err)
+	}
+}
+
+// ── the console's table browser ─────────────────────────────────────────────
+
+// Paging, ordering, redaction, counts, and the refusal that makes the whole
+// thing an allowlist rather than a validation.
+//
+// The two back ends reach the same answers by genuinely different routes — SQL
+// returns a fixed column list, Mongo returns documents whose keys it has to
+// union — so this is exactly the kind of thing that drifts without a shared
+// suite.
+func browserPagesAndRedacts(t *testing.T, h Harness) {
+	s := h.Store()
+	b := s.Browser()
+	ctx := bg()
+
+	// A table nobody catalogued is refused, and the refusal is NOT "zero rows".
+	// Zero is a real answer; conflating the two is how a typo in a URL becomes
+	// "that table is empty".
+	if _, err := b.CountRows(ctx, "sqlite_master"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("counting an uncatalogued table returned %v, want ErrNotFound", err)
+	}
+	if _, err := b.BrowseRows(ctx, "users; DROP TABLE users", 10, 0); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("browsing a name that is not in the catalogue returned %v, want ErrNotFound", err)
+	}
+	if _, err := b.DeleteRow(ctx, "not_a_table", "x"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("deleting from an uncatalogued table returned %v, want ErrNotFound", err)
+	}
+
+	// Empty is empty, not an error, and the page still carries its shape.
+	empty, err := b.BrowseRows(ctx, "ai_call_logs", 10, 0)
+	if err != nil {
+		t.Fatalf("browsing an empty table: %v", err)
+	}
+	if empty.Total != 0 || len(empty.Rows) != 0 {
+		t.Errorf("empty table reported total=%d rows=%d", empty.Total, len(empty.Rows))
+	}
+
+	// Five rows, written in order, so "newest first" is checkable.
+	for i := 0; i < 5; i++ {
+		if err := s.AILogs().Add(ctx, aiLog("s-browse", "companion", "m"+strconv.Itoa(i), "ok")); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	if n, err := b.CountRows(ctx, "ai_call_logs"); err != nil || n != 5 {
+		t.Errorf("CountRows = %d (err=%v), want 5", n, err)
+	}
+
+	first, err := b.BrowseRows(ctx, "ai_call_logs", 2, 0)
+	if err != nil {
+		t.Fatalf("browse: %v", err)
+	}
+	if first.Total != 5 {
+		t.Errorf("Total = %d, want 5 — the pager needs the whole count, not the page size", first.Total)
+	}
+	if len(first.Rows) != 2 {
+		t.Fatalf("first page had %d rows, want 2", len(first.Rows))
+	}
+	// Column names, not positions: the two back ends order columns differently
+	// and the console reads them by name.
+	col := func(p *domain.TableRowPage, name string) int {
+		for i, c := range p.Columns {
+			if c == name || (name == "id" && c == "_id") {
+				return i
+			}
+		}
+		t.Fatalf("page has no %q column; got %v", name, p.Columns)
+		return -1
+	}
+	modelAt := col(first, "model")
+	if first.Rows[0][modelAt] != "m4" || first.Rows[1][modelAt] != "m3" {
+		t.Errorf("first page is %v then %v, want m4 then m3 — the browser is not newest-first",
+			first.Rows[0][modelAt], first.Rows[1][modelAt])
+	}
+	// Offset paging: page two continues rather than restarting.
+	second, err := b.BrowseRows(ctx, "ai_call_logs", 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second.Rows) != 2 || second.Rows[0][col(second, "model")] != "m2" {
+		t.Errorf("second page starts at %v, want m2", second.Rows[0][col(second, "model")])
+	}
+	// Past the end is an empty page with the real total, not an error — the
+	// console renders "0 of 5 on this page" rather than an error card.
+	past, err := b.BrowseRows(ctx, "ai_call_logs", 2, 99)
+	if err != nil || len(past.Rows) != 0 || past.Total != 5 {
+		t.Errorf("past the end: %d rows, total %d, err=%v", len(past.Rows), past.Total, err)
+	}
+
+	// Redaction. sessions.import_token is a bearer credential — whoever holds it
+	// can push data into that session from anywhere — and the browser must never
+	// serve it. This is the assertion that would otherwise silently stop being
+	// true when somebody renames a column.
+	sid := "s-secret"
+	if _, err := s.Sessions().GetOrCreate(ctx, sid); err != nil {
+		t.Fatal(err)
+	}
+	// The token has to be SET, not merely declared.
+	//
+	// Mongo omits empty fields (`bson:"import_token,omitempty"`), so a fresh
+	// session has no such key at all and the browser's union-of-keys never sees
+	// one — which made this whole assertion vacuous on that back end while
+	// passing on SQL, where the column always exists. Caught by the real-machine
+	// run, which is what it is for.
+	token := "tok-do-not-serve-this"
+	if _, err := s.Sessions().Update(ctx, sid, domain.SessionUpdate{ImportToken: &token}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := b.BrowseRows(ctx, "sessions", 50, 0)
+	if err != nil {
+		t.Fatalf("browse sessions: %v", err)
+	}
+	if len(page.Rows) == 0 {
+		t.Fatal("no session rows came back; the redaction assertion below would prove nothing")
+	}
+	tokenAt := -1
+	for i, c := range page.Columns {
+		if c == "import_token" {
+			tokenAt = i
+		}
+	}
+	if tokenAt < 0 {
+		t.Fatal("sessions has no import_token column in the browsed page — redaction is not being exercised")
+	}
+	for _, row := range page.Rows {
+		if row[tokenAt] != domain.RedactedValue {
+			t.Errorf("import_token came back as %v, want the redaction marker — this is a bearer credential", row[tokenAt])
+		}
+	}
+	// And the value is nowhere else in the row either, in case a back end ever
+	// returns the same field twice under two keys.
+	for _, row := range page.Rows {
+		for i, v := range row {
+			if str, ok := v.(string); ok && str == token {
+				t.Errorf("the import token was served in column %q", page.Columns[i])
+			}
+		}
+	}
+	// And the rest of the row is intact: redacting the whole table would make
+	// the browser useless exactly where debugging needs it.
+	idAt := -1
+	for i, c := range page.Columns {
+		if c == "id" || c == "_id" {
+			idAt = i
+		}
+	}
+	if idAt < 0 || page.Rows[0][idAt] == nil || page.Rows[0][idAt] == "" {
+		t.Errorf("the session id did not survive alongside the redacted column: %v", page.Rows[0])
+	}
+}
+
+// Deleting one row, and refusing to when "one row" has no meaning.
+func browserDelete(t *testing.T, h Harness) {
+	s := h.Store()
+	b := s.Browser()
+	ctx := bg()
+
+	l := aiLog("s-del", "companion", "m", "ok")
+	if err := s.AILogs().Add(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	other := aiLog("s-del", "brief", "m", "ok")
+	if err := s.AILogs().Add(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := b.DeleteRow(ctx, "ai_call_logs", l.ID)
+	if err != nil || !ok {
+		t.Fatalf("delete: ok=%v err=%v", ok, err)
+	}
+	// Reporting whether a row was there is the difference between "deleted" and
+	// "there was nothing to delete", and the console says different things.
+	if ok, err := b.DeleteRow(ctx, "ai_call_logs", l.ID); err != nil || ok {
+		t.Errorf("deleting the same row twice reported ok=%v err=%v, want false and no error", ok, err)
+	}
+	// It deleted ONE row, not the table.
+	if n, _ := b.CountRows(ctx, "ai_call_logs"); n != 1 {
+		t.Errorf("after deleting one of two rows the table has %d", n)
+	}
+
+	// A table whose key is composite refuses, and the refusal is its own error —
+	// mapping it to ErrNotFound would tell an operator the row is gone when it
+	// is still there.
+	if _, err := b.DeleteRow(ctx, "roles", "anything"); !errors.Is(err, domain.ErrUnsupported) {
+		t.Errorf("deleting from a composite-key table returned %v, want ErrUnsupported", err)
+	}
+	// roles in particular: DeleteRole removes the definition AND the membership,
+	// and a raw delete of just the definition leaves rows that silently restore
+	// a deleted permission set the moment the name is reused.
+	if tb, _ := domain.TableByName("roles"); tb.Deletable() {
+		t.Error("roles became deletable from the browser; that bypasses the delete-both invariant in domain/role.go")
+	}
+}

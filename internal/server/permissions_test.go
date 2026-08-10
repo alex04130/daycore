@@ -1,8 +1,14 @@
 package server
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"strings"
 	"testing"
+
+	"daycore/internal/domain"
 )
 
 // Every /api/admin/ route declares a permission, and every permission is used.
@@ -63,14 +69,92 @@ func TestEveryAdminRouteDeclaresAPermission(t *testing.T) {
 		t.Fatalf("only saw %d admin routes; this gate is not looking at what it thinks it is", seen)
 	}
 
+	// The reverse direction has to look further than the route table.
+	//
+	// db.user_content is required by a HANDLER, not by a route: the pattern
+	// `GET /api/admin/db/table/{name}` cannot say whether {name} is
+	// operation_logs or chat_messages, so the route carries the weaker
+	// permission and handlers_admin_db.go raises it per table. A gate that only
+	// read routePermissions would have called that permission unused and
+	// pushed somebody to delete the split.
+	//
+	// So: consulted = named by a route, OR mentioned anywhere in this package's
+	// real source outside permissions.go. Coarse on purpose — the question is
+	// "does anything look at this at all", and any mention in shipped code is
+	// evidence that something does. It cannot be satisfied by adding a line to a
+	// table, which is what makes it worth having.
+	consulted := permissionsMentionedInSource(t)
 	for _, p := range Permissions() {
-		if !used[p.ID] {
-			t.Errorf("permission %q is registered but no route requires it.\n"+
-				"  That is a switch in the console that grants nothing — either wire it to the route it was\n"+
-				"  meant for, or delete it. A permission nobody checks is worse than none: it reads like\n"+
-				"  protection.", p.ID)
+		if used[p.ID] || consulted[p.ID] {
+			continue
+		}
+		t.Errorf("permission %q is registered and nothing consults it.\n"+
+			"  That is a switch in the console that grants nothing — either wire it to the route or the\n"+
+			"  handler it was meant for, or delete it. A permission nobody checks is worse than none: it\n"+
+			"  reads like protection.", p.ID)
+	}
+}
+
+// permissionsMentionedInSource returns the permission ids whose Perm* constant
+// is referenced somewhere in this package's non-test source, other than in
+// permissions.go itself (where every one of them is defined and registered).
+func permissionsMentionedInSource(t *testing.T) map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
+		return !strings.HasSuffix(fi.Name(), "_test.go") && fi.Name() != "permissions.go"
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Constant name → id, built from the registry so this cannot drift.
+	byName := map[string]string{
+		"PermOverview": PermOverview, "PermConfigRead": PermConfigRead, "PermConfigWrite": PermConfigWrite,
+		"PermProvidersRead": PermProvidersRead, "PermProvidersWrite": PermProvidersWrite,
+		"PermModelsRead": PermModelsRead, "PermModelsTest": PermModelsTest, "PermOAuthRead": PermOAuthRead,
+		"PermPromptsRead": PermPromptsRead, "PermPromptsWrite": PermPromptsWrite, "PermAILogsRead": PermAILogsRead,
+		"PermUsersRead": PermUsersRead, "PermUsersDelete": PermUsersDelete, "PermUsersAssign": PermUsersAssign,
+		"PermRolesEdit": PermRolesEdit, "PermDBOperational": PermDBOperational,
+		"PermDBUserContent": PermDBUserContent, "PermDBDeleteRow": PermDBDeleteRow,
+		"PermDBExport": PermDBExport, "PermDBImport": PermDBImport,
+	}
+	// A permission added to the registry but not to the map above would be
+	// silently exempt from the check, which is the failure this whole gate is
+	// about. So the map is checked against the registry too.
+	for _, p := range Permissions() {
+		found := false
+		for _, id := range byName {
+			if id == p.ID {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("permission %q is not in permissionsMentionedInSource's name map, so the reverse "+
+				"gate silently exempts it — add it there in the same edit that registers it", p.ID)
 		}
 	}
+
+	out := map[string]bool{}
+	files := 0
+	for _, pkg := range pkgs {
+		for range pkg.Files {
+			files++
+		}
+		ast.Inspect(pkg, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if permID, isPerm := byName[id.Name]; isPerm {
+				out[permID] = true
+			}
+			return true
+		})
+	}
+	if files < 30 {
+		t.Fatalf("only parsed %d source files; this gate is not looking at what it thinks it is", files)
+	}
+	return out
 }
 
 // A permission's damage line has to be something an operator can decide from.
@@ -169,12 +253,38 @@ func TestUserContentIsItsOwnPermission(t *testing.T) {
 	if PermDBOperational == PermDBUserContent {
 		t.Fatal("browsing operational tables and browsing user content are one permission")
 	}
-	// db.user_content is defined but deliberately not registered yet: its
-	// handler-level split does not exist, and the reverse gate above refuses a
-	// permission no route uses — for the good reason that a console switch which
-	// grants nothing reads like protection.
-	if PermissionExists(PermDBUserContent) {
-		t.Error("db.user_content is registered but its table-level split is not implemented; " +
-			"a switch that grants nothing is worse than no switch")
+	if !PermissionExists(PermDBUserContent) {
+		t.Fatal("db.user_content is not registered, so the split it names cannot be granted separately")
+	}
+	// And the split is REAL: the two classes must map to the two permissions,
+	// and both classes must actually be populated. A catalogue where every table
+	// is operational would satisfy the mapping and grant everybody everything.
+	ops, content := 0, 0
+	for _, tb := range domain.Tables {
+		switch permForTable(tb) {
+		case PermDBOperational:
+			ops++
+		case PermDBUserContent:
+			content++
+		default:
+			t.Errorf("%s maps to %q, which is neither browse permission", tb.Name, permForTable(tb))
+		}
+	}
+	if ops < 5 || content < 5 {
+		t.Errorf("the catalogue is %d operational and %d user-content tables; one of the two classes is "+
+			"empty or nearly so, which makes the split decorative", ops, content)
+	}
+	// The three the author named by hand must be on the user-content side. They
+	// are the reason the split exists, so they are the ones worth pinning.
+	for _, name := range []string{"chat_messages", "mood_checkins", "memory_facts"} {
+		tb, ok := domain.TableByName(name)
+		if !ok {
+			t.Errorf("%s is not in the catalogue at all", name)
+			continue
+		}
+		if permForTable(tb) != PermDBUserContent {
+			t.Errorf("%s is classified %q — the author named this table specifically as the kind of "+
+				"thing that must be assignable on its own", name, tb.Class)
+		}
 	}
 }

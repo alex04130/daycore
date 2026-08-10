@@ -6,6 +6,22 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
+)
+
+var (
+	keyAdminAILogBadStatus = i18n.Reg("admin.ailogs.bad_status", i18n.Text{
+		"zh-CN": "status 只能是 ok 或 error",
+		"en-US": "status must be either ok or error",
+	})
+	keyAdminAILogBadSince = i18n.Reg("admin.ailogs.bad_since", i18n.Text{
+		"zh-CN": "since 要写成 RFC3339 时间",
+		"en-US": "since must be an RFC3339 timestamp",
+	})
+	keyAdminAILogBadCursor = i18n.Reg("admin.ailogs.bad_cursor", i18n.Text{
+		"zh-CN": "翻页游标要 beforeAt 和 beforeId 一起给",
+		"en-US": "a paging cursor needs both beforeAt and beforeId",
+	})
 )
 
 func init() {
@@ -34,11 +50,92 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, stats)
 }
 
-// GET /api/admin/ailogs — AI call log list with pagination.
+// GET /api/admin/ailogs — the AI call ledger, newest first.
+//
+// # What is deliberately NOT in a row
+//
+// The design prototype's drawer shows 请求 and 响应 bodies
+// (design-ui/liuli/admin/admin-views.jsx:150). Those are not stored and must
+// not be: the request body of a companion call IS the user's conversation, and
+// docs/STRATEGY.md puts that at the same level as the companion boundaries.
+// Storing it to make an ops screen nicer would put every user's diary in a
+// table that ailogs.read can browse — and that permission's damage line
+// promises the opposite ("今天不含对话正文").
+//
+// ⚠️ If a request/response capture is ever added, it belongs behind
+// db.user_content or a new permission of its own, never behind this one.
+//
+// # Why the cursor is opaque to the client
+//
+// Paging is keyset, not offset — the console sends back the last row's
+// timestamp and id. Offset paging over a table that grows at the head repeats
+// and skips rows, which on a ledger reads as "the log is lying".
 func (s *Server) handleAdminAILogs(w http.ResponseWriter, r *http.Request) {
-	// TODO: pagination query when AILogRepository.List is added.
-	// For now, return stats as a minimal view.
-	s.writeJSON(w, http.StatusOK, map[string]any{"logs": []any{}, "note": "full log list coming soon"})
+	locale := s.requestLocale(r)
+	q := r.URL.Query()
+	f := domain.AILogFilter{
+		SessionID: q.Get("sessionId"),
+		Endpoint:  q.Get("endpoint"),
+		Model:     q.Get("model"),
+		Status:    q.Get("status"),
+	}
+	// An unknown status would silently match nothing, and an empty screen with
+	// no explanation is the worst answer a filter can give.
+	if f.Status != "" && f.Status != "ok" && f.Status != "error" {
+		s.writeErr(w, http.StatusBadRequest, "bad_status", i18n.T(keyAdminAILogBadStatus, locale))
+		return
+	}
+	if v := q.Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			s.writeErr(w, http.StatusBadRequest, "bad_since", i18n.T(keyAdminAILogBadSince, locale))
+			return
+		}
+		f.Since = t
+	}
+	// The two halves of the cursor arrive together or not at all. Half a cursor
+	// would page from an instant with no tie-break, which is the exact failure
+	// the id exists to prevent.
+	beforeAt, beforeID := q.Get("beforeAt"), q.Get("beforeId")
+	if (beforeAt == "") != (beforeID == "") {
+		s.writeErr(w, http.StatusBadRequest, "bad_cursor", i18n.T(keyAdminAILogBadCursor, locale))
+		return
+	}
+	if beforeAt != "" {
+		t, err := time.Parse(time.RFC3339Nano, beforeAt)
+		if err != nil {
+			s.writeErr(w, http.StatusBadRequest, "bad_cursor", i18n.T(keyAdminAILogBadCursor, locale))
+			return
+		}
+		f.Before = domain.LogCursor{CreatedAt: t, ID: beforeID}
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+
+	logs, err := s.store.AILogs().List(r.Context(), f, limit)
+	if err != nil {
+		s.log.Error("admin ai logs", "err", err)
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.adminAILogs.internal")
+		return
+	}
+	out := map[string]any{
+		"logs": logs,
+		// The endpoint vocabulary, so the console's filter chips are this
+		// build's list rather than a copy that drifts. A chip for an endpoint
+		// that no longer exists filters to nothing and looks like a broken
+		// screen.
+		"endpoints": aiEndpoints(),
+		// Stated rather than assumed: the ledger is pruned, so "no rows" from
+		// four months ago means "pruned", not "nothing happened".
+		"retentionDays": int(AILogRetention.Hours() / 24),
+	}
+	// The next page's cursor, computed here so the client never has to know how
+	// the ordering works. Absent when this page did not fill — there is nothing
+	// after it.
+	if n := len(logs); n > 0 && n == domain.ListLimit(limit, domain.AILogListDefault, domain.AILogListMax) {
+		out["nextBeforeAt"] = logs[n-1].CreatedAt.Format(time.RFC3339Nano)
+		out["nextBeforeId"] = logs[n-1].ID
+	}
+	s.writeJSON(w, http.StatusOK, out)
 }
 
 // adminUserView is a person as the console shows them.

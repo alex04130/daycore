@@ -46,14 +46,14 @@ func SafeCursorHorizon(now time.Time) time.Time {
 //
 // prev is returned unchanged when the page is empty or entirely inside the
 // unsafe window, so a caller can loop on this without special cases.
-func AdvanceCursor(prev OpLogCursor, page []OperationLog, now time.Time) OpLogCursor {
+func AdvanceCursor(prev LogCursor, page []OperationLog, now time.Time) LogCursor {
 	horizon := SafeCursorHorizon(now)
 	out := prev
 	for _, l := range page {
 		if !l.CreatedAt.Before(horizon) {
 			break // page is oldest-first; everything after this is newer still
 		}
-		out = OpLogCursor{CreatedAt: l.CreatedAt, ID: l.ID}
+		out = LogCursor{CreatedAt: l.CreatedAt, ID: l.ID}
 	}
 	return out
 }

@@ -39,6 +39,15 @@ func (h sqlHarness) BackdateProposals(t *testing.T, sessionID string, at time.Ti
 	}
 }
 
+func (h sqlHarness) ForceAILogCreatedAt(t *testing.T, sessionID string, at time.Time) {
+	t.Helper()
+	if _, err := h.s.exec(context.Background(),
+		`UPDATE ai_call_logs SET created_at = ? WHERE session_id = ?`,
+		toMillis(at), sessionID); err != nil {
+		t.Fatalf("force ai log created_at: %v", err)
+	}
+}
+
 func (h sqlHarness) ForceProposalCreatedAt(t *testing.T, sessionID string, at time.Time) {
 	t.Helper()
 	if _, err := h.s.exec(context.Background(),

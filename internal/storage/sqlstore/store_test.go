@@ -592,7 +592,7 @@ func TestOpLogScan(t *testing.T) {
 	// Walk the whole log one page at a time, exactly as a replay would.
 	var (
 		seen   []domain.OperationLog
-		cursor domain.OpLogCursor
+		cursor domain.LogCursor
 	)
 	for pages := 0; ; pages++ {
 		if pages > 10 {
@@ -607,7 +607,7 @@ func TestOpLogScan(t *testing.T) {
 		}
 		seen = append(seen, page...)
 		last := page[len(page)-1]
-		cursor = domain.OpLogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+		cursor = domain.LogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 	}
 
 	if len(seen) != 6 {
@@ -652,7 +652,7 @@ func TestOpLogScan(t *testing.T) {
 	}
 
 	// A zero cursor starts from the beginning.
-	first, err := s.OpLogs().Scan(ctx, "sid-scan", domain.OpLogCursor{}, 1)
+	first, err := s.OpLogs().Scan(ctx, "sid-scan", domain.LogCursor{}, 1)
 	if err != nil || len(first) != 1 || first[0].ID != "same-a" {
 		t.Fatalf("zero cursor should start at the oldest row, got %+v err=%v", first, err)
 	}

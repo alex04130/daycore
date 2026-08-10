@@ -27,6 +27,25 @@ const (
 	epReplan        = "replan"
 )
 
+// aiEndpoints is the vocabulary the console's filter chips are built from.
+//
+// It is a second list of the same strings, which is a duplication worth having
+// only because a gate keeps the two identical: TestEveryAIEndpointIsFilterable
+// parses the const block above and fails if any value is missing here. Without
+// that, adding a twelfth endpoint gives it a ledger row nobody can filter to —
+// and the failure is invisible, because the screen still works and simply never
+// offers that choice.
+//
+// Ordered by how often somebody looks for it rather than alphabetically: the
+// question is nearly always "what did companion do", and a filter list that
+// starts with ai_plan makes that a scan.
+func aiEndpoints() []string {
+	return []string{
+		epCompanion, epBrief, epAutoPlan, epReplan, epProtector,
+		epMoodReply, epAIPlan, epThemeGen, epTravel, epInboxClassify, epSummarise,
+	}
+}
+
 // usageOf tolerates a nil response (the call failed before one arrived).
 func usageOf(resp *ai.ChatResponse) ai.Usage {
 	if resp == nil {

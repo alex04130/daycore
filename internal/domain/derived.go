@@ -34,7 +34,7 @@ type RapportState struct {
 	Scores map[string]RapportScore `json:"scores"`
 	// Cursor is how far into the ledger this reading goes. A catch-up scans
 	// from here rather than from the beginning — see OperationLogRepository.Scan.
-	Cursor OpLogCursor `json:"cursor"`
+	Cursor LogCursor `json:"cursor"`
 	// FoldVersion is the version of the folding rules the row was produced by.
 	// When the deltas or the domain list change, an old row is not wrong so
 	// much as meaningless, and comparing this against the current version is

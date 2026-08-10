@@ -65,7 +65,7 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 // Scan walks the log oldest-first from a cursor so derived state can be rebuilt
 // by re-folding it. Keyset over (created_at, _id) rather than skip/limit: the
 // collection is append-only and grows during a replay, so an offset would drift.
-func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLogCursor, limit int) ([]domain.OperationLog, error) {
+func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.LogCursor, limit int) ([]domain.OperationLog, error) {
 	if limit <= 0 {
 		limit = 500
 	}

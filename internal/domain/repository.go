@@ -61,6 +61,12 @@ type Store interface {
 	// ref safe to resolve. See attachment.go.
 	Attachments() AttachmentRepository
 
+	// Browser is the operations console's window onto the raw tables. It models
+	// no domain concept and deliberately exposes the schema — see tables.go for
+	// the catalogue it is driven by and the rule that keeps a request-supplied
+	// name out of a query.
+	Browser() Browser
+
 	Migrate(ctx context.Context) error
 	Ping(ctx context.Context) error
 	Close() error
@@ -99,13 +105,20 @@ type ThemeLogRepository interface {
 	Add(ctx context.Context, sessionID, theme string) error
 }
 
-// OpLogCursor marks a position in the append-only log. The id breaks ties:
-// created_at is stored to the millisecond and two operations in the same
-// millisecond are ordinary, so ordering on time alone would silently skip or
-// repeat rows across pages.
+// LogCursor marks a position in an append-only log. The id breaks ties:
+// created_at is stored to the millisecond and two rows in the same millisecond
+// are ordinary, so ordering on time alone would silently skip or repeat rows
+// across pages.
 //
-// The zero value means "from the beginning".
-type OpLogCursor struct {
+// Two logs use it — operation_logs (forward replay, see oplog_cursor.go for the
+// visibility-lag machinery that only the forward direction needs) and
+// ai_call_logs (backward paging for the console). It was named OpLogCursor
+// until the second one arrived; the type was always generic and only the
+// safety rules around forward replay are specific to the ledger.
+//
+// The zero value means "from the beginning" going forward, and "from now"
+// going backward.
+type LogCursor struct {
 	CreatedAt time.Time
 	ID        string
 }
@@ -120,7 +133,7 @@ type OperationLogRepository interface {
 	// own, so its cache must be rebuildable by re-folding every operation in
 	// the order it happened. List cannot do that — it is newest-first and
 	// capped.
-	Scan(ctx context.Context, sessionID string, after OpLogCursor, limit int) ([]OperationLog, error)
+	Scan(ctx context.Context, sessionID string, after LogCursor, limit int) ([]OperationLog, error)
 	// RevertedBy returns the revert entry that already undid targetID, or
 	// ErrNotFound when nothing has.
 	//
@@ -199,9 +212,52 @@ type ChatMessageUpdate struct {
 	Status     *string
 }
 
+// AILogFilter narrows the AI ledger for the console.
+//
+// Every field is optional and the zero value means "do not narrow on this".
+// They combine with AND, which is the only combination an operations screen
+// ever wants: the question is always "the failures, on this model, since the
+// deploy" and never a disjunction.
+type AILogFilter struct {
+	SessionID string
+	// Endpoint is one of the ep* constants in internal/server/ailog.go.
+	Endpoint string
+	Model    string
+	// Status is "ok" or "error". Empty means both.
+	Status string
+	// Since bounds the window below. Zero means no lower bound.
+	Since time.Time
+	// Before pages BACKWARD: only rows strictly older than this point.
+	//
+	// ⚠️ Backward paging can miss a row that is written while somebody is
+	// paging, because created_at is stamped in Go before the row is written and
+	// there are no transactions — so a row can land with a timestamp inside a
+	// page that was already fetched. See oplog_cursor.go, which measured this at
+	// about eight per cent under eight concurrent writers.
+	//
+	// It is acceptable HERE and not there, and the difference is worth stating:
+	// there, a forward replay advances its cursor and never looks back, so a
+	// skipped row is skipped permanently and a cache built from it becomes
+	// authoritative over the ledger. Here the reader is a person scrolling into
+	// the past, and reloading the screen starts from now again — so the worst
+	// case is "a call made during your scroll may not appear until you refresh",
+	// which is how every list in every console behaves.
+	Before LogCursor
+}
+
 type AICallLogRepository interface {
 	Add(ctx context.Context, l *AICallLog) error
 	Stats(ctx context.Context) (*AdminStats, error)
+	// List returns matching calls newest first, capped by ListLimit.
+	List(ctx context.Context, f AILogFilter, limit int) ([]AICallLog, error)
+	// Prune deletes calls older than before and returns how many went.
+	//
+	// This table gets one row per model call forever and nothing else deletes
+	// from it — on a deployment doing a few thousand calls a day it is the
+	// fastest-growing table in the database. Retention and the leader gate live
+	// in internal/server/leader.go beside the job_runs prune, which is the same
+	// shape for the same reason.
+	Prune(ctx context.Context, before time.Time) (int64, error)
 }
 
 type RuleRepository interface {

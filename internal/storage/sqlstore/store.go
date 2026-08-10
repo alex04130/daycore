@@ -171,6 +171,11 @@ func (s *Store) Locales() domain.LocaleRepository                 { return local
 func (s *Store) Attachments() domain.AttachmentRepository         { return attachmentRepo{s} }
 func (s *Store) Settings() domain.SettingRepository               { return settingRepo{s} }
 func (s *Store) Roles() domain.RoleRepository                     { return roleRepo{s} }
+
+// Browser is the console's table window. It is NOT a repository — see
+// domain/tables.go for why it sits beside them and why nothing outside the
+// admin handlers may call it.
+func (s *Store) Browser() domain.Browser { return browserRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}
 }

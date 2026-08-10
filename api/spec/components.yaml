@@ -565,6 +565,34 @@ components:
         permissions: { type: array, items: { type: string } }
         members: { type: array, items: { type: string }, description: User ids. }
         admin: { type: boolean, description: Derived; true when permissions is non-empty. }
+    AICallLog:
+      type: object
+      description: One model call. Metadata only — see the ailogs endpoint for why there is no body here.
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        endpoint: { type: string }
+        model: { type: string }
+        promptTokens: { type: integer }
+        compTokens: { type: integer }
+        durationMs: { type: integer }
+        status: { type: string, enum: [ok, error] }
+        error: { type: string, description: Truncated to 300 characters. }
+        requestId: { type: string }
+        createdAt: { type: string, format: date-time }
+    AdminDBTable:
+      type: object
+      description: >-
+        One catalogued table. `class` is what decides who may read it — the
+        author's decision that user content is *assignable* only means something
+        if it can be assigned separately from the operational tables.
+      properties:
+        name: { type: string }
+        class: { type: string, enum: [operational, user_content] }
+        rows: { type: integer, description: '-1 when the count itself failed.' }
+        readable: { type: boolean, description: Whether THIS caller may open it. Listed either way. }
+        deletable: { type: boolean }
+        whyNot: { type: string, description: Why single-row delete has no meaning here. }
     AdminStats:
       type: object
       properties:

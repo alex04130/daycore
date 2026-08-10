@@ -49,7 +49,7 @@ func TestCursorAdvanceSurvivesUnorderedTimestamps(t *testing.T) {
 			}
 
 			seen := map[string]bool{}
-			cursor := domain.OpLogCursor{}
+			cursor := domain.LogCursor{}
 			// One catch-up pass: read from the persisted cursor to exhaustion,
 			// fold everything encountered, then persist whichever cursor this
 			// mode considers safe.
@@ -67,10 +67,10 @@ func TestCursorAdvanceSurvivesUnorderedTimestamps(t *testing.T) {
 						commit = domain.AdvanceCursor(commit, page, now)
 					} else {
 						last := page[len(page)-1]
-						commit = domain.OpLogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+						commit = domain.LogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 					}
 					last := page[len(page)-1]
-					read = domain.OpLogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+					read = domain.LogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 				}
 				cursor = commit
 			}
@@ -99,7 +99,7 @@ func TestCursorAdvanceSurvivesUnorderedTimestamps(t *testing.T) {
 			pass(time.Now().Add(2 * domain.OpLogVisibilityLag))
 
 			var total int
-			var c domain.OpLogCursor
+			var c domain.LogCursor
 			for {
 				page, err := s.OpLogs().Scan(ctx, "s1", c, 500)
 				if err != nil {
@@ -110,7 +110,7 @@ func TestCursorAdvanceSurvivesUnorderedTimestamps(t *testing.T) {
 				}
 				total += len(page)
 				last := page[len(page)-1]
-				c = domain.OpLogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+				c = domain.LogCursor{CreatedAt: last.CreatedAt, ID: last.ID}
 			}
 
 			missed := total - len(seen)

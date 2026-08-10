@@ -441,7 +441,7 @@ func TestRapportStateRoundTrip(t *testing.T) {
 			domain.OpDomainSchedule: {Value: 0.34, Evidence: 5},
 			domain.OpDomainArchive:  {Value: 0.61, Evidence: 12},
 		},
-		Cursor:      domain.OpLogCursor{CreatedAt: cursorAt, ID: "op-99"},
+		Cursor:      domain.LogCursor{CreatedAt: cursorAt, ID: "op-99"},
 		FoldVersion: 1,
 	}
 	if err := s.Rapport().Save(ctx, in); err != nil {
@@ -777,7 +777,7 @@ func TestRapportDiscardsCursorWithAnUnreadableCache(t *testing.T) {
 	if err := s.Rapport().Save(ctx, &domain.RapportState{
 		SessionID: "s1",
 		Scores:    map[string]domain.RapportScore{domain.OpDomainSchedule: {Value: 0.5, Evidence: 3}},
-		Cursor:    domain.OpLogCursor{CreatedAt: time.Now(), ID: "op-99"},
+		Cursor:    domain.LogCursor{CreatedAt: time.Now(), ID: "op-99"},
 	}); err != nil {
 		t.Fatal(err)
 	}

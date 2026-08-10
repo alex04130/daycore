@@ -15,6 +15,15 @@ var (
 	// ErrUnsupportedDBType is returned by storage.Open for an unregistered driver.
 	ErrUnsupportedDBType = errors.New("unsupported database type")
 
+	// ErrUnsupported is returned when an operation is legitimate but this
+	// target cannot do it — Browser.DeleteRow on a table with a composite key,
+	// where "delete row X" has no meaning rather than having failed.
+	//
+	// Distinct from ErrNotFound on purpose: the console turns this one into an
+	// explanation ("这张表没有单行 id"), and turning it into 404 would tell an
+	// operator the row is gone when it is still there.
+	ErrUnsupported = errors.New("unsupported for this target")
+
 	// ErrMissingUpsertKey is returned by UpsertByCanvasID when CanvasID is empty.
 	//
 	// Both courses and assignments carry a UNIQUE index on (session_id,

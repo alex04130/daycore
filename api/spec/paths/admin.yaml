@@ -181,7 +181,54 @@
 /api/admin/stats:
   get: { operationId: adminStats, tags: [admin], security: [{ adminToken: [] }], summary: Dashboard aggregation (incl. feedbackUseful/feedbackTotal)., responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStats' } } } } } }
 /api/admin/ailogs:
-  get: { operationId: adminAILogs, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminAILogs
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: The AI call ledger, newest first.
+    description: >-
+      One row per model call: endpoint, model, token counts, duration, status.
+
+      ⚠️ NO REQUEST OR RESPONSE BODIES, and that is a boundary rather than a gap.
+      The request body of a companion call IS the user's conversation, and
+      ailogs.read promises the opposite ("今天不含对话正文"). If a capture is ever
+      added it belongs behind db.user_content or a permission of its own, never
+      behind this one.
+
+      Paging is KEYSET, not offset: send `beforeAt` and `beforeId` from the
+      previous page's last row (the response hands them back as `nextBeforeAt` /
+      `nextBeforeId`). Both halves are required together — half a cursor pages
+      from an instant with no tie-break, which is what the id exists to prevent.
+      Offset paging over a table that grows at the head repeats and skips rows,
+      which on a ledger reads as the log lying.
+
+      ⚠️ The ledger is PRUNED (see `retentionDays` in the response). Asking for a
+      window older than that returns nothing because the rows are gone, not
+      because nothing happened.
+    parameters:
+      - { name: sessionId, in: query, schema: { type: string } }
+      - { name: endpoint, in: query, schema: { type: string }, description: One of the values in the response's `endpoints`. }
+      - { name: model, in: query, schema: { type: string } }
+      - { name: status, in: query, schema: { type: string, enum: [ok, error] } }
+      - { name: since, in: query, schema: { type: string, format: date-time }, description: RFC3339 lower bound, inclusive. }
+      - { name: beforeAt, in: query, schema: { type: string }, description: 'Cursor half; requires beforeId.' }
+      - { name: beforeId, in: query, schema: { type: string }, description: 'Cursor half; requires beforeAt.' }
+      - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logs: { type: array, items: { $ref: '#/components/schemas/AICallLog' } }
+                endpoints: { type: array, items: { type: string }, description: This build's endpoint vocabulary, for the filter. }
+                retentionDays: { type: integer }
+                nextBeforeAt: { type: string, description: Absent when this page did not fill. }
+                nextBeforeId: { type: string }
+      '400': { description: Bad status, since, or half a cursor. }
+      '403': { $ref: '#/components/responses/Error' }
 /api/admin/users:
   get: { operationId: adminUsers, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
 /api/admin/users/{id}:
@@ -319,17 +366,171 @@
       '404': { description: No such user. }
       '503': { description: 'Degraded: no database.' }
 /api/admin/db/tables:
-  get: { operationId: adminDBTables, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminDBTables
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Every catalogued table, its class, and its row count.
+    description: >-
+      Driven by a written-down catalogue (internal/domain/tables.go), not by
+      runtime introspection. Two reasons: four engines answer "what tables do you
+      have" four slightly different ways, and none of those answers carries the
+      two facts that matter — whether the rows are somebody's diary, and which
+      column must never leave the process.
+
+      A table the caller cannot READ is still listed, with its row count, because
+      "how big is chat_messages" is an operational fact; hiding a table's
+      existence from somebody who can see every other one just looks broken.
+      `rows: -1` means the count itself failed.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tables: { type: array, items: { $ref: '#/components/schemas/AdminDBTable' } }
+      '403': { $ref: '#/components/responses/Error' }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/db/table/{name}:
-  get: { operationId: adminDBBrowse, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminDBBrowse
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: One page of one table, newest first.
+    description: >-
+      ⚠️ The route declares db.operational, which is the WEAKER of the two browse
+      permissions. The handler raises it per table from the catalogue's class —
+      the pattern cannot tell operation_logs from chat_messages. This is the only
+      place in the API where a handler tightens what the route allowed.
+
+      Redacted columns come back as a fixed marker rather than being dropped:
+      `sessions.import_token` is a bearer credential and `credentials.password_hash`
+      is a hash, and the operator still needs to see that the field exists. The
+      `redacted` array names them.
+
+      Boundary — NO filtering, sorting or search, deliberately. Each of those
+      means a caller-supplied identifier or predicate reaching the query, and the
+      catalogue exists so that never happens. Paging is offset here (not keyset,
+      as on the ledger) because a browsed table is not being written to at the
+      head and the operator wants "page 7 of 40".
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      - { name: offset, in: query, schema: { type: integer, default: 0 } }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                table: { type: string }
+                class: { type: string, enum: [operational, user_content] }
+                columns: { type: array, items: { type: string } }
+                rows: { type: array, items: { type: array, items: {} } }
+                total: { type: integer }
+                limit: { type: integer }
+                offset: { type: integer }
+                deletable: { type: boolean }
+                whyNot: { type: string }
+                redacted: { type: array, items: { type: string } }
+      '403': { description: This table's class needs a permission the caller does not hold. }
+      '404': { description: Not a catalogued table. }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/db/table/{name}/{id}:
-  delete: { operationId: adminDBDelete, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: name, in: path, required: true, schema: { type: string } }, { name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+  delete:
+    operationId: adminDBDelete
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Delete one row. Needs db.delete_row AND the table's class permission.
+    description: >-
+      ⚠️ Bypasses every business rule and writes NOTHING to the undo ledger.
+      There is no compensation to record because the browser does not know what
+      the row meant. It is logged at warn level in the process log, which is the
+      only trace it leaves.
+
+      Ten of the catalogued tables have composite keys and refuse with 409 rather
+      than 404 — the row is still there, "delete row X" simply has no meaning.
+      Two of those (roles, role_members) would additionally break an invariant a
+      proper endpoint maintains, and say so in `message`.
+    parameters:
+      - { name: name, in: path, required: true, schema: { type: string } }
+      - { name: id, in: path, required: true, schema: { type: string } }
+    responses:
+      '200': { description: OK }
+      '403': { $ref: '#/components/responses/Error' }
+      '404': { description: No such table, or no such row. }
+      '409': { description: This table has no single-row key. }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/db/export:
-  get: { operationId: adminDBExport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminDBExport
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: The catalogue as JSON. A snapshot, NOT a backup.
+    description: >-
+      ⚠️ Exports the OPERATIONAL half and SKIPS the user-content half unless the
+      caller also holds db.user_content — the skipped names come back in
+      `skippedUserTables`. Anything else would make db.export a way around the
+      split: one click and somebody with only db.operational has every
+      conversation in the deployment on a disk. Redacted columns stay redacted.
+
+      ⚠️ NOT a consistent backup. There are no transactions anywhere in the
+      storage layer, so tables are read one after another and a write landing
+      between two of them appears in one and not the other. The note travels
+      inside the file, because the file outlives the screen that produced it.
+      For a real backup use the engine's own tool.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                exportedAt: { type: string, format: date-time }
+                version: { type: string }
+                note: { type: string }
+                skippedUserTables: { type: array, items: { type: string } }
+                tables: { type: object, additionalProperties: { type: array, items: { type: object } } }
+      '403': { $ref: '#/components/responses/Error' }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/db/import:
-  post: { operationId: adminDBImport, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  post:
+    operationId: adminDBImport
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Always 501, with the reason and the alternative.
+    description: >-
+      ⚠️ NOT a stub awaiting an implementation. It used to answer 200 `{"ok":true}`
+      while doing nothing, so somebody restoring a deployment got a success
+      message and an empty database.
+
+      Refused because importing means overwriting tables a live process is
+      reading and writing, and there are no transactions in this storage layer —
+      a half-applied import leaves a database that is neither the old data nor
+      the new. The honest path is a fresh deployment via `daycore install`.
+    responses:
+      '501': { description: Import is not available; the message says what to do instead. }
+      '403': { $ref: '#/components/responses/Error' }
 /api/admin/db/backup:
-  get: { operationId: adminDBBackup, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK } } }
+  get:
+    operationId: adminDBBackup
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Always 501, naming the right tool per engine.
+    description: >-
+      No database file download on any engine, including SQLite. Copying a live
+      SQLite file byte-for-byte while a write is in flight produces a corrupt
+      file with the difference sitting in the WAL beside it — `sqlite3 .backup`
+      exists because that is a real problem. Rather than four half-answers, one
+      honest one: sqlite3 .backup / pg_dump / mysqldump / mongodump.
+    responses:
+      '501': { description: Not available; the message names the tool to use. }
+      '403': { $ref: '#/components/responses/Error' }
 /api/admin/providers:
   get:
     operationId: adminProvidersGet

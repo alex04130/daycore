@@ -67,7 +67,7 @@ func scanOpLog(scan func(dest ...any) error) (*domain.OperationLog, error) {
 // it. The keyset predicate (created_at, id) is what makes paging safe here:
 // created_at is milliseconds, ties are ordinary, and OFFSET paging over an
 // append-only table would drift as new rows land mid-replay.
-func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.OpLogCursor, limit int) ([]domain.OperationLog, error) {
+func (r opLogRepo) Scan(ctx context.Context, sessionID string, after domain.LogCursor, limit int) ([]domain.OperationLog, error) {
 	if limit <= 0 {
 		limit = 500
 	}
