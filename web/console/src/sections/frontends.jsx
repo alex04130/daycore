@@ -40,6 +40,8 @@ export function Frontends({ onUnauthorized, principal }) {
     >
       {state.data && (
         <>
+          <ThemeKinds canManage={canManage} onUnauthorized={onUnauthorized} />
+
           <Notice kind="info" title="握手是不带凭据的">
             前端第一次连上来时手里还没有任何凭据，所以 <code>POST /api/version</code> 必须是开放的。
             代价是：能连到这台服务器的东西都能建一个 family、也能给一个没钉住的 family
@@ -383,6 +385,150 @@ function Backfill({ family: f, limits, canManage, onChanged }) {
         </>
       )}
       {err && <Notice kind="error">{err}</Notice>}
+    </div>
+  );
+}
+
+// The third tier: a validation rule somebody proposed, and a person deciding.
+//
+// # ⚠️ What approving does NOT do
+//
+// It does not make a value safe. The character floor runs before any kind is
+// consulted and again on every leaf of a combinator, so an approved wide-open
+// pattern is still wide open INSIDE a safe alphabet. What it agrees to is a
+// MEANING — a pattern is a promise about what a token may hold, and stored
+// themes are validated against it from then on.
+//
+// Saying that plainly on the screen is the difference between an operator who
+// reads the regex and one who clicks because the dialog looked alarming and
+// they wanted it to go away.
+//
+// # Why it lives on this screen and not its own
+//
+// A kind is proposed BY a family, and the operator's question is "this frontend
+// needs this — do I agree". A separate nav entry that is empty on almost every
+// deployment reads as a broken screen.
+function ThemeKinds({ canManage, onUnauthorized }) {
+  const load = useCallback(() => api.getThemeKinds(), []);
+  // ⚠️ onUnauthorized threaded through like every other section: a credential
+  // that expired while this panel was open must bounce to the login screen, not
+  // render a red box inside a screen that still looks signed in.
+  const { reload, data, error } = useSection(load, { onUnauthorized });
+  const [err, setErr] = useState('');
+  if (!data) return null;
+
+  const set = (name, patch) => api.setThemeKind(name, patch).then(reload, (e) => setErr(e.message));
+  const pending = data.kinds.filter((k) => !k.approved);
+  const approved = data.kinds.filter((k) => k.approved);
+
+  return (
+    <>
+      {error && <Notice kind="error">{error}</Notice>}
+      {err && <Notice kind="error">{err}</Notice>}
+
+      {pending.length > 0 && (
+        <div className="row">
+          <div className="row-main">
+            <div className="row-title">
+              <strong>等你看一眼的校验规则</strong>
+              <span className="pill warn">{pending.length}</span>
+            </div>
+            <div className="sub">
+              前端说它需要一种这个部署没有的取值类型，并附上了正则。
+              <b>它现在什么都没在校验</b> —— 声明了这个类型的 token 也被暂时挡在 family 外面，
+              直到你同意。上限 {data.maxPending} 条，因为握手是不带凭据的。
+            </div>
+            {pending.map((k) => (
+              <KindRow key={k.name} kind={k} canManage={canManage} set={set} onChanged={reload} setErr={setErr} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {approved.length > 0 && (
+        <div className="row">
+          <div className="row-main">
+            <div className="row-title">
+              <strong>已批准的校验规则</strong>
+              <span className="pill">{approved.length}</span>
+            </div>
+            <div className="sub">
+              这些是存在库里的第三档。内置的六种和 <code>THEME_KINDS_DIR</code> 里的不在这份清单上 ——
+              下面那行「当前生效」才是这个部署实际拿来校验的全部。
+            </div>
+            {approved.map((k) => (
+              <KindRow key={k.name} kind={k} canManage={canManage} set={set} onChanged={reload} setErr={setErr} />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function KindRow({ kind: k, canManage, set, onChanged, setErr }) {
+  return (
+    <div className="field">
+      <div className="field-label">
+        <code>{k.name}</code>
+        {k.approved && k.inForce && <span className="pill">生效中</span>}
+        {/* ⚠️ Approved and NOT in force is a real state: the pattern stopped
+            compiling or grew past the bound and the loader skipped it. It is
+            the state an operator most needs to see, and the one a single
+            "approved" tick hides. */}
+        {k.approved && !k.inForce && (
+          <span className="pill warn" title="它被批准了，但加载不进去 —— 多半是正则编不过或者太长。现在没有任何东西按它校验。">
+            批了但没生效
+          </span>
+        )}
+        {k.shadows && (
+          <span className="pill warn" title={`这条会盖住 ${k.shadows} 那一层同名的定义。批准它是「改掉一个已有的类型」，不是「加一个新的」。`}>
+            覆盖 {k.shadows}
+          </span>
+        )}
+      </div>
+      <div className="field-value">
+        <pre className="key-value">{k.pattern}</pre>
+        {k.description && <div className="sub">{k.description}</div>}
+        <div className="usage-line">
+          {k.proposedBy ? (
+            <span>由 <code>{k.proposedBy}</code> 提出</span>
+          ) : (
+            <span className="muted">运维自己加的</span>
+          )}
+          <span>{k.createdAt ? k.createdAt.slice(0, 10) : '—'}</span>
+        </div>
+        {canManage && (
+          <div className="row-actions">
+            {k.approved ? (
+              <Confirm
+                word={k.name}
+                label="撤回批准"
+                danger="撤回之后，声明这个类型的 token 立刻不再能通过校验 —— 是立刻，不用重启。已经存下来的主题不会被改，但下一次写会被拒。"
+                onConfirm={() => set(k.name, { approved: false })}
+              />
+            ) : (
+              <Confirm
+                word={k.name}
+                label="批准"
+                danger={
+                  '⚠️ 先把上面那段正则读一遍。批准之后，所有声明这个类型的取值都按它校验，立刻生效。\n\n' +
+                  '批准不等于「安全」—— 字符底线（禁 url( 、换行、花括号等）永远在跑，跟这条正则说什么无关。' +
+                  '你同意的是「意思」：这个 token 允许长成什么样。' +
+                  (k.shadows ? '\n\n⚠️ 这条会盖住 ' + k.shadows + ' 那一层的同名定义，所以这是「改掉一个已有类型」。' : '')
+                }
+                onConfirm={() => set(k.name, { approved: true })}
+              />
+            )}
+            <Confirm
+              word={k.name}
+              label="删掉"
+              danger="删掉之后这一行就没了，包括是谁提的。想留着以后再批的话用「撤回批准」。"
+              onConfirm={() => api.deleteThemeKind(k.name).then(onChanged, (e) => setErr(e.message))}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

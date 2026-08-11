@@ -83,7 +83,16 @@ var Settings = []Setting{
 	{Env: "PROMPTS_DIR", Field: "PromptsDir", Layer: LayerBoot,
 		Why: "templates and the hard boundaries are overlaid at startup"},
 	{Env: "THEME_KINDS_DIR", Field: "ThemeKindsDir", Layer: LayerBoot,
-		Why: "主题取值 kind 的文件层，启动时读一次合进注册表；改完要重启。加一种 kind 是丢一个 JSON 文件，不是发一次版"},
+		// ⚠️ Still boot-layer, and deliberately so, after the third tier landed
+		// (2026-08-11). The DB layer IS hot — approving a kind takes effect
+		// without a restart — but the registry keeps `base` (embedded + file,
+		// built once) and `db` (replaced wholesale) in separate maps, so the hot
+		// path rebuilds only the second. That is what stops an unrelated console
+		// approval from silently also loading whatever changed in this directory
+		// since boot. It is also the ONLY way to redefine a built-in primitive
+		// (the console refuses on purpose), so keeping it here means that class
+		// of change is always a deliberate deployment.
+		Why: "主题取值 kind 的文件层，启动时读一次合进注册表；改完要重启。加一种 kind 是丢一个 JSON 文件，不是发一次版。第三档（DB 层）可以热改，但只重建 DB 那一层 —— 见 docs/specs/frontend-manifest.md"},
 	{Env: "LOCALES_DIR", Field: "LocalesDir", Layer: LayerBoot,
 		Why: "language packs are loaded into the catalog at startup"},
 	{Env: "MODELS_CONFIG", Field: "ModelsConfigPath", Layer: LayerBoot,

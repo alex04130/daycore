@@ -206,6 +206,15 @@ export const startBackfill = (id) =>
 export const stopBackfill = (id) =>
 	request(`/frontends/families/${encodeURIComponent(id)}/backfill`, { method: 'DELETE' });
 
+// The third tier. ⚠️ Approving does not make values safe — the character floor
+// runs whatever the pattern says. It agrees to a MEANING: stored themes are
+// validated against this regex from now on.
+export const getThemeKinds = () => request('/theme-kinds');
+export const setThemeKind = (name, patch) =>
+	request(`/theme-kinds/${encodeURIComponent(name)}`, { method: 'PUT', body: patch });
+export const deleteThemeKind = (name) =>
+	request(`/theme-kinds/${encodeURIComponent(name)}`, { method: 'DELETE' });
+
 export const getUsers = () => request('/users');
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');

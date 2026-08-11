@@ -121,19 +121,108 @@ const MaxValueLen = 256
 
 // Registry is the set of kinds this deployment accepts.
 //
-// Safe for concurrent use: it is read on every theme write and rebuilt when the
-// database layer changes.
+// # ⚠️ Two maps, not one, and the reason is DELETION
+//
+//	base   embedded then file. Built once at boot, never replaced.
+//	db     the third tier, replaced WHOLESALE by SetDBKinds.
+//
+// Merge is additive and cannot remove a kind — which is exactly right for a
+// floor that must never disappear, and exactly wrong for a layer an operator
+// edits. With one map, "the operator deleted a kind" could only take effect on
+// restart, so a kind revoked because its pattern turned out to be too loose
+// would keep validating writes until somebody redeployed.
+//
+// Splitting them also means a bad database layer cannot destroy the file layer:
+// SetDBKinds replaces only `db`, and a row that will not compile is skipped
+// while everything else lands.
+//
+// Same shape as i18n.Catalog (embedded / files / db) for the same reasons.
+//
+// Safe for concurrent use: read on every theme write, replaced when an operator
+// approves or revokes.
 type Registry struct {
-	mu    sync.RWMutex
-	kinds map[string]Kind
+	mu   sync.RWMutex
+	base map[string]Kind
+	db   map[string]Kind
 }
 
 // NewRegistry returns a registry holding only the embedded floor.
 func NewRegistry() *Registry {
-	r := &Registry{kinds: map[string]Kind{}}
+	r := &Registry{base: map[string]Kind{}, db: map[string]Kind{}}
 	r.Merge(EmbeddedKinds(), OriginEmbedded)
 	return r
 }
+
+// lookup resolves a name through the layers, newest first. Caller holds the
+// read lock.
+func (r *Registry) lookup(name string) (Kind, bool) {
+	if k, ok := r.db[name]; ok {
+		return k, true
+	}
+	k, ok := r.base[name]
+	return k, ok
+}
+
+// SetDBKinds replaces the third tier wholesale.
+//
+// ⚠️ Wholesale, like i18n.Catalog.SetOverrides, so the caller MUST pass every
+// approved row rather than a page — a partial read would silently revoke kinds,
+// and a revoked kind makes every theme declaring it fail with "unknown kind",
+// which reads as data loss.
+//
+// A row that will not compile is reported and skipped; the rest still land. The
+// alternative — refusing the whole layer — would let one bad row an operator
+// approved months ago block an unrelated one they need today.
+func (r *Registry) SetDBKinds(kinds []Kind) []error {
+	next := map[string]Kind{}
+	var problems []error
+	for _, k := range kinds {
+		compiled, err := compileKind(k, OriginDB)
+		if err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		next[compiled.Name] = compiled
+	}
+	r.mu.Lock()
+	r.db = next
+	r.mu.Unlock()
+	return problems
+}
+
+// compileKind validates and compiles one kind for one layer.
+func compileKind(k Kind, origin string) (Kind, error) {
+	if k.Name == "" || k.Pattern == "" {
+		return k, fmt.Errorf("kind %q has no name or no pattern", k.Name)
+	}
+	if isCombinator(k.Name) {
+		// Combinators are parsed, not stored. Letting one be redefined here
+		// would mean two ways to answer the same question, and the stored one
+		// would silently win.
+		return k, fmt.Errorf("%q is a combinator and cannot be defined as a kind", k.Name)
+	}
+	if len(k.Pattern) > MaxStoredPattern {
+		return k, fmt.Errorf("kind %q: pattern is %d characters; the limit is %d",
+			k.Name, len(k.Pattern), MaxStoredPattern)
+	}
+	re, err := regexp.Compile(anchor(k.Pattern))
+	if err != nil {
+		return k, fmt.Errorf("kind %q: %w", k.Name, err)
+	}
+	k.re = re
+	k.Origin = origin
+	return k, nil
+}
+
+// MaxStoredPattern bounds a pattern that arrived as data.
+//
+// ⚠️ Go's regexp is RE2, which does not backtrack — so a hostile pattern cannot
+// blow up exponentially the way it could on a backtracking engine. That removes
+// the catastrophic case, NOT the linear one: RE2 costs O(len(input) × program
+// size), and this program runs against every theme value on every write. The
+// bound is about that, and about a pattern nobody can read being a pattern
+// nobody can review.
+const MaxStoredPattern = 512
 
 // Merge adds or replaces kinds from one layer.
 //
@@ -146,25 +235,19 @@ func (r *Registry) Merge(kinds []Kind, origin string) []error {
 	defer r.mu.Unlock()
 	var problems []error
 	for _, k := range kinds {
-		if k.Name == "" || k.Pattern == "" {
-			problems = append(problems, fmt.Errorf("kind %q has no name or no pattern", k.Name))
-			continue
-		}
-		if isCombinator(k.Name) {
-			// Combinators are parsed, not stored. Letting one be redefined here
-			// would mean two ways to answer the same question, and the stored one
-			// would silently win.
-			problems = append(problems, fmt.Errorf("%q is a combinator and cannot be defined as a kind", k.Name))
-			continue
-		}
-		re, err := regexp.Compile(anchor(k.Pattern))
+		compiled, err := compileKind(k, origin)
 		if err != nil {
-			problems = append(problems, fmt.Errorf("kind %q: %w", k.Name, err))
+			problems = append(problems, err)
 			continue
 		}
-		k.re = re
-		k.Origin = origin
-		r.kinds[k.Name] = k
+		// ⚠️ Merge writes the BASE layer. The database layer is replaced
+		// wholesale by SetDBKinds and never merged into, or a deleted row would
+		// survive until the next restart.
+		if origin == OriginDB {
+			r.db[compiled.Name] = compiled
+			continue
+		}
+		r.base[compiled.Name] = compiled
 	}
 	return problems
 }
@@ -189,13 +272,77 @@ func anchor(p string) string {
 	return "^(?:" + p + ")$"
 }
 
+// CompileCheck reports whether a pattern would compile as a kind — the same
+// anchoring the registry applies, so a caller can refuse a pattern before it
+// reaches an operator's screen rather than after they approve it.
+func CompileCheck(pattern string) (*regexp.Regexp, error) {
+	if len(pattern) > MaxStoredPattern {
+		return nil, fmt.Errorf("pattern is %d characters; the limit is %d", len(pattern), MaxStoredPattern)
+	}
+	return regexp.Compile(anchor(pattern))
+}
+
+// PlainKindName reports whether a name is a well-formed kind name — a name a
+// row could actually be stored under, as opposed to a combinator expression or
+// something with punctuation in it.
+//
+// ⚠️ Narrower than the kind-EXPRESSION charset on purpose. An expression may
+// contain `[`, `<`, `,` and spaces because combinators need them; a stored
+// name may not, because a stored name that looked like a combinator would be
+// unreachable — resolve() parses the combinator and never consults the map.
+func PlainKindName(name string) bool {
+	return name != "" && len(name) <= MaxKindNameLen && plainKindNameRe.MatchString(name)
+}
+
+// MaxKindNameLen keeps a stored name short enough to be an indexed VARCHAR on
+// MySQL, and short enough to read on a screen.
+const MaxKindNameLen = 64
+
+var plainKindNameRe = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
+// OriginOf reports which layer a known kind came from, or "" if unknown.
+//
+// ⚠️ Exists so the console can say "this approved row is being shadowed" or
+// "this approved row is what is actually in force". A screen that showed only
+// the stored rows would describe the table rather than the deployment.
+func (r *Registry) OriginOf(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	k, ok := r.lookup(name)
+	if !ok {
+		return ""
+	}
+	return k.Origin
+}
+
+// BaseOrigin reports which layer would define this name if the database layer
+// did not — "" when nothing below would.
+//
+// The console uses it to tell an operator that approving this row REDEFINES
+// something, which is a different decision from adding something.
+func (r *Registry) BaseOrigin(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	k, ok := r.base[name]
+	if !ok {
+		return ""
+	}
+	return k.Origin
+}
+
 // Names returns every kind, sorted, for the console and for the AI's type list.
 func (r *Registry) Names() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]string, 0, len(r.kinds))
-	for n := range r.kinds {
-		out = append(out, n)
+	out := make([]string, 0, len(r.base)+len(r.db))
+	seen := map[string]bool{}
+	for _, m := range []map[string]Kind{r.db, r.base} {
+		for n := range m {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
 	}
 	sort.Strings(out)
 	return out
@@ -205,9 +352,18 @@ func (r *Registry) Names() []string {
 func (r *Registry) All() []Kind {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	out := make([]Kind, 0, len(r.kinds))
-	for _, k := range r.kinds {
-		out = append(out, k)
+	out := make([]Kind, 0, len(r.base)+len(r.db))
+	seen := map[string]bool{}
+	// db first, so a kind an operator approved shadows the file or embedded one
+	// it redefines — which is what "the last layer wins" means, expressed as a
+	// lookup order rather than as an overwrite.
+	for _, m := range []map[string]Kind{r.db, r.base} {
+		for n, k := range m {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, k)
+			}
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -249,7 +405,7 @@ func (r *Registry) Describe(kind string) string {
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	k, ok := r.kinds[kind]
+	k, ok := r.lookup(kind)
 	if !ok {
 		return ""
 	}
@@ -339,7 +495,7 @@ func (r *Registry) validate(kind, value string) error {
 	}
 
 	r.mu.RLock()
-	k, ok := r.kinds[kind]
+	k, ok := r.lookup(kind)
 	r.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown kind %q", kind)
@@ -429,7 +585,7 @@ func (r *Registry) resolve(kind string) error {
 		return r.resolve(kind[len("nullable<") : len(kind)-1])
 	}
 	r.mu.RLock()
-	_, ok := r.kinds[kind]
+	_, ok := r.lookup(kind)
 	r.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("unknown kind %q", kind)

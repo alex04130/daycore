@@ -269,6 +269,13 @@ func run(logger *slog.Logger) error {
 		if err := srv.ReloadLocaleOverrides(context.Background()); err != nil {
 			logger.Warn("could not load locale overrides; falling back to files and embedded", "err", err)
 		}
+		// The kind registry's database layer, for the same reason and with the
+		// same failure policy: the embedded floor and THEME_KINDS_DIR still
+		// validate every theme write, so a table that cannot be read is a
+		// deployment missing its third tier, not one that must refuse to start.
+		if err := srv.ReloadThemeKinds(context.Background()); err != nil {
+			logger.Warn("could not load the theme kind database layer; falling back to files and embedded", "err", err)
+		}
 	}
 
 	// Everything below reads or writes rows on a timer. In degraded mode it would

@@ -282,3 +282,104 @@ func TestAKindExpressionCannotCarryAPayload(t *testing.T) {
 		t.Errorf("an ordinary one-of stopped working: %v", err)
 	}
 }
+
+// The database layer is REPLACED, not merged into — which is the only way a
+// revoked kind can stop validating without a restart.
+//
+// ⚠️ Merge is additive by design: the embedded floor must never disappear. That
+// is exactly wrong for a layer an operator edits, so the two live in separate
+// maps. Without the split, a kind revoked because its pattern turned out to be
+// too loose would keep accepting values until somebody redeployed.
+func TestRevokingADatabaseKindTakesEffectWithoutARestart(t *testing.T) {
+	r := NewRegistry()
+	r.SetDBKinds([]Kind{
+		{Name: "spring", Pattern: `[0-9.]+ [0-9.]+`},
+		{Name: "grain", Pattern: `[0-9]+`},
+	})
+	if !r.Known("spring") || !r.Known("grain") {
+		t.Fatal("the database layer did not land")
+	}
+
+	// The operator revokes one. The new layer is everything that is left.
+	r.SetDBKinds([]Kind{{Name: "grain", Pattern: `[0-9]+`}})
+	if r.Known("spring") {
+		t.Error("a revoked kind is still known; it will keep validating writes until a restart")
+	}
+	if !r.Known("grain") {
+		t.Error("revoking one kind took another down with it")
+	}
+	if err := r.Validate("spring", "1 2"); err == nil {
+		t.Error("a revoked kind still validates values")
+	}
+
+	// An empty layer is a real state — the operator revoked the last one.
+	r.SetDBKinds(nil)
+	if r.Known("grain") {
+		t.Error("an empty database layer left a kind behind")
+	}
+	// ⚠️ …and the floor survives it. A deployment whose `color` vanished would
+	// reject every theme write with "unknown kind", which reads as data loss.
+	if !r.Known("color") || r.Validate("color", "#fff") != nil {
+		t.Error("emptying the database layer took the embedded floor with it")
+	}
+}
+
+// A bad database row is skipped; the file layer and the rest of the database
+// layer survive it.
+func TestOneBadDatabaseRowDoesNotTakeTheLayerDown(t *testing.T) {
+	r := NewRegistry()
+	r.Merge([]Kind{{Name: "paper", Pattern: `[a-z]+`}}, OriginFile)
+
+	problems := r.SetDBKinds([]Kind{
+		{Name: "broken", Pattern: `([a-z`},
+		{Name: "fine", Pattern: `[0-9]+`},
+		{Name: "enormous", Pattern: strings.Repeat("a", MaxStoredPattern+1)},
+	})
+	if len(problems) != 2 {
+		t.Errorf("got %d problems, want the broken one and the enormous one: %v", len(problems), problems)
+	}
+	if r.Known("broken") || r.Known("enormous") {
+		t.Error("a row that could not compile was registered anyway")
+	}
+	if !r.Known("fine") {
+		t.Error("one bad row took a good one down with it")
+	}
+	// ⚠️ The file layer is a different map, so the database layer cannot destroy
+	// it — the whole reason the two are separate.
+	if !r.Known("paper") {
+		t.Error("a bad database layer destroyed the file layer")
+	}
+}
+
+// The database layer wins over the file and embedded layers, and All reports
+// which layer each kind came from.
+func TestTheDatabaseLayerShadowsTheOnesBelowIt(t *testing.T) {
+	r := NewRegistry()
+	r.Merge([]Kind{{Name: "length", Pattern: `[0-9]+px`}}, OriginFile)
+	r.SetDBKinds([]Kind{{Name: "length", Pattern: `[0-9]+rem`}})
+
+	if err := r.Validate("length", "2rem"); err != nil {
+		t.Errorf("the database definition is not in force: %v", err)
+	}
+	if err := r.Validate("length", "12px"); err == nil {
+		t.Error("the file definition is still in force underneath the database one")
+	}
+	var found int
+	for _, k := range r.All() {
+		if k.Name == "length" {
+			found++
+			if k.Origin != OriginDB {
+				t.Errorf("length reports origin %q, want %q", k.Origin, OriginDB)
+			}
+		}
+	}
+	if found != 1 {
+		t.Errorf("length appears %d times in All(); a shadowed kind must not be listed twice", found)
+	}
+	// Revoking the database one falls back to the file one rather than to
+	// nothing — layers, not a stack that pops empty.
+	r.SetDBKinds(nil)
+	if err := r.Validate("length", "12px"); err != nil {
+		t.Errorf("revoking the database kind did not fall back to the file layer: %v", err)
+	}
+}

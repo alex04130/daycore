@@ -348,6 +348,9 @@ var routePermissions = map[string]string{
 	// act on this deployment, so it is its own permission — and putting one into
 	// a group that carries permissions ADDITIONALLY needs roles.edit, checked in
 	// the handler for the same reason it is for people.
+	"GET /api/admin/theme-kinds":                    PermFrontendsRead,
+	"PUT /api/admin/theme-kinds/{name}":             PermFrontendsManage,
+	"DELETE /api/admin/theme-kinds/{name}":          PermFrontendsManage,
 	"GET /api/admin/frontends":                      PermFrontendsRead,
 	"PUT /api/admin/frontends/families/{id}":        PermFrontendsManage,
 	"DELETE /api/admin/frontends/families/{id}":     PermFrontendsManage,

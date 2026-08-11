@@ -40,7 +40,7 @@
 | `DATA_DIR` | `DataDir` |  | the blob driver opened it and holds it |
 | `BLOB_STORE` | `BlobStore` |  | selects a driver; the Store is constructed once |
 | `PROMPTS_DIR` | `PromptsDir` |  | templates and the hard boundaries are overlaid at startup |
-| `THEME_KINDS_DIR` | `ThemeKindsDir` |  | 主题取值 kind 的文件层，启动时读一次合进注册表；改完要重启。加一种 kind 是丢一个 JSON 文件，不是发一次版 |
+| `THEME_KINDS_DIR` | `ThemeKindsDir` |  | 主题取值 kind 的文件层，启动时读一次合进注册表；改完要重启。加一种 kind 是丢一个 JSON 文件，不是发一次版。第三档（DB 层）可以热改，但只重建 DB 那一层 —— 见 docs/specs/frontend-manifest.md |
 | `LOCALES_DIR` | `LocalesDir` |  | language packs are loaded into the catalog at startup |
 | `MODELS_CONFIG` | `ModelsConfigPath` |  | the catalog is parsed once into provider instances |
 | `OAUTH_CONFIG` | `OAuthConfigPath` |  | providers are constructed once, with their redirect URIs baked in |

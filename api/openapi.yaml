@@ -1327,6 +1327,86 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
   /api/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/admin/theme-kinds:
+    get:
+      operationId: adminThemeKinds
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: The third tier — validation rules stored as data, and which are waiting on a person.
+      description: >-
+        ⚠️ `inForce` on a row is NOT the same as `approved`. A row can be approved
+        and still not be validating anything, because its pattern stopped
+        compiling or grew past the bound and the loader skipped it. That state —
+        approved with nothing enforcing it — is the one an operator most needs to
+        see, and the one a single boolean hides.
+
+        `shadows` names the layer this row overrides ("embedded" / "file"), so an
+        operator can tell "adding something" from "redefining something".
+
+        The top-level `inForce` array is what the deployment actually validates
+        against right now, whatever the layer. The stored rows and the running
+        rules are not the same list.
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database. The embedded six and THEME_KINDS_DIR are still in force.' }
+  /api/admin/theme-kinds/{name}:
+    put:
+      operationId: adminSetThemeKind
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Approve, revoke, or write a validation rule.
+      description: >-
+        ⚠️ Approving does NOT make values safe — the character floor runs before
+        any kind is consulted and again on every leaf of a combinator, so an
+        approved wide-open pattern is still wide open INSIDE a safe alphabet. What
+        it agrees to is a MEANING: a pattern is a promise about what a token may
+        hold, and stored themes are validated against it.
+
+        ⚠️ Approval is bound to the TEXT. A frontend re-proposing a different
+        pattern revokes it automatically; otherwise a build gets `^[0-9]+$`
+        approved and ships `.*` the following week with the flag still set. An
+        OPERATOR editing the pattern does not self-revoke — they are the approver.
+
+        ⚠️ The name may not be a combinator or a built-in primitive. An operator
+        MAY redefine a primitive, but only through THEME_KINDS_DIR — a file on the
+        machine they already have. Doing it from a web form would let a stolen
+        console session widen `color` for every theme on the deployment,
+        retroactively, in one request.
+
+        Fields are three-state: omitted means "leave alone".
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pattern: { type: string }
+                description: { type: string }
+                approved: { type: boolean }
+      responses:
+        '200': { description: OK }
+        '400': { description: Bad name, or a pattern that will not compile. }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+    delete:
+      operationId: adminDeleteThemeKind
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Remove a validation rule entirely.
+      description: >-
+        ⚠️ Deleting an APPROVED kind stops every token declaring it from
+        validating. Not refused — an operator who needs a bad pattern gone needs
+        it gone — but revoking (`approved: false`) is the gentler act and keeps
+        the row and its attribution for when they want it back.
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: No such kind. }
+        '503': { description: 'Degraded: no database.' }
   /api/admin/frontends:
     get:
       operationId: adminFrontends

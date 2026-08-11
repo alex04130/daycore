@@ -204,6 +204,16 @@ func (mysqlDialect) Migrations() []string {
 			last_seen_at BIGINT NOT NULL,
 			KEY frontend_builds_family (family_id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS theme_kinds (
+			name VARCHAR(64) PRIMARY KEY,
+			pattern VARCHAR(512) NOT NULL,
+			description VARCHAR(255),
+			approved TINYINT(1) NOT NULL DEFAULT 0,
+			proposed_by VARCHAR(191),
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL,
+			KEY theme_kinds_approved (approved)
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key VARCHAR(191) NOT NULL,
 			locale VARCHAR(64) NOT NULL,

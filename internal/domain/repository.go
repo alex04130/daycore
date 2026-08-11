@@ -40,6 +40,11 @@ type Store interface {
 	Rhythm() RhythmRepository
 	Locales() LocaleRepository
 
+	// ThemeKinds is the third tier of the theme kind system: a validation rule
+	// that arrived as data. See theme_kind.go for what approval gates and, more
+	// importantly, what it does not.
+	ThemeKinds() ThemeKindRepository
+
 	// Settings is the runtime half of the configuration layering: the boot half
 	// stays in the environment because it built something already. See
 	// setting.go and internal/config/layer.go.

@@ -139,6 +139,12 @@ var Tables = []Table{
 		NotDeletableWhy: "删组要连成员一起删（见 domain/role.go），只删定义会让重名的新组静默恢复一批人的权限。走用户与权限那一屏"},
 	{Name: "frontend_families", Class: TableOperational, OrderBy: "created_at", KeyColumn: "id"},
 	{Name: "frontend_builds", Class: TableOperational, OrderBy: "first_seen_at", KeyColumn: "build_hash"},
+	// ⚠️ Deletable from here, deliberately, even though there is a screen for
+	// it. The screen refuses to delete an APPROVED kind that tokens still
+	// declare — this is the escape hatch for the case that screen cannot help
+	// with: a pattern that turned out to be wrong on a deployment whose console
+	// is the thing it broke.
+	{Name: "theme_kinds", Class: TableOperational, OrderBy: "created_at", KeyColumn: "name"},
 	{Name: "pairings", Class: TableOperational, OrderBy: "created_at", KeyColumn: "id",
 		// ⚠️ The hash is a verifier, not a secret to steal — but it is still the
 		// only thing standing between a leaked row and an attached console, and

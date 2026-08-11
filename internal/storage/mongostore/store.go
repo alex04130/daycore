@@ -109,6 +109,8 @@ func (s *Store) Rapport() domain.RapportRepository    { return rapportRepo{s} }
 func (s *Store) Rhythm() domain.RhythmRepository      { return rhythmRepo{s} }
 func (s *Store) Locales() domain.LocaleRepository     { return localeRepo{s} }
 
+func (s *Store) ThemeKinds() domain.ThemeKindRepository { return themeKindRepo{s} }
+
 // ε — the ownership half of the file bus.
 func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRepo{s} }
 

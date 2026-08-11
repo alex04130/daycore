@@ -9,6 +9,7 @@
     "DELETE /api/admin/pairings/{id} adminDeletePairing",
     "DELETE /api/admin/roles/{name} adminDeleteRole",
     "DELETE /api/admin/session adminLogout",
+    "DELETE /api/admin/theme-kinds/{name} adminDeleteThemeKind",
     "DELETE /api/admin/users/{id} adminDeleteUser",
     "DELETE /api/channels/{channel}/unbind unbindChannel",
     "DELETE /api/chat/threads/{id} deleteThread",
@@ -41,6 +42,7 @@
     "GET /api/admin/roles adminRoles",
     "GET /api/admin/session adminWhoAmI",
     "GET /api/admin/stats adminStats",
+    "GET /api/admin/theme-kinds adminThemeKinds",
     "GET /api/admin/usage adminUsage",
     "GET /api/admin/users adminUsers",
     "GET /api/assignments listAssignments",
@@ -143,6 +145,7 @@
     "PUT /api/admin/prompts/{key} adminSetPrompt",
     "PUT /api/admin/providers adminProvidersPut",
     "PUT /api/admin/roles/{name} adminSetRole",
+    "PUT /api/admin/theme-kinds/{name} adminSetThemeKind",
     "PUT /api/admin/users/{id}/owner adminSetOwner",
     "PUT /api/admin/users/{id}/roles adminSetUserRoles",
     "PUT /api/temp-context putTempContext"

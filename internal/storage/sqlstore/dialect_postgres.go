@@ -211,6 +211,15 @@ func (postgresDialect) Migrations() []string {
 			last_seen_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS frontend_builds_family ON frontend_builds(family_id)`,
+		`CREATE TABLE IF NOT EXISTS theme_kinds (
+			name TEXT PRIMARY KEY,
+			pattern TEXT NOT NULL,
+			description TEXT,
+			approved INTEGER NOT NULL DEFAULT 0,
+			proposed_by TEXT,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key TEXT NOT NULL,
 			locale TEXT NOT NULL,
@@ -226,6 +235,7 @@ func (postgresDialect) Migrations() []string {
 		`CREATE INDEX IF NOT EXISTS job_runs_session_started ON job_runs(session_id, started_at)`,
 		`CREATE INDEX IF NOT EXISTS job_runs_status_started ON job_runs(status, started_at)`,
 		`CREATE INDEX IF NOT EXISTS locale_overrides_locale ON locale_overrides(locale)`,
+		`CREATE INDEX IF NOT EXISTS theme_kinds_approved ON theme_kinds(approved)`,
 		`CREATE TABLE IF NOT EXISTS companion_memory (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL UNIQUE,

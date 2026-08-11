@@ -153,6 +153,7 @@ var cases = []suiteCase{
 	{"Pairing/RoundTripRolesAndThrottledLastSeen", pairingRoundTrip},
 	{"Frontend/FamilyUnionAndBuildFamilyStickiness", frontendRoundTrip},
 	{"Theme/ScopedToFamilyAndDefaultedOnWrite", themeFamilyScope},
+	{"ThemeKind/ApprovalRoundTripAndPendingCount", themeKindRoundTrip},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -3554,5 +3555,125 @@ func themeFamilyScope(t *testing.T, h Harness) {
 	}
 	if page, _ := repo.ScanFamily(ctx, "never-a-family", "", 10); len(page) != 0 {
 		t.Errorf("ScanFamily on an unknown family returned %d rows", len(page))
+	}
+}
+
+// The third tier: a validation rule stored as data, and the approval that gates
+// it.
+//
+// ⚠️ The field this case exists for is Approved. Only approved rows are merged
+// into the running registry, so a backend that lost the flag on a round trip
+// would either install a pattern nobody agreed to, or refuse to install one
+// somebody did — and neither reports anything. Everything else here is ordinary
+// round-tripping.
+func themeKindRoundTrip(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	repo := s.ThemeKinds()
+
+	if got, err := repo.List(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("a fresh store has %d kinds (err=%v); want none", len(got), err)
+	}
+	if n, err := repo.CountPending(ctx); err != nil || n != 0 {
+		t.Fatalf("CountPending on a fresh store: %d (err=%v)", n, err)
+	}
+
+	// A frontend proposes one. Unapproved, and attributed.
+	proposed := domain.ThemeKind{
+		Name: "spring", Pattern: `[0-9.]+ [0-9.]+`,
+		Description: "两个数：刚度 和 阻尼", ProposedBy: "liuli",
+	}
+	if err := repo.Upsert(ctx, proposed); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.Get(ctx, "spring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Pattern != proposed.Pattern || got.Description != proposed.Description {
+		t.Errorf("round trip: %+v", got)
+	}
+	if got.Approved {
+		t.Error("a proposed kind came back APPROVED; it would be installed without anybody agreeing")
+	}
+	if got.ProposedBy != "liuli" {
+		t.Errorf("proposedBy round-tripped as %q — six months later this column is the only answer to \"why does this deployment have a spring kind\"", got.ProposedBy)
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Error("a kind was stored with no timestamps")
+	}
+
+	// A second, so ordering and counting have something to be wrong about.
+	if err := repo.Upsert(ctx, domain.ThemeKind{Name: "grain", Pattern: `[0-9]+`}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := repo.CountPending(ctx); n != 2 {
+		t.Errorf("CountPending = %d, want 2 — the ceiling on unauthenticated proposals reads this", n)
+	}
+
+	// The operator approves one.
+	got.Approved = true
+	if err := repo.Upsert(ctx, *got); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := repo.Get(ctx, "spring")
+	if !after.Approved {
+		t.Fatal("approval did not stick; the kind can never be installed")
+	}
+	if after.ProposedBy != "liuli" {
+		t.Errorf("approving it lost the attribution: %q", after.ProposedBy)
+	}
+	if n, _ := repo.CountPending(ctx); n != 1 {
+		t.Errorf("CountPending = %d after one approval, want 1", n)
+	}
+
+	// List returns both, ordered by name, so two deployments with the same rows
+	// produce the same screen and the same merge order.
+	all, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 || all[0].Name != "grain" || all[1].Name != "spring" {
+		t.Fatalf("List is not name-ordered: %+v", all)
+	}
+	// ⚠️ List returns UNAPPROVED rows too. The console needs them — the pending
+	// ones are the entire point of the screen — and the caller filters.
+	approved := 0
+	for _, k := range all {
+		if k.Approved {
+			approved++
+		}
+	}
+	if approved != 1 {
+		t.Errorf("%d of 2 rows are approved; List must not filter", approved)
+	}
+
+	// Revoking is an ordinary write of the same row, not a delete: the pattern
+	// and its attribution survive so an operator can approve it again without
+	// the frontend re-proposing it.
+	after.Approved = false
+	if err := repo.Upsert(ctx, *after); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := repo.Get(ctx, "spring"); again.Approved || again.Pattern != proposed.Pattern {
+		t.Errorf("revoking lost the row's contents: %+v", again)
+	}
+
+	if err := repo.Delete(ctx, "spring"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Get(ctx, "spring"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Get after Delete returned %v, want ErrNotFound", err)
+	}
+	// Deleting one that is not there is not an error: two operators pressing the
+	// same button must not give the second a red screen.
+	if err := repo.Delete(ctx, "never-a-kind"); err != nil {
+		t.Errorf("deleting an absent kind reported %v", err)
+	}
+	if _, err := repo.Get(ctx, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("Get(\"\") returned %v, want ErrNotFound", err)
+	}
+	if err := repo.Upsert(ctx, domain.ThemeKind{Pattern: `x`}); !errors.Is(err, domain.ErrMissingUpsertKey) {
+		t.Errorf("Upsert with no name returned %v, want ErrMissingUpsertKey", err)
 	}
 }

@@ -110,6 +110,10 @@ var (
 		"zh-CN": "这个部署上的 family 已经到上限了。这个端点在任何凭据之前就可用，所以它有上限 —— 去控制台清理不再连接的，或者把要留的钉住。",
 		"en-US": "This deployment is at its family limit. This endpoint is reachable before any credential exists, so it is capped — clean up the ones nothing connects with, or pin the ones you mean to keep.",
 	})
+	keyHandshakeTooManyKinds = i18n.Reg("handshake.too_many_kinds", i18n.Text{
+		"zh-CN": "一次提议的 kind 太多了。这个端点在任何凭据之前就可用，所以它有上限。",
+		"en-US": "Too many kinds proposed at once. This endpoint is reachable before any credential exists, so it is capped.",
+	})
 	keyHandshakeDegraded = i18n.Reg("handshake.degraded", i18n.Text{
 		"zh-CN": "数据库不可用，握手记不下来。GET /api/version 仍然可用。",
 		"en-US": "The database is unavailable, so a handshake cannot be recorded. GET /api/version still works.",
@@ -128,6 +132,12 @@ type manifestToken struct {
 	Description string `json:"description"`
 }
 
+type manifestKind struct {
+	Name        string `json:"name"`
+	Pattern     string `json:"pattern"`
+	Description string `json:"description"`
+}
+
 type handshakeBody struct {
 	FamilyID    string `json:"familyId"`
 	BuildHash   string `json:"buildHash"`
@@ -137,6 +147,16 @@ type handshakeBody struct {
 	Theme       struct {
 		Tokens []manifestToken `json:"tokens"`
 		Rules  string          `json:"rules"`
+		// Kinds is the THIRD TIER: validation rules this frontend needs and
+		// this deployment has never heard of.
+		//
+		// ⚠️ Proposing is not installing. A proposed kind is stored UNAPPROVED,
+		// is not merged into the registry, and validates nothing until an
+		// operator reads the pattern and agrees. Tokens declaring it are left
+		// out of the family in the meantime and reported back in
+		// `pendingKinds`, so the frontend knows why one of its variables is
+		// missing rather than discovering it as a rendering bug.
+		Kinds []manifestKind `json:"kinds"`
 	} `json:"theme"`
 }
 
@@ -155,31 +175,22 @@ func (s *Server) handleHandshake(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, http.StatusBadRequest, "bad_family", i18n.T(keyHandshakeBadFamily, locale))
 		return
 	}
+	// ⚠️ The ARRAY is bounded here, separately from MaxProposedKinds.
+	//
+	// That constant caps how many rows may exist; it does not cap WORK. Each
+	// proposal costs a regex compile and a database read before the row cap can
+	// refuse it, so a hundred thousand of them in one unauthenticated request is
+	// a hundred thousand compiles and reads — the ceiling holding perfectly
+	// while the request runs for a minute. A cap on rows is not a cap on cost,
+	// and on an endpoint reachable before any credential exists both are needed.
+	if len(body.Theme.Kinds) > domain.MaxProposedKinds {
+		s.writeErr(w, http.StatusBadRequest, "too_many_kinds", i18n.T(keyHandshakeTooManyKinds, locale))
+		return
+	}
 	if len(body.Theme.Tokens) > domain.MaxFamilyTokens {
 		s.writeErr(w, http.StatusBadRequest, "too_many_tokens", i18n.T(keyHandshakeTooManyTokens, locale))
 		return
 	}
-	// Validate the DECLARATION before anything is stored. A family whose token
-	// space half-applied would be worse than one that refused: the frontend
-	// would think it succeeded and the missing half would surface as "unknown
-	// variable" on the first theme write.
-	declared := make([]domain.TokenSpec, 0, len(body.Theme.Tokens))
-	for _, t := range body.Theme.Tokens {
-		name := strings.TrimSpace(t.Name)
-		if !tokenNameRe.MatchString(name) {
-			s.writeErr(w, http.StatusBadRequest, "bad_token", i18n.T(keyHandshakeBadToken, locale)+name)
-			return
-		}
-		kind := strings.TrimSpace(t.Kind)
-		if !s.themeKinds.Known(kind) {
-			s.writeErr(w, http.StatusBadRequest, "unknown_kind", i18n.T(keyHandshakeBadKind, locale)+kind)
-			return
-		}
-		declared = append(declared, domain.TokenSpec{
-			Name: name, Kind: kind, Description: cleanManifestText(t.Description, domain.MaxTokenDescription),
-		})
-	}
-
 	out := s.versionPayload(r)
 	if s.store == nil {
 		// Degraded: nothing to record against. The version half is still the
@@ -194,6 +205,45 @@ func (s *Server) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// The third tier arrives before the tokens are judged, because a token may
+	// legitimately declare a kind this very request is proposing.
+	pendingKinds := s.recordProposedKinds(ctx, body.FamilyID, body.Theme.Kinds)
+
+	// Validate the DECLARATION before anything is stored. A family whose token
+	// space half-applied would be worse than one that refused: the frontend
+	// would think it succeeded and the missing half would surface as "unknown
+	// variable" on the first theme write.
+	declared := make([]domain.TokenSpec, 0, len(body.Theme.Tokens))
+	deferred := []string{}
+	for _, t := range body.Theme.Tokens {
+		name := strings.TrimSpace(t.Name)
+		if !tokenNameRe.MatchString(name) {
+			s.writeErr(w, http.StatusBadRequest, "bad_token", i18n.T(keyHandshakeBadToken, locale)+name)
+			return
+		}
+		kind := strings.TrimSpace(t.Kind)
+		if !s.themeKinds.Known(kind) {
+			// ⚠️ A kind this request PROPOSED is not an error — it is the third
+			// tier working. The token is held back (nothing could validate its
+			// values yet) and named in the response, so the frontend can say
+			// "waiting for the operator" instead of rendering a variable that
+			// silently never arrives.
+			//
+			// A kind that is neither known nor proposed is still a hard refusal:
+			// unknown means nothing would check the values that follow.
+			if pendingKinds[kind] {
+				deferred = append(deferred, name)
+				continue
+			}
+			s.writeErr(w, http.StatusBadRequest, "unknown_kind", i18n.T(keyHandshakeBadKind, locale)+kind)
+			return
+		}
+		declared = append(declared, domain.TokenSpec{
+			Name: name, Kind: kind, Description: cleanManifestText(t.Description, domain.MaxTokenDescription),
+		})
+	}
+
 	fam, err := s.store.Frontends().GetFamily(ctx, body.FamilyID)
 	if err != nil && err != domain.ErrNotFound {
 		s.log.Error("handshake family", "err", err)
@@ -273,6 +323,10 @@ func (s *Server) handleHandshake(w http.ResponseWriter, r *http.Request) {
 	out["newTokens"] = newTokens
 	out["handshakeRecorded"] = true
 	out["pendingThemeBackfill"] = s.countThemesMissingTokens(ctx, newTokens)
+	// The third tier's answer: which kinds are waiting on a person, and which
+	// tokens are held back until then.
+	out["pendingKinds"] = sortedKeys(pendingKinds)
+	out["deferredTokens"] = deferred
 	s.writeJSON(w, http.StatusOK, out)
 }
 

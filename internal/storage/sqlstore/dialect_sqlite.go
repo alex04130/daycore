@@ -195,6 +195,16 @@ func (sqliteDialect) Migrations() []string {
 			last_seen_at BIGINT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS frontend_builds_family ON frontend_builds(family_id)`,
+		`CREATE TABLE IF NOT EXISTS theme_kinds (
+			name TEXT PRIMARY KEY,
+			pattern TEXT NOT NULL,
+			description TEXT,
+			approved INTEGER NOT NULL DEFAULT 0,
+			proposed_by TEXT,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS theme_kinds_approved ON theme_kinds(approved)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key TEXT NOT NULL,
 			locale TEXT NOT NULL,

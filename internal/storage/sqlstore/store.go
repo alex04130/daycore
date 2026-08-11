@@ -168,9 +168,11 @@ func (s *Store) JobRuns() domain.JobRunRepository                 { return jobRu
 func (s *Store) Rapport() domain.RapportRepository                { return rapportRepo{s} }
 func (s *Store) Rhythm() domain.RhythmRepository                  { return rhythmRepo{s} }
 func (s *Store) Locales() domain.LocaleRepository                 { return localeRepo{s} }
-func (s *Store) Attachments() domain.AttachmentRepository         { return attachmentRepo{s} }
-func (s *Store) Settings() domain.SettingRepository               { return settingRepo{s} }
-func (s *Store) Roles() domain.RoleRepository                     { return roleRepo{s} }
+
+func (s *Store) ThemeKinds() domain.ThemeKindRepository   { return themeKindRepo{s} }
+func (s *Store) Attachments() domain.AttachmentRepository { return attachmentRepo{s} }
+func (s *Store) Settings() domain.SettingRepository       { return settingRepo{s} }
+func (s *Store) Roles() domain.RoleRepository             { return roleRepo{s} }
 
 // Browser is the console's table window. It is NOT a repository — see
 // domain/tables.go for why it sits beside them and why nothing outside the
