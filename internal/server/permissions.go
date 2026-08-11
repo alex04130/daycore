@@ -94,6 +94,16 @@ const (
 	// in this list, and here the split is unusually easy to justify: the LIST
 	// alone names every external system with access, which somebody auditing
 	// needs and somebody attaching a new one does not.
+	// The frontends attached to this deployment: their theme token spaces, the
+	// builds connecting, and the two decisions an operator makes about them.
+	//
+	// Split read/manage like every other pair here, and the split earns itself:
+	// managing means PINNING a token space (the answer to the handshake being
+	// unauthenticated) and APPROVING a frontend's own prompt fragment into the
+	// model. Reading is looking at a list of variable names.
+	PermFrontendsRead   = "frontends.read"
+	PermFrontendsManage = "frontends.manage"
+
 	PermPairingsRead   = "pairings.read"
 	PermPairingsManage = "pairings.manage"
 
@@ -207,6 +217,10 @@ func init() {
 		"把用户放进不带任何管理员权限的组、或移出来。这是卖套餐那个动作；碰到带权限的组时还要 roles.edit")
 	registerPerm(PermRolesEdit,
 		"⚠️ 改一个组能做什么。**等同于超级管理员** —— 谁有这个，谁就能把自己加进一个全权限的组。授予它和把人设成 owner 是同一个决定")
+	registerPerm(PermFrontendsRead,
+		"看有哪些前端在连这个部署：family、各自的 build、以及它们声明的主题 token 空间")
+	registerPerm(PermFrontendsManage,
+		"钉住一个 family 的 token 空间、批准前端自带的主题提示词、把 build 挪 family、删掉没人用的 family。⚠️ 批准提示词等于让前端提供的文本进入模型")
 	registerPerm(PermPairingsRead,
 		"看有哪些外部控制台接在这个部署上：名字、所在的组、上次用是什么时候。看不到钥匙 —— 钥匙只在发出来那一刻存在过")
 	registerPerm(PermPairingsManage,
@@ -334,6 +348,11 @@ var routePermissions = map[string]string{
 	// act on this deployment, so it is its own permission — and putting one into
 	// a group that carries permissions ADDITIONALLY needs roles.edit, checked in
 	// the handler for the same reason it is for people.
+	"GET /api/admin/frontends":                      PermFrontendsRead,
+	"PUT /api/admin/frontends/families/{id}":        PermFrontendsManage,
+	"DELETE /api/admin/frontends/families/{id}":     PermFrontendsManage,
+	"PUT /api/admin/frontends/builds/{hash}/family": PermFrontendsManage,
+
 	"GET /api/admin/pairings":            PermPairingsRead,
 	"POST /api/admin/pairings":           PermPairingsManage,
 	"PUT /api/admin/pairings/{id}/roles": PermPairingsManage,

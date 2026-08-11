@@ -1,10 +1,12 @@
 # 前端 manifest 与主题协议（v1）
 
-> 状态：**kind 体系 + 两层身份 + 握手已落地（2026-08-10，F7-A/B）**。
+> 状态：**kind 体系 + 两层身份 + 握手 + 运维那一屏已落地（2026-08-10，F7-A/B/C）**。
 >
 > 能用的：`internal/theme` 的三档 kind 体系与字符底线、`THEME_KINDS_DIR` 文件层、`frontend_families` / `frontend_builds` 两张表、`POST /api/version` 握手（token 空间取并集、kind 冲突报 409、rules 存而不用、运维的 family 归属不会被握手覆盖）。
 >
-> 还没有的：**按 family 的主题存储**（`custom_themes.family_id`，所以今天的主题仍然挂在那份写死的 13 条 token 上）、补算作业、以及控制台里那一屏（批准 rules、批准第三档 pattern、把 build 挪 family、钉住 family）。DB 层的 kind 也等那一屏。
+> 也能用的（F7-C）：主题读写**按调用方的 family 判定**（`X-Frontend-Build` 请求头解析出 build → family；不带头或 build 不认识就落到内置兜底 family，所以现役前端行为一字未变）、控制台「前端」一屏（钉住 family / 批准 rules / 把 build 挪 family / 删 family）。
+>
+> 还没有的：**按 family 的主题存储**（`custom_themes.family_id`，所以主题今天仍然是全局一份，只是**校验**已经按 family 走了）、补算作业、DB 层的 kind 与第三档 pattern 的审批入口。
 >
 > 给**写前端的人**看的 —— 包括第三方前端、以及同一系列的不同平台（琉璃可以有 web、app、嵌入式）。
 >
@@ -178,6 +180,27 @@ PATCH /api/session                {"currentTheme": "<themeId>"}  当前主题，
 
 **当前主题按 family 分开存**（`SessionPrefs` 的 `{familyID: themeID}`）—— 桌面用琉璃、手机用汀 是常态。
 
+## 运维那一屏（`GET /api/admin/frontends` 等四条）
+
+握手是**不带凭据**的 —— 第一次连上来的前端手里还没有任何凭据，这条路不开放它就走不通。代价说清楚：**能连到这台服务器的东西都能建一个 family，也能给一个没钉住的 family 加新 token**。
+
+答案不是「给握手加个凭据」（第一次接触的前端拿不到），而是**上限 + 一个人看一眼**：
+
+| 路由 | 权限 | 它让人做的那个决定 |
+|---|---|---|
+| `GET /api/admin/frontends` | `frontends.read` | 有哪些 family、各自的 token 空间、哪些 build 在连、哪些 build 的 family 已经没了（`orphans`） |
+| `PUT /api/admin/frontends/families/{id}` | `frontends.manage` | **钉住**（冻结 token 空间）/ **批准 rules**（让前端那段文字进模型）/ 改显示名 |
+| `DELETE /api/admin/frontends/families/{id}` | `frontends.manage` | 删掉一个 family，**还有 build 指着它就拒**（409，并列出是哪些） |
+| `PUT /api/admin/frontends/builds/{hash}/family` | `frontends.manage` | 把一个 build 挪进另一个 family —— `familyId` 可被运维覆盖的全部理由 |
+
+**三态字段，不是布尔**：`PUT` 的三个字段都可省，省了就是「别动它」。只能表达「设成 false」的界面，会在每一次改名时无声地把 family 解钉 —— 而解钉不是错误，它只是「这个 family 又可以被任何人加 token 了」，没有任何东西会报。
+
+**响应带 `kinds` 与 `limits`**：kind 是数据（`THEME_KINDS_DIR` 能加），所以运维看到 `--glass-alpha: ratio` 时，ratio 允许什么必须跟着这份响应一起来，控制台不能自带一份。上限同理 —— 那是「未认证握手」与「无限行」之间唯一的那道墙，讲这个取舍的屏幕不能把数字说错。
+
+⚠️ **删 family 不删它名下的主题**。那些是用户数据，可能有几千条，一次误点不该把它们带走。所以服务端只拦「还有 build 在连」这种运维看得见的情况，剩下的写在按钮旁边由人来判断。同理 `DeleteFamily` **不级联删 build** —— `orphans` 那一栏正是靠这些活下来的行，才有东西可显示。
+
+**`orphans` 显示而不隐藏**：它们是「有人在还有东西连着的时候删了一个 family」仅有的痕迹。藏起来只会让人对着一个不见了的前端发呆。
+
 ## 没有传输规范，这是有意的
 
 适配层是**后端调出去**，前端是**前端调进来**。所以这里没有子进程、没有 `format`、没有生命周期 —— 硬塞一段传输规范只会让人以为前端也要写成适配器。前端只需要一个 HTTP 客户端。
@@ -186,7 +209,8 @@ PATCH /api/session                {"currentTheme": "<themeId>"}  当前主题，
 
 - **主题的暗色处理**：`dark` 现在是一个布尔，四端里有的需要「跟随系统」第三态。
 - **`builtins` 的更新语义**：新 build 改了某个内置主题的取值，已经选了它的用户看到的是旧值还是新值，未定。
-- **family 的所有权**：第一个声明 `liuli` 的 build 定义它的 token 空间；运维 pin 之后才不可被覆盖。名字抢占的防护未定。
+- **family 的所有权**：第一个声明 `liuli` 的 build 定义它的 token 空间；运维钉住之后才不可被覆盖。名字抢占**在钉住之前**没有防护，这是已知且有意接受的 —— 见上一节。
+- **`X-Frontend-Build` 不是凭据**，只是「我是哪个 build」。伪造它换来的是「按另一个 family 的 token 空间校验主题」，那不是一个能拿来干什么的能力，所以这里不做认证。
 
 ---
 

@@ -766,7 +766,9 @@ s.d.Quote(…)              → 方言自己的引号
 - `internal/search` —— 硬编码 `if TavilyKey != "" { Tavily } else { DuckDuckGo }`，**无注册表**，物理上无法增删搜索通道。
 - `internal/channels` —— 有 `Registry`，但 `cmd/daycore/main.go:141` 是 OneBot 硬编码单例，且**拿 `ONEBOT_WS_URL` 是否为空来决定要不要启动 Worker** —— 后果是没绑通道的用户，节律学习、定时 auto-plan、20h 关怀全都不跑。这是既有缺陷，落地节律后会非常显眼。
 
-运维控制台（`design-ui/liuli/admin/`，8 个分区，**留在主仓库不做独立子仓库**）依赖的 `PUT /api/admin/{config,models,oauth}`、`POST /api/admin/models/test`、`restart-ack` 目前**全部不存在**；已有的只有 prompts / stats / ailogs / users / db 五组。
+运维控制台**留在主仓库不做独立子仓库**（它与后端版本强绑定，同仓同版本发布最省事；只有四个用户端前端需要独立的版本节奏）。
+
+✅ **上面这段「端点全部不存在」已经过时**（2026-08-10）：`web/console` 已实现，十一个分区全部有真后端，见 [ROADMAP.md](ROADMAP.md) F5。分区数比原型的 8 个多出三个，因为后来的批次自己长出了需求 —— 集群配对、前端 family、能力源。
 
 ## 目标：外部能力走 HTTP 适配器，不再改代码
 

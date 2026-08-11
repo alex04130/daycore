@@ -13,7 +13,7 @@ func TestValidateThemeVariables(t *testing.T) {
 		"--surface": "rgba(255,255,255,0.72)",
 		"--bg-end":  "hsl(210, 40%, 96%)",
 	}
-	if err := srv.validateThemeVariables(ok); err != nil {
+	if _, err := srv.validateThemeVariables(fallbackFamily(), ok); err != nil {
 		t.Fatalf("valid variables rejected: %v", err)
 	}
 
@@ -27,7 +27,7 @@ func TestValidateThemeVariables(t *testing.T) {
 		{"--primary": "linear-gradient(#fff, #000)"},
 	}
 	for i, vars := range bad {
-		if err := srv.validateThemeVariables(vars); err == nil {
+		if _, err := srv.validateThemeVariables(fallbackFamily(), vars); err == nil {
 			t.Fatalf("case %d: invalid variables accepted: %v", i, vars)
 		}
 	}
@@ -35,7 +35,7 @@ func TestValidateThemeVariables(t *testing.T) {
 
 func TestSanitizeThemeVariables(t *testing.T) {
 	srv := &Server{themeKinds: theme.NewRegistry()}
-	clean, dropped := srv.sanitizeThemeVariables(map[string]string{
+	clean, dropped := srv.sanitizeThemeVariables(fallbackFamily(), map[string]string{
 		"--primary":  " #f472b6 ", // trimmed
 		"--evil":     "#fff",
 		"--bg-start": "expression(alert(1))",
@@ -51,7 +51,7 @@ func TestSanitizeThemeVariables(t *testing.T) {
 func TestBuiltinPresetsAreValid(t *testing.T) {
 	srv := &Server{themeKinds: theme.NewRegistry()}
 	for id, preset := range builtinThemePresets {
-		if err := srv.validateThemeVariables(preset.Variables); err != nil {
+		if _, err := srv.validateThemeVariables(fallbackFamily(), preset.Variables); err != nil {
 			t.Fatalf("builtin %s fails its own whitelist: %v", id, err)
 		}
 		if len(preset.Variables) != len(themeVarWhitelist) {

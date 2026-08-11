@@ -99,6 +99,30 @@ func (r frontendRepo) UpsertFamily(ctx context.Context, f domain.FrontendFamily)
 	return err
 }
 
+func (r frontendRepo) DeleteFamily(ctx context.Context, id string) error {
+	_, err := r.c("frontend_families").DeleteOne(ctx, bson.M{"_id": id})
+	return err
+}
+
+func (r frontendRepo) GetBuild(ctx context.Context, hash string) (*domain.FrontendBuild, error) {
+	if hash == "" {
+		return nil, domain.ErrNotFound
+	}
+	var d buildDoc
+	err := r.c("frontend_builds").FindOne(ctx, bson.M{"_id": hash}).Decode(&d)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &domain.FrontendBuild{
+		BuildHash: d.BuildHash, FamilyID: d.FamilyID, DisplayName: d.DisplayName,
+		Version: d.Version, MinAPI: d.MinAPI,
+		FirstSeenAt: fromMillis(d.FirstSeenAt), LastSeenAt: fromMillis(d.LastSeenAt),
+	}, nil
+}
+
 func (r frontendRepo) ListBuilds(ctx context.Context) ([]domain.FrontendBuild, error) {
 	cur, err := r.c("frontend_builds").Find(ctx, bson.M{},
 		options.Find().SetSort(bson.D{{Key: "family_id", Value: 1}, {Key: "first_seen_at", Value: 1}}))

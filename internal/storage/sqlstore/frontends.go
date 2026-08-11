@@ -103,6 +103,25 @@ func (r frontendRepo) UpsertFamily(ctx context.Context, f domain.FrontendFamily)
 	return err
 }
 
+func (r frontendRepo) DeleteFamily(ctx context.Context, id string) error {
+	_, err := r.exec(ctx, `DELETE FROM frontend_families WHERE id = ?`, id)
+	return err
+}
+
+func (r frontendRepo) GetBuild(ctx context.Context, hash string) (*domain.FrontendBuild, error) {
+	if hash == "" {
+		return nil, domain.ErrNotFound
+	}
+	b, err := r.getBuild(ctx, hash)
+	if err == sql.ErrNoRows {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
 func (r frontendRepo) ListBuilds(ctx context.Context) ([]domain.FrontendBuild, error) {
 	rows, err := r.query(ctx, `SELECT `+buildCols+` FROM frontend_builds ORDER BY family_id, first_seen_at`)
 	if err != nil {

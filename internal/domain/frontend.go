@@ -134,7 +134,17 @@ type FrontendRepository interface {
 	// invite two writers each merging against a different starting point.
 	UpsertFamily(ctx context.Context, f FrontendFamily) error
 
+	// DeleteFamily removes a family. The caller decides whether that is safe —
+	// see the admin handler, which refuses while builds still point at it.
+	DeleteFamily(ctx context.Context, id string) error
+
 	ListBuilds(ctx context.Context) ([]FrontendBuild, error)
+	// GetBuild resolves one build, or ErrNotFound.
+	//
+	// ⚠️ On the theme read/write path (a request naming its build in a header),
+	// so it is one indexed read. Resolving it by scanning ListBuilds would make
+	// every theme request cost the whole table.
+	GetBuild(ctx context.Context, buildHash string) (*FrontendBuild, error)
 	// SeenBuild records a handshake: creates the build on first sight, and
 	// afterwards only moves LastSeenAt — and only when it is already stale.
 	//

@@ -3341,4 +3341,45 @@ func frontendRoundTrip(t *testing.T, h Harness) {
 	if !after[0].LastSeenAt.Equal(before[0].LastSeenAt) {
 		t.Error("a sighting inside the staleness window still wrote; every page load is a write")
 	}
+
+	// ── GetBuild: one indexed read, because it is on the theme path ─────────
+	//
+	// ⚠️ Every theme read and write resolves the caller's build from a header.
+	// Doing that by scanning ListBuilds would make each of those requests cost
+	// the whole table, so the interface has a point read and all four backends
+	// must implement it — including the ErrNotFound, which is what makes an
+	// unknown build fall back to the built-in token space instead of failing.
+	one, err := repo.GetBuild(ctx, "web-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.FamilyID != "ting" || one.Version != "4.2.0" {
+		t.Errorf("GetBuild disagrees with ListBuilds: %+v", one)
+	}
+	if _, err := repo.GetBuild(ctx, "never-built"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetBuild on an unknown build returned %v, want ErrNotFound", err)
+	}
+
+	// ── DeleteFamily ────────────────────────────────────────────────────────
+	//
+	// ⚠️ It does NOT cascade to the builds. The admin handler refuses while any
+	// build still points at a family, so a delete that got this far means none
+	// do — and if the store deleted builds anyway, a family deleted by mistake
+	// would take the record of what was connecting to it down as well. The
+	// orphan list in the console exists precisely because these rows outlive
+	// their family.
+	if err := repo.DeleteFamily(ctx, "liuli"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.GetFamily(ctx, "liuli"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetFamily after DeleteFamily returned %v, want ErrNotFound", err)
+	}
+	if left, _ := repo.ListBuilds(ctx); len(left) != 1 {
+		t.Errorf("deleting a family took %d builds with it", 1-len(left))
+	}
+	// Deleting one that is not there is not an error: two operators clicking the
+	// same button must not produce a red screen for the second.
+	if err := repo.DeleteFamily(ctx, "never-a-family"); err != nil {
+		t.Errorf("deleting an absent family reported %v", err)
+	}
 }

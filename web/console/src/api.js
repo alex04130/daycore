@@ -184,6 +184,18 @@ export const setPairingFull = (id, full) =>
 export const deletePairing = (id) =>
 	request(`/pairings/${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+export const getFrontends = () => request('/frontends');
+
+// ⚠️ Three-state: an omitted field means "leave alone". Sending the whole object
+// back would unpin a family every time somebody renamed one, and unpinning is
+// not an error — it is just a family anybody can widen again, silently.
+export const setFrontendFamily = (id, patch) =>
+	request(`/frontends/families/${encodeURIComponent(id)}`, { method: 'PUT', body: patch });
+export const deleteFrontendFamily = (id) =>
+	request(`/frontends/families/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const setBuildFamily = (hash, familyId) =>
+	request(`/frontends/builds/${encodeURIComponent(hash)}/family`, { method: 'PUT', body: { familyId } });
+
 export const getUsers = () => request('/users');
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');

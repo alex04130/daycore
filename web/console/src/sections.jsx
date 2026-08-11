@@ -21,6 +21,7 @@
 import { AILogs } from './sections/ailogs.jsx';
 import { Config } from './sections/config.jsx';
 import { DB } from './sections/db.jsx';
+import { Frontends } from './sections/frontends.jsx';
 import { Overview } from './sections/overview.jsx';
 import { Pairings } from './sections/pairings.jsx';
 import { Placeholder } from './sections/placeholder.jsx';
@@ -36,6 +37,7 @@ export const SECTIONS = [
   { id: 'oauth', label: '第三方登录', view: Placeholder, need: 'oauth.read' },
   { id: 'prompts', label: '提示词', view: Prompts, need: 'prompts.read' },
   { id: 'ai-logs', label: 'AI 日志', view: AILogs, need: 'ailogs.read' },
+  { id: 'frontends', label: '前端', view: Frontends, need: 'frontends.read' },
   { id: 'users', label: '用户与权限', view: Users, need: 'users.read' },
   { id: 'pairings', label: '集群与外部控制台', view: Pairings, need: 'pairings.read' },
   { id: 'db', label: '数据库', view: DB, need: 'db.operational' },

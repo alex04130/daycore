@@ -1228,6 +1228,102 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
   /api/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /api/admin/frontends:
+    get:
+      operationId: adminFrontends
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Every frontend family, its theme token space, and the builds connecting.
+      description: >-
+        The operator's side of the handshake. `orphans` are builds whose family no
+        longer exists — shown rather than hidden, because they are the only trace
+        of a family somebody deleted while something was still connecting.
+
+        `kinds` is what this deployment can validate, so a token declared as
+        `ratio` can be read next to what a ratio is allowed to be.
+        `fallbackFamilyId` names the built-in token space a frontend that has not
+        handshaken is judged against.
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/frontends/families/{id}:
+    put:
+      operationId: adminSetFamily
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Pin a token space, approve a frontend's theme rules, or rename.
+      description: >-
+        ⚠️ PINNING is the answer to the handshake being unauthenticated: an
+        unpinned family can be widened by anybody who can reach the server, and
+        pinning freezes its token space.
+
+        ⚠️ APPROVING RULES lets the frontend's own prompt fragment reach the model.
+        Until then the backend generates a mechanical one from the token list, so
+        the feature works and the injection surface is zero. Re-sending different
+        rules revokes approval automatically — a build cannot approve its own.
+
+        Fields are three-state: omitted means "leave alone". A console that could
+        only send booleans would silently unpin a family every time somebody
+        renamed one.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName: { type: string }
+                pinned: { type: boolean }
+                rulesAccepted: { type: boolean }
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: No such family. }
+        '503': { description: 'Degraded: no database.' }
+    delete:
+      operationId: adminDeleteFamily
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Remove a family. Refused while builds still point at it.
+      description: >-
+        ⚠️ It does NOT delete the themes stored against it — those are session data
+        and there may be thousands. The refusal covers the case an operator can
+        see (a build still connecting); the console says what deleting leaves
+        behind for the case they cannot.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { description: Builds still point at this family. }
+        '503': { description: 'Degraded: no database.' }
+  /api/admin/frontends/builds/{hash}/family:
+    put:
+      operationId: adminMoveBuild
+      tags: [admin]
+      security: [{ adminToken: [] }]
+      summary: Move a build into another family, so it inherits that family's themes.
+      description: >-
+        This is the whole reason `familyId` is overridable. ⚠️ The handshake
+        deliberately does not undo it: a build's next startup declares the family
+        it was built with, and the stored assignment wins.
+
+        The target family must exist. Moving a build into one that does not is how
+        a build becomes invisible — it would vanish from every family's list and
+        appear only among the orphans, with nothing saying why.
+      parameters: [{ name: hash, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [familyId], properties: { familyId: { type: string } } }
+      responses:
+        '200': { description: OK }
+        '400': { description: Malformed familyId. }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { description: No such build, or no such target family. }
+        '503': { description: 'Degraded: no database.' }
   /api/admin/pairings:
     get:
       operationId: adminPairings
