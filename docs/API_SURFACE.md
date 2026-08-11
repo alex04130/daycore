@@ -6,7 +6,7 @@
 >
 > 三件事由测试兜住，不靠自觉（`internal/server/routes_test.go`）：本表与代码一致、**代码与 `api/openapi.yaml` 双向一致**（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复。REST 细节（请求/响应 schema）以 `api/openapi.yaml` 为准 —— 但**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**，openapi.yaml 是生成物，手改会被覆盖。
 >
-> 当前 **135 条路由 / 33 个组**。
+> 当前 **136 条路由 / 34 个组**。
 
 <!-- BEGIN GENERATED ROUTES -->
 ## admin (config)（2 条）
@@ -237,6 +237,12 @@
 | `GET /api/materials/{id}` | handlers_materials_full.go |
 | `PATCH /api/materials/{id}` | handlers_materials_full.go |
 | `DELETE /api/materials/{id}` | handlers_materials_full.go |
+
+## meta（1 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `POST /api/version` | handlers_handshake.go |
 
 ## moods（4 条）
 

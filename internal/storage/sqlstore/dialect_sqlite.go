@@ -170,6 +170,26 @@ func (sqliteDialect) Migrations() []string {
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS frontend_families (
+			id TEXT PRIMARY KEY,
+			display_name TEXT,
+			tokens_json TEXT,
+			rules TEXT,
+			rules_accepted INTEGER NOT NULL DEFAULT 0,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS frontend_builds (
+			build_hash TEXT PRIMARY KEY,
+			family_id TEXT NOT NULL,
+			display_name TEXT,
+			build_version TEXT,
+			min_api BIGINT NOT NULL DEFAULT 0,
+			first_seen_at BIGINT NOT NULL,
+			last_seen_at BIGINT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS frontend_builds_family ON frontend_builds(family_id)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key TEXT NOT NULL,
 			locale TEXT NOT NULL,

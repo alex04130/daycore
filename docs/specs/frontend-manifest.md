@@ -1,10 +1,10 @@
 # 前端 manifest 与主题协议（v1）
 
-> 状态：**kind 体系已落地（2026-08-10，F7-A）**，其余仍是协议。
+> 状态：**kind 体系 + 两层身份 + 握手已落地（2026-08-10，F7-A/B）**。
 >
-> 已经能用的：`internal/theme` 的三档 kind 体系（原语 / 组合子 / 待批准 pattern）、字符底线、以及「加一种 kind 是丢一个 JSON 文件」的文件层（`THEME_KINDS_DIR`）。主题写入已经走它。
+> 能用的：`internal/theme` 的三档 kind 体系与字符底线、`THEME_KINDS_DIR` 文件层、`frontend_families` / `frontend_builds` 两张表、`POST /api/version` 握手（token 空间取并集、kind 冲突报 409、rules 存而不用、运维的 family 归属不会被握手覆盖）。
 >
-> 还没有的：family / build 两层身份、`POST /api/version` 握手、按 family 的 token 空间与补算。所以今天的 token 空间仍然是那一份写死的 13 条（`themeVarKinds`，标着 TRANSITIONAL）。
+> 还没有的：**按 family 的主题存储**（`custom_themes.family_id`，所以今天的主题仍然挂在那份写死的 13 条 token 上）、补算作业、以及控制台里那一屏（批准 rules、批准第三档 pattern、把 build 挪 family、钉住 family）。DB 层的 kind 也等那一屏。
 >
 > 给**写前端的人**看的 —— 包括第三方前端、以及同一系列的不同平台（琉璃可以有 web、app、嵌入式）。
 >

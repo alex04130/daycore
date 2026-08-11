@@ -151,6 +151,7 @@ var cases = []suiteCase{
 	{"AIUsage/ConcurrentFoldsDoNotCollide", aiUsageConcurrentFold},
 	{"SessionUsage/ThreeScalesAndTumblingWindows", sessionUsageScales},
 	{"Pairing/RoundTripRolesAndThrottledLastSeen", pairingRoundTrip},
+	{"Frontend/FamilyUnionAndBuildFamilyStickiness", frontendRoundTrip},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -3219,5 +3220,125 @@ func pairingRoundTrip(t *testing.T, h Harness) {
 	}
 	if len(list) != 0 {
 		t.Errorf("List returned %d after everything was revoked", len(list))
+	}
+}
+
+// ── frontend families and builds ────────────────────────────────────────────
+
+// Family round trip, and the one property a back end could silently drop:
+// SeenBuild must NOT move family_id.
+//
+// ⚠️ That is the assertion worth the shared test. An operator moving a build
+// into an existing family is how a new platform inherits its themes; a back end
+// whose "seen" write included family_id would undo that on the build's next
+// startup — silently, with the themes following it. Every functional check would
+// still pass.
+func frontendRoundTrip(t *testing.T, h Harness) {
+	s := h.Store()
+	repo := s.Frontends()
+	ctx := bg()
+
+	if _, err := repo.GetFamily(ctx, "nope"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetFamily on an unknown id returned %v, want ErrNotFound", err)
+	}
+	if _, err := repo.GetFamily(ctx, ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("GetFamily on an empty id returned %v, want ErrNotFound", err)
+	}
+
+	fam := domain.FrontendFamily{
+		ID: "liuli", DisplayName: "琉璃",
+		Tokens: []domain.TokenSpec{
+			{Name: "--primary", Kind: "color", Description: "主色"},
+			{Name: "--rail-width", Kind: "length"},
+		},
+		Rules: "玻璃质感…",
+	}
+	if err := repo.UpsertFamily(ctx, fam); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.GetFamily(ctx, "liuli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DisplayName != "琉璃" || got.Rules != "玻璃质感…" {
+		t.Errorf("round trip lost something: %+v", got)
+	}
+	if len(got.Tokens) != 2 {
+		t.Fatalf("tokens came back as %+v", got.Tokens)
+	}
+	// The kind and the description survive per token — they are what the
+	// validator and the model each read, and a back end that kept only names
+	// would leave both with nothing.
+	if tok, ok := got.TokenByName("--primary"); !ok || tok.Kind != "color" || tok.Description != "主色" {
+		t.Errorf("a token lost its kind or description: %+v", tok)
+	}
+	// rules_accepted and pinned are flags a back end could drop, and both mean
+	// the opposite of safe when missing.
+	if got.RulesAccepted || got.Pinned {
+		t.Errorf("a fresh family reports accepted=%v pinned=%v; both must start false",
+			got.RulesAccepted, got.Pinned)
+	}
+	fam.RulesAccepted, fam.Pinned = true, true
+	if err := repo.UpsertFamily(ctx, fam); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.GetFamily(ctx, "liuli"); !got.RulesAccepted || !got.Pinned {
+		t.Errorf("the flags did not stick: accepted=%v pinned=%v", got.RulesAccepted, got.Pinned)
+	}
+
+	// ── builds ──────────────────────────────────────────────────────────────
+	now := time.Now().UTC()
+	b := domain.FrontendBuild{BuildHash: "web-1", FamilyID: "liuli", DisplayName: "琉璃 web", Version: "4.2.0", MinAPI: 1}
+	if err := repo.SeenBuild(ctx, b, now); err != nil {
+		t.Fatal(err)
+	}
+	builds, err := repo.ListBuilds(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(builds) != 1 || builds[0].FamilyID != "liuli" || builds[0].Version != "4.2.0" {
+		t.Fatalf("build round trip: %+v", builds)
+	}
+	if builds[0].FirstSeenAt.IsZero() || builds[0].LastSeenAt.IsZero() {
+		t.Error("a build was recorded with no timestamps")
+	}
+	// Refused without the two fields that make it a sighting at all.
+	if err := repo.SeenBuild(ctx, domain.FrontendBuild{FamilyID: "liuli"}, now); err == nil {
+		t.Error("a build with no hash was accepted")
+	}
+	if err := repo.SeenBuild(ctx, domain.FrontendBuild{BuildHash: "x"}, now); err == nil {
+		t.Error("a build with no family was accepted")
+	}
+
+	// ⚠️ The operator moves it, and a handshake must not move it back.
+	if err := repo.SetBuildFamily(ctx, "web-1", "ting"); err != nil {
+		t.Fatal(err)
+	}
+	// The build starts again, still declaring the family it was built with, and
+	// with a stale-enough last-seen that the update path really runs.
+	if err := repo.SeenBuild(ctx, b, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	builds, _ = repo.ListBuilds(ctx)
+	if len(builds) != 1 {
+		t.Fatalf("a repeat sighting created a second row: %+v", builds)
+	}
+	if builds[0].FamilyID != "ting" {
+		t.Errorf("a handshake moved the build back to %q; the operator's assignment must win",
+			builds[0].FamilyID)
+	}
+	if err := repo.SetBuildFamily(ctx, "not-a-build", "ting"); !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("SetBuildFamily on an unknown build returned %v, want ErrNotFound", err)
+	}
+
+	// The last-seen write is throttled, like a pairing's: a frontend that
+	// handshakes on every page load must not turn that into a write every time.
+	before, _ := repo.ListBuilds(ctx)
+	if err := repo.SeenBuild(ctx, b, time.Now().Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := repo.ListBuilds(ctx)
+	if !after[0].LastSeenAt.Equal(before[0].LastSeenAt) {
+		t.Error("a sighting inside the staleness window still wrote; every page load is a write")
 	}
 }

@@ -60,6 +60,8 @@ func init() {
 	i18n.Register("err.adminPromptSet.unknown_prompt", i18n.Text{"zh-CN": "没有这个提示词"})
 	i18n.Register("err.adminPromptSet.unsupported_locale", i18n.Text{"zh-CN": "不支持的 locale"})
 	i18n.Register("err.adminStats.internal", i18n.Text{"zh-CN": "获取统计数据失败"})
+	i18n.Register("err.handshake.bad_request", i18n.Text{"zh-CN": "握手请求格式错误"})
+	i18n.Register("err.handshake.internal", i18n.Text{"zh-CN": "握手记录失败"})
 	i18n.Register("err.adminUsers.internal", i18n.Text{"zh-CN": "读取用户列表失败"})
 	i18n.Register("err.assignmentCreate.bad_request", i18n.Text{"zh-CN": "缺少 title"})
 	i18n.Register("err.assignmentCreate.bad_request2", i18n.Text{"zh-CN": "dueAt 格式应为 RFC3339、YYYY-MM-DDTHH:MM 或 YYYY-MM-DD"})

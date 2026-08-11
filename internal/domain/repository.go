@@ -61,6 +61,10 @@ type Store interface {
 	// ref safe to resolve. See attachment.go.
 	Attachments() AttachmentRepository
 
+	// Frontends is the two-layer frontend identity: families own theme token
+	// spaces, builds are sightings of one. See frontend.go.
+	Frontends() FrontendRepository
+
 	// Pairings is how an external console attaches to this deployment — a
 	// cluster manager, or somebody else's console. It resolves permissions
 	// through the SAME roles a person does; see pairing.go for why the backend

@@ -181,6 +181,26 @@ func (mysqlDialect) Migrations() []string {
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS frontend_families (
+			id VARCHAR(191) PRIMARY KEY,
+			display_name VARCHAR(191),
+			tokens_json LONGTEXT,
+			rules LONGTEXT,
+			rules_accepted INTEGER NOT NULL DEFAULT 0,
+			pinned INTEGER NOT NULL DEFAULT 0,
+			created_at BIGINT NOT NULL,
+			updated_at BIGINT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS frontend_builds (
+			build_hash VARCHAR(191) PRIMARY KEY,
+			family_id VARCHAR(191) NOT NULL,
+			display_name VARCHAR(191),
+			build_version VARCHAR(64),
+			min_api BIGINT NOT NULL DEFAULT 0,
+			first_seen_at BIGINT NOT NULL,
+			last_seen_at BIGINT NOT NULL,
+			KEY frontend_builds_family (family_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS locale_overrides (
 			message_key VARCHAR(191) NOT NULL,
 			locale VARCHAR(64) NOT NULL,

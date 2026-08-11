@@ -59,7 +59,17 @@ func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 	// available is not a compile-time list. Dropping a <locale>.json into the
 	// locales directory or adding one from the console extends it, so clients
 	// must read it rather than hardcoding what they think exists.
-	s.writeJSON(w, http.StatusOK, map[string]any{
+	s.writeJSON(w, http.StatusOK, s.versionPayload(r))
+}
+
+// versionPayload is the body both /api/version verbs share.
+//
+// One function because the POST is the same question with the caller
+// introducing itself: two payloads would drift, and a frontend reading
+// `minClient` from the handshake while an anonymous client read a different one
+// from the GET is the kind of disagreement nobody looks for.
+func (s *Server) versionPayload(_ *http.Request) map[string]any {
+	return map[string]any{
 		"apiVersion": version.APIVersion,
 		"apiMinor":   version.APIMinor,
 		"build":      version.Full(),
@@ -76,7 +86,7 @@ func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 			"defaultPrimary":   s.defaultLocales.Primary,
 			"defaultSecondary": s.defaultLocales.Secondary,
 		},
-	})
+	}
 }
 
 // capabilityFeatures derives the /api/version features block from the model

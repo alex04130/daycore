@@ -7,6 +7,92 @@
 /api/models:
   get: { operationId: listModels, tags: [meta], security: [], responses: { '200': { description: OK } } }
 /api/version:
+  post:
+    operationId: frontendHandshake
+    tags: [meta]
+    summary: Introduce a frontend build and get this deployment's adjudication.
+    description: >-
+      The same question `GET /api/version` answers, with the caller introducing
+      itself. One path rather than two, so a frontend has one endpoint to know
+      about and the two answers cannot drift.
+
+      TWO LAYERS OF IDENTITY. `buildHash` is one build's fingerprint;
+      `familyId` is the theme-compatibility group, declared by the build and
+      OVERRIDABLE BY THE OPERATOR. Themes key on the FAMILY, because that is the
+      unit a set of themes means anything for — 琉璃-web and 琉璃-app want the
+      same ones. ⚠️ Use `assignedFamilyId` from the response, not the id you
+      sent: an operator may have moved this build.
+
+      THE TOKEN SPACE IS A UNION AND THERE IS NO SUBSET CHECK. A build declaring
+      a token another build in the family does not use is not a conflict — the
+      other build ignores what it does not recognise, which the protocol makes
+      ITS responsibility. Intersecting would make adding a platform delete
+      tokens from the other one's themes. The one real conflict is the same
+      NAME with a different KIND, which is a 409.
+
+      ⚠️ EVERYTHING IN THE BODY IS TREATED AS THIRD-PARTY DATA, even when we
+      wrote the frontend. Lengths bounded, newlines stripped, and every declared
+      `kind` must be one this deployment can VALIDATE — an unknown kind is a 400,
+      because nothing would check the values arriving under it. Adding a kind is
+      a JSON file in THEME_KINDS_DIR, not a release.
+
+      ⚠️ `theme.rules` is STORED AND NEVER USED until an operator approves it.
+      Until then the backend generates a mechanical prompt fragment from the
+      token list, so a third-party frontend has the full feature on day one and
+      the injection surface is zero by default. `rulesAccepted` says which you
+      are getting. Re-sending rules resets approval — a build cannot approve its
+      own prompt fragment.
+
+      ⚠️ UNAUTHENTICATED, necessarily: a build must be able to introduce itself
+      before it has any credential. So it can create a family and widen an
+      unpinned one. That is bounded rather than credentialed — a family cap, an
+      operator's pin freezing a token space, and the kind gate above.
+
+      `pendingThemeBackfill` counts user-generated themes that predate the new
+      tokens. Built-in themes are deliberately not counted: their values arrive
+      with the manifest, so the union completes them for free, and counting both
+      would show a price that is mostly imaginary.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [familyId]
+            properties:
+              familyId: { type: string, maxLength: 64, description: 'Letters, digits, hyphens, underscores.' }
+              buildHash: { type: string }
+              displayName: { type: string }
+              version: { type: string }
+              minApi: { type: integer }
+              theme:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    maxItems: 512
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, description: 'Must look like --name.' }
+                        kind: { type: string, description: 'A primitive or a combinator over one.' }
+                        description: { type: string, maxLength: 200 }
+                  rules: { type: string, maxLength: 4000 }
+    responses:
+      '200':
+        description: OK — the version payload plus the adjudication.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignedFamilyId: { type: string, description: Use this, not the id you sent. }
+                rulesAccepted: { type: boolean }
+                newTokens: { type: array, items: { type: string } }
+                pendingThemeBackfill: { type: integer }
+                handshakeRecorded: { type: boolean, description: false in degraded mode. }
+      '400': { description: Bad familyId, token name, or a kind this deployment cannot validate. }
+      '409': { description: A token's kind conflicts with the family's, the family is pinned, or the family cap is reached. }
   get:
     operationId: apiVersion
     tags: [meta]

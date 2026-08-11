@@ -27,6 +27,11 @@ var publicRoutes = map[string]string{
 	"GET /api/version":       "contract negotiation happens before a session exists",
 	"GET /api/models":        "capability discovery",
 	"POST /api/session/init": "this is what mints the session",
+	"POST /api/version": "the frontend handshake — a build must be able to introduce itself before it " +
+		"has any credential, which is the premise of the two-layer identity. ⚠️ It WRITES (families, " +
+		"build sightings), so the exposure is bounded deliberately rather than by a credential: a " +
+		"family cap, an operator's pin freezing a token space, and a kind gate on every declaration. " +
+		"No value it carries is ever used unapproved — see handlers_handshake.go.",
 
 	"POST /api/auth/register": "no session yet by definition",
 	"POST /api/auth/login":    "no session yet by definition",
