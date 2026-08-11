@@ -757,15 +757,23 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 
 **family 的 token 空间是并集，不做子集拦截**：新 build 带来新 token 就扩一条，已存主题因此缺那一条 → 运维触发一次**补算**（每个缺 token 的主题一次 AI 调用），补完若两套变量完全一致就**合并**（保留一条，会话偏好改指）。build 用不到的 token 由**前端自己丢弃**，后端不裁剪。
 
-| 改动 | DDL |
-|---|---|
-| `frontend_builds`（`build_hash` 主键 + `family_id` + `manifest_json` + `rules_approved` + 首见/末见） | 新表 |
-| `frontend_families`（`family_id` 主键 + `tokens_json` 并集 + `rules` 运维版本 + `display_name`） | 新表 |
-| `custom_themes.family_id` · `theme_switch_log.family_id` | 三方言加列 |
-| 按端当前主题 → `SessionPrefs` 的 `{familyID: themeID}` | **零** |
-| 主题补算 | 走 `job_runs`，运维触发 |
+| 改动 | DDL | 状态 |
+|---|---|---|
+| `frontend_builds`（`build_hash` 主键 + `family_id` + manifest 字段 + 首见/末见） | 新表 | ✅ F7-B |
+| `frontend_families`（`family_id` 主键 + tokens 并集 + `rules` + `rules_accepted` + `pinned`） | 新表 | ✅ F7-B |
+| `custom_themes.family_id` · `theme_switch_log.family_id` | 三方言加列 | ✅ F7-D |
+| 按端当前主题 → `SessionPrefs` 的 `{familyID: themeID}` | **零** | ✅ F7-D |
+| 主题补算 | 走 `job_runs`，运维触发 | ⬜ |
 
-⚠️ **加列与两张新表一起排在批次 F**，不要单独去动方言文件 —— 这一天已经碰过三次了。
+### 加列这一步的三个决定（2026-08-10，F7-D）
+
+**默认值是 `domain.FallbackFamilyID`，而且 DDL 里那个字符串是从常量拼出来的**，不是又抄一遍。建表与 ALTER 共用同一个来源，升级过的库和全新的库因此不可能分叉 —— `dialect_parity_test.go` 已经因为 `reminders_off` 在两处类型不同而红过一次，那种差异是永久的且只有比对两个部署才看得见。
+
+**⚠️ Mongo 是四个后端里唯一不能白拿这次迁移的**。三个 SQL 引擎加一列 `NOT NULL DEFAULT` 会顺手把已有行填满；Mongo 没有这条规则 —— 加字段之前写的文档就是**没有这个字段**，而 `{"family_id": "default"}` 匹配不上它。少了 `mongostore.Migrate` 里那次显式 `updateMany`，此前所有人做过的主题会**从列表里消失**，不报错、不告警，而且只在四个后端里的一个上消失。`TestFamilyIDBackfillFindsPreMigrationDocuments` 手写那个迁移前的文档形状来钉它 —— 那个形状已经无法再通过 repository 造出来了。
+
+**当前主题分两个家，一个 family 一个家 —— 不是一个值两个家**：兜底 family 留在 `sessions.current_theme`（现役前端读的就是它，搬走等于迁移每一行去改变一个观察不到的东西），其余在 `SessionPrefs.ThemeByFamily`。把列留成 map 的镜像才是两个写者一个值。
+
+⚠️ **写 prefs 是读-改-写，会丢更新**：两台设备同一瞬间换主题会丢掉一次。这是有意接受的 —— 后果是「手机上选的主题没生效，再点一次」，与其它每一项 preference 承担的风险完全相同；而换成 JSON 路径写或侧表，是四个后端各加一个方法（侧表还要在一条今天零成本的读路径上多一次查询，因为那个 blob 本来就跟着 session 行一起读回来）。**如果主题切换有一天变成自动的而不是人点的，要重新评估** —— 后台写者丢竞态的频率跟人不是一个量级。
 
 **两条安全边界**（前端是开放的，第三方在场，上报内容是第三方数据）：
 

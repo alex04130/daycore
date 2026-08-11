@@ -38,7 +38,11 @@ import (
 // deleted from the console, or one that has not handshaken yet, must still be
 // able to read themes: refusing would turn "the operator tidied up" into "the
 // app is broken".
-const fallbackFamilyID = "default"
+// ⚠️ The id itself lives in domain.FallbackFamilyID, not here: the STORAGE
+// layer needs the same string (it is the DDL default on custom_themes and
+// theme_switch_log), and two literals for one fact is how an upgraded database
+// and a fresh one end up disagreeing about which family a theme belongs to.
+const fallbackFamilyID = domain.FallbackFamilyID
 
 // fallbackFamily is the built-in manifest. Built once; the token list is a
 // constant.

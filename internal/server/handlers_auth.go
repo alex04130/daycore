@@ -282,8 +282,9 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 		_, _ = s.store.Wishes().Create(ctx, &wsh)
 	}
 
-	// custom themes: append with fresh ids.
-	anonThemes, _ := s.store.Themes().List(ctx, anonSID)
+	// custom themes: append with fresh ids, ACROSS every family — signing in on
+	// the phone must not drop the themes made on the desktop.
+	anonThemes, _ := s.store.Themes().ListAcrossFamilies(ctx, anonSID)
 	for i := range anonThemes {
 		t := anonThemes[i]
 		t.ID = ""

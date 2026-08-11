@@ -127,7 +127,9 @@ type CompanionRepository interface {
 }
 
 type ThemeLogRepository interface {
-	Add(ctx context.Context, sessionID, theme string) error
+	// Add records one switch. familyID says which frontend it happened on —
+	// see ThemeSwitch.FamilyID.
+	Add(ctx context.Context, sessionID, theme, familyID string) error
 }
 
 // LogCursor marks a position in an append-only log. The id breaks ties:
@@ -337,8 +339,23 @@ type MemoryRepository interface {
 }
 
 type ThemeRepository interface {
+	// Get does NOT take a family: an id is an id, and a theme fetched by id is
+	// one the caller already had a reference to. Scoping it would only turn
+	// "you sent the wrong header" into "your theme disappeared".
 	Get(ctx context.Context, sessionID, id string) (*CustomTheme, error)
-	List(ctx context.Context, sessionID string) ([]CustomTheme, error)
+	// List is scoped to one family — see CustomTheme.FamilyID for why a theme
+	// belongs to a token space and not to a session.
+	List(ctx context.Context, sessionID, familyID string) ([]CustomTheme, error)
+	// ListAcrossFamilies exists for ONE caller: merging an anonymous session
+	// into a signed-in one.
+	//
+	// ⚠️ A separate method rather than List(sid, "") on purpose. Empty means
+	// "the fallback family" everywhere else in this interface, and a single
+	// spelling that means "the default" on write and "everything" on read is
+	// how somebody eventually deletes a family's themes while meaning to list
+	// them. The merge must carry every family's themes across or signing in
+	// loses whatever the other device made.
+	ListAcrossFamilies(ctx context.Context, sessionID string) ([]CustomTheme, error)
 	Create(ctx context.Context, t *CustomTheme) (*CustomTheme, error)
 	Update(ctx context.Context, sessionID, id string, upd CustomThemeUpdate) (*CustomTheme, error)
 	Delete(ctx context.Context, sessionID, id string) error

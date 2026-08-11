@@ -13,7 +13,31 @@
   post:
     operationId: sessionTheme
     tags: [session]
-    summary: Record the current theme.
+    summary: Record the current theme FOR THE CALLING FRONTEND'S FAMILY.
+    description: >-
+      桌面用琉璃、手机用汀 is the ordinary case, so there is no single "current
+      theme" for a session — one per family, and the response echoes which one
+      was written.
+
+      ⚠️ Two homes, one per family, not two homes for one value: the fallback
+      family stays in `sessions.current_theme` (the column the shipping
+      frontend reads), every other family lives in the preferences blob. See
+      docs/DATA.md.
+    parameters:
+      - name: X-Frontend-Build
+        in: header
+        required: false
+        schema: { type: string }
+        description: >-
+          Which build is asking, and therefore which frontend FAMILY's theme
+          token space applies. Absent, or a build this deployment has never
+          seen, means the built-in fallback family — which is why a frontend
+          that never handshakes behaves exactly as it always did.
+
+          ⚠️ NOT a credential and must never become one. It selects a token
+          space and nothing else; a caller that lies about it gets somebody
+          else's list of variable names, which is public information (it is in
+          every manifest and every stylesheet).
     requestBody: { content: { application/json: { schema: { type: object, properties: { theme: { type: string } } } } } }
     responses: { '200': { description: OK } }
 /api/session/settings:

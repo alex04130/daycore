@@ -1,6 +1,8 @@
 package sqlstore
 
 import (
+	"daycore/internal/domain"
+
 	"strings"
 )
 
@@ -108,6 +110,24 @@ func sessionColumnMigrations(textType, boolType string) []ColumnMigration {
 		// that caught reminders_off being TINYINT(1) in one and INTEGER in the
 		// other — a difference that is permanent and invisible until somebody
 		// compares two deployments.
+		// The frontend family a theme (and a theme switch) belongs to.
+		//
+		// ⚠️ NOT NULL DEFAULT domain.FallbackFamilyID does the backfill for
+		// free on all three engines: adding a NOT NULL column with a default
+		// fills EXISTING rows with it. And that value is right rather than
+		// merely convenient — everything written before families existed was
+		// validated against the built-in token space, which is exactly what the
+		// fallback family is.
+		//
+		// (Mongo has no such rule, so mongostore.Migrate does the same backfill
+		// explicitly. See the note there — it is the one place the four
+		// backends do not converge for free.)
+		{Table: "custom_themes", Column: "family_id",
+			DDL: `ALTER TABLE custom_themes ADD COLUMN family_id ` + textType +
+				` NOT NULL DEFAULT '` + domain.FallbackFamilyID + `'`},
+		{Table: "theme_switch_log", Column: "family_id",
+			DDL: `ALTER TABLE theme_switch_log ADD COLUMN family_id ` + textType +
+				` NOT NULL DEFAULT '` + domain.FallbackFamilyID + `'`},
 		{Table: "users", Column: "is_owner",
 			DDL: `ALTER TABLE users ADD COLUMN is_owner ` + boolType + ` NOT NULL DEFAULT 0`},
 		{Table: "sessions", Column: "language",

@@ -186,6 +186,29 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return err
 		}
 	}
+	return s.backfillFamilyID(ctx)
+}
+
+// ⚠️ The one migration Mongo does NOT get for free.
+//
+// On all three SQL engines, adding `family_id NOT NULL DEFAULT 'default'` fills
+// existing rows with it as part of the ALTER. Mongo has no such rule: a document
+// written before the field existed simply has no field, and `{"family_id":
+// "default"}` does not match it. So every theme anybody made before this batch
+// would VANISH from the list — not error, not warn, just be gone, on exactly one
+// of the four backends.
+//
+// Idempotent by construction (`$exists: false` matches nothing on the second
+// run), so it costs one indexed-miss scan per boot and nothing else.
+func (s *Store) backfillFamilyID(ctx context.Context) error {
+	for _, coll := range []string{"custom_themes", "theme_switch_log"} {
+		if _, err := s.c(coll).UpdateMany(ctx,
+			bson.M{"family_id": bson.M{"$exists": false}},
+			bson.M{"$set": bson.M{"family_id": domain.FallbackFamilyID}},
+		); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

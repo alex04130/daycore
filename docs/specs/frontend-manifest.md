@@ -4,9 +4,11 @@
 >
 > 能用的：`internal/theme` 的三档 kind 体系与字符底线、`THEME_KINDS_DIR` 文件层、`frontend_families` / `frontend_builds` 两张表、`POST /api/version` 握手（token 空间取并集、kind 冲突报 409、rules 存而不用、运维的 family 归属不会被握手覆盖）。
 >
-> 也能用的（F7-C）：主题读写**按调用方的 family 判定**（`X-Frontend-Build` 请求头解析出 build → family；不带头或 build 不认识就落到内置兜底 family，所以现役前端行为一字未变）、控制台「前端」一屏（钉住 family / 批准 rules / 把 build 挪 family / 删 family）。
+> 也能用的（F7-C/D）：主题读写**按调用方的 family 判定**（`X-Frontend-Build` 请求头解析出 build → family；不带头或 build 不认识就落到内置兜底 family，所以现役前端行为一字未变）、控制台「前端」一屏（钉住 family / 批准 rules / 把 build 挪 family / 删 family）。
 >
-> 还没有的：**按 family 的主题存储**（`custom_themes.family_id`，所以主题今天仍然是全局一份，只是**校验**已经按 family 走了）、补算作业、DB 层的 kind 与第三档 pattern 的审批入口。
+> 也能用的（F7-D）：**主题按 family 存**（`custom_themes.family_id` / `theme_switch_log.family_id`），当前主题按 family 分开。
+>
+> 还没有的：补算作业、DB 层的 kind 与第三档 pattern 的审批入口。
 >
 > 给**写前端的人**看的 —— 包括第三方前端、以及同一系列的不同平台（琉璃可以有 web、app、嵌入式）。
 >
@@ -178,7 +180,11 @@ POST  /api/ai/theme               自然语言 → 一套主题（走 theme_gen 
 PATCH /api/session                {"currentTheme": "<themeId>"}  当前主题，按 family 分开
 ```
 
-**当前主题按 family 分开存**（`SessionPrefs` 的 `{familyID: themeID}`）—— 桌面用琉璃、手机用汀 是常态。
+**当前主题按 family 分开存** —— 桌面用琉璃、手机用汀 是常态，一个 session 一个当前主题会让两端永远互相覆盖，而且哪一端都没错。
+
+读写都带 `X-Frontend-Build`：`GET /api/session` 的 `currentTheme` 是「**你**在哪个主题上」，所以同一个 session 换一个 build 头去读，合法地返回不同的值；不带头的客户端看到的和以前一模一样。
+
+存两个家，**一个 family 一个家，不是一个值两个家**：兜底 family 在 `sessions.current_theme`（现役前端读的就是它），其余在 `SessionPrefs` 的 `{familyID: themeID}`。⚠️ 后者是读-改-写，两台设备同一瞬间换主题会丢一次 —— 见 `docs/DATA.md` 里写清楚的取舍。
 
 ## 运维那一屏（`GET /api/admin/frontends` 等四条）
 

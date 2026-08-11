@@ -885,6 +885,12 @@ type SessionPrefs struct {
 	DoNotDisturb   bool `json:"doNotDisturb"`
 	AutoPlan       bool `json:"autoPlan"`
 
+	// ThemeByFamily is the current theme per FRONTEND FAMILY, for every family
+	// except the fallback one — that one stays in sessions.current_theme, where
+	// it has always been. See theme_current.go for why the split, and why the
+	// lost-update race it carries is accepted.
+	ThemeByFamily map[string]string `json:"themeByFamily,omitempty"`
+
 	// MaterialCategories holds per-category enablement overrides (category id →
 	// on/off). A missing entry falls back to the registry's DefaultOn; "note"
 	// can never be turned off. See domain.MaterialCategories.

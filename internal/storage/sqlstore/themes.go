@@ -13,7 +13,7 @@ import (
 
 type themeRepo struct{ *Store }
 
-const themeSelect = `SELECT id, session_id, name, base, dark, variables, created_at, updated_at
+const themeSelect = `SELECT id, session_id, family_id, name, base, dark, variables, created_at, updated_at
 	FROM custom_themes`
 
 func (r themeRepo) Get(ctx context.Context, sessionID, id string) (*domain.CustomTheme, error) {
@@ -21,7 +21,29 @@ func (r themeRepo) Get(ctx context.Context, sessionID, id string) (*domain.Custo
 	return scanTheme(row.Scan)
 }
 
-func (r themeRepo) List(ctx context.Context, sessionID string) ([]domain.CustomTheme, error) {
+func (r themeRepo) List(ctx context.Context, sessionID, familyID string) ([]domain.CustomTheme, error) {
+	if familyID == "" {
+		familyID = domain.FallbackFamilyID
+	}
+	rows, err := r.query(ctx,
+		themeSelect+` WHERE session_id = ? AND family_id = ? ORDER BY created_at`, sessionID, familyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.CustomTheme{}
+	for rows.Next() {
+		t, err := scanTheme(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
+func (r themeRepo) ListAcrossFamilies(ctx context.Context, sessionID string) ([]domain.CustomTheme, error) {
 	rows, err := r.query(ctx, themeSelect+` WHERE session_id = ? ORDER BY created_at`, sessionID)
 	if err != nil {
 		return nil, err
@@ -46,11 +68,17 @@ func (r themeRepo) Create(ctx context.Context, t *domain.CustomTheme) (*domain.C
 	if t.Variables == nil {
 		t.Variables = map[string]string{}
 	}
+	// ⚠️ Defaulted here rather than left to the column default: a theme written
+	// with no family would otherwise be invisible to every List, and "the theme
+	// I just made is not in the list" is the most confusing possible symptom.
+	if t.FamilyID == "" {
+		t.FamilyID = domain.FallbackFamilyID
+	}
 	now := nowMillis()
 	_, err := r.exec(ctx,
-		`INSERT INTO custom_themes (id, session_id, name, base, dark, variables, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		t.ID, t.SessionID, t.Name, t.Base, boolToInt(t.Dark), marshalJSON(t.Variables), now, now)
+		`INSERT INTO custom_themes (id, session_id, family_id, name, base, dark, variables, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		t.ID, t.SessionID, t.FamilyID, t.Name, t.Base, boolToInt(t.Dark), marshalJSON(t.Variables), now, now)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +137,7 @@ func scanTheme(scan func(dest ...any) error) (*domain.CustomTheme, error) {
 		createdAt int64
 		updatedAt int64
 	)
-	err := scan(&t.ID, &t.SessionID, &t.Name, &t.Base, &dark, &variables, &createdAt, &updatedAt)
+	err := scan(&t.ID, &t.SessionID, &t.FamilyID, &t.Name, &t.Base, &dark, &variables, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}

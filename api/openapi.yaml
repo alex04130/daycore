@@ -72,7 +72,31 @@ paths:
     post:
       operationId: sessionTheme
       tags: [session]
-      summary: Record the current theme.
+      summary: Record the current theme FOR THE CALLING FRONTEND'S FAMILY.
+      description: >-
+        桌面用琉璃、手机用汀 is the ordinary case, so there is no single "current
+        theme" for a session — one per family, and the response echoes which one
+        was written.
+
+        ⚠️ Two homes, one per family, not two homes for one value: the fallback
+        family stays in `sessions.current_theme` (the column the shipping
+        frontend reads), every other family lives in the preferences blob. See
+        docs/DATA.md.
+      parameters:
+        - name: X-Frontend-Build
+          in: header
+          required: false
+          schema: { type: string }
+          description: >-
+            Which build is asking, and therefore which frontend FAMILY's theme
+            token space applies. Absent, or a build this deployment has never
+            seen, means the built-in fallback family — which is why a frontend
+            that never handshakes behaves exactly as it always did.
+
+            ⚠️ NOT a credential and must never become one. It selects a token
+            space and nothing else; a caller that lies about it gets somebody
+            else's list of variable names, which is public information (it is in
+            every manifest and every stylesheet).
       requestBody: { content: { application/json: { schema: { type: object, properties: { theme: { type: string } } } } } }
       responses: { '200': { description: OK } }
   /api/session/settings:
@@ -655,15 +679,90 @@ paths:
 
   # ─── themes ───────────────────────────────────────────────────────────────
   /api/themes:
-    get: { operationId: listThemes, tags: [themes], responses: { '200': { description: OK } } }
+    get:
+      operationId: listThemes
+      tags: [themes]
+      summary: This session's custom themes IN THE CALLING FRONTEND'S FAMILY, plus the builtin ids.
+      description: >-
+        ⚠️ Scoped to one family, not to the session. A theme is a set of values
+        for ONE token space: showing 琉璃's theme to 汀 would hand it variables 汀
+        never declared and omit the ones it needs, which renders as "most of the
+        page did not change". The response echoes `familyId` so a frontend can
+        tell "no themes yet" from "I am asking as the wrong build".
+      parameters:
+        - name: X-Frontend-Build
+          in: header
+          required: false
+          schema: { type: string }
+          description: >-
+            Which build is asking, and therefore which frontend FAMILY's theme
+            token space applies. Absent, or a build this deployment has never
+            seen, means the built-in fallback family — which is why a frontend
+            that never handshakes behaves exactly as it always did.
+
+            ⚠️ NOT a credential and must never become one. It selects a token
+            space and nothing else; a caller that lies about it gets somebody
+            else's list of variable names, which is public information (it is in
+            every manifest and every stylesheet).
+      responses: { '200': { description: OK } }
     post:
       operationId: createTheme
       tags: [themes]
+      summary: Create a custom theme, validated against the calling family's token space.
+      description: >-
+        Every value is checked against its token's kind AND against the character
+        floor (see docs/specs/frontend-manifest.md). A token the family does not
+        declare is refused rather than ignored — accepting it would store a
+        variable nothing validated and no build asked for. The stored theme
+        belongs to the calling family.
+      parameters:
+        - name: X-Frontend-Build
+          in: header
+          required: false
+          schema: { type: string }
+          description: >-
+            Which build is asking, and therefore which frontend FAMILY's theme
+            token space applies. Absent, or a build this deployment has never
+            seen, means the built-in fallback family — which is why a frontend
+            that never handshakes behaves exactly as it always did.
+
+            ⚠️ NOT a credential and must never become one. It selects a token
+            space and nothing else; a caller that lies about it gets somebody
+            else's list of variable names, which is public information (it is in
+            every manifest and every stylesheet).
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }
-      responses: { '200': { description: OK } }
+      responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
   /api/themes/{id}:
-    patch: { operationId: patchTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }, responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
-    delete: { operationId: deleteTheme, tags: [themes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
+    patch:
+      operationId: patchTheme
+      tags: [themes]
+      summary: Partial update (name / dark / variables).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: X-Frontend-Build
+          in: header
+          required: false
+          schema: { type: string }
+          description: Which family's token space `variables` is judged against. See GET /api/themes.
+      requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+    delete:
+      operationId: deleteTheme
+      tags: [themes]
+      summary: Delete a theme; resets THIS family's current theme if it was on it.
+      description: >-
+        ⚠️ The reset is scoped to the calling family. Deleting a 汀 theme must not
+        reset what the desktop is showing, and a check against the session's one
+        theme column would have done exactly that — silently, on the one path
+        where the user is least expecting anything else to change.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: X-Frontend-Build
+          in: header
+          required: false
+          schema: { type: string }
+          description: Which family's current theme is reset. See the description.
+      responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
   # ─── import ───────────────────────────────────────────────────────────────
   /api/import/token:

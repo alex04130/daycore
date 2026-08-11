@@ -81,13 +81,17 @@ func (s *Server) handleThemeList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	themes, err := s.store.Themes().List(r.Context(), sid)
+	fam := s.familyFor(r)
+	themes, err := s.store.Themes().List(r.Context(), sid, fam.ID)
 	if err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeList.internal")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"themes": themes, "builtin": domain.BuiltinThemes,
+		// Which token space these were judged against, so a frontend can tell
+		// "no themes yet" from "I am asking as the wrong build".
+		"familyId": fam.ID,
 	})
 }
 
@@ -124,7 +128,7 @@ func (s *Server) handleThemeCreate(w http.ResponseWriter, r *http.Request) {
 		dark = *in.Dark
 	}
 	created, err := s.store.Themes().Create(r.Context(), &domain.CustomTheme{
-		SessionID: sid, Name: in.Name, Base: in.Base, Dark: dark, Variables: clean,
+		SessionID: sid, FamilyID: fam.ID, Name: in.Name, Base: in.Base, Dark: dark, Variables: clean,
 	})
 	if err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeCreate.internal")
@@ -189,11 +193,18 @@ func (s *Server) handleThemeDelete(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.themeDelete.internal")
 		return
 	}
+	// ⚠️ Reset the CALLER'S family, not the session. Deleting a 汀 theme must
+	// not reset what the desktop is showing — and checking the session column
+	// would have done exactly that, silently, on the one path where the user is
+	// least expecting anything else to change.
 	reset := false
-	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil && sess.CurrentTheme == id {
-		def := domain.BuiltinThemes[0]
-		if _, err := s.store.Sessions().Update(ctx, sid, domain.SessionUpdate{CurrentTheme: &def}); err == nil {
-			reset = true
+	fam := s.familyFor(r)
+	if sess, err := s.store.Sessions().Get(ctx, sid); err == nil {
+		if currentThemeFor(sess, s.sessionPrefs(ctx, sid), fam.ID) == id {
+			def := domain.BuiltinThemes[0]
+			if err := s.setCurrentTheme(ctx, sid, fam.ID, def); err == nil {
+				reset = true
+			}
 		}
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "currentThemeReset": reset})

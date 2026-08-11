@@ -226,7 +226,7 @@ func TestThemesRoundTrip(t *testing.T) {
 	if _, err := s.Themes().Update(ctx, "other", created.ID, domain.CustomThemeUpdate{Dark: &dark}); err != domain.ErrNotFound {
 		t.Fatalf("cross-session update must be ErrNotFound, got %v", err)
 	}
-	if list, _ := s.Themes().List(ctx, "sid1"); len(list) != 1 {
+	if list, _ := s.Themes().List(ctx, "sid1", domain.FallbackFamilyID); len(list) != 1 {
 		t.Fatalf("list")
 	}
 	if err := s.Themes().Delete(ctx, "sid1", created.ID); err != nil {

@@ -14,6 +14,7 @@ import (
 type themeDoc struct {
 	ID        string            `bson:"_id"`
 	SessionID string            `bson:"session_id"`
+	FamilyID  string            `bson:"family_id"`
 	Name      string            `bson:"name"`
 	Base      string            `bson:"base"`
 	Dark      bool              `bson:"dark"`
@@ -28,7 +29,7 @@ func (d themeDoc) toDomain() *domain.CustomTheme {
 		vars = map[string]string{}
 	}
 	return &domain.CustomTheme{
-		ID: d.ID, SessionID: d.SessionID, Name: d.Name, Base: d.Base, Dark: d.Dark,
+		ID: d.ID, SessionID: d.SessionID, FamilyID: d.FamilyID, Name: d.Name, Base: d.Base, Dark: d.Dark,
 		Variables: vars, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
 }
@@ -46,7 +47,28 @@ func (r themeRepo) Get(ctx context.Context, sessionID, id string) (*domain.Custo
 	return d.toDomain(), nil
 }
 
-func (r themeRepo) List(ctx context.Context, sessionID string) ([]domain.CustomTheme, error) {
+func (r themeRepo) List(ctx context.Context, sessionID, familyID string) ([]domain.CustomTheme, error) {
+	if familyID == "" {
+		familyID = domain.FallbackFamilyID
+	}
+	cur, err := r.c("custom_themes").Find(ctx, bson.M{"session_id": sessionID, "family_id": familyID},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []domain.CustomTheme{}
+	for cur.Next(ctx) {
+		var d themeDoc
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, *d.toDomain())
+	}
+	return out, cur.Err()
+}
+
+func (r themeRepo) ListAcrossFamilies(ctx context.Context, sessionID string) ([]domain.CustomTheme, error) {
 	cur, err := r.c("custom_themes").Find(ctx, bson.M{"session_id": sessionID},
 		options.Find().SetSort(bson.D{{Key: "created_at", Value: 1}}))
 	if err != nil {
@@ -71,10 +93,16 @@ func (r themeRepo) Create(ctx context.Context, t *domain.CustomTheme) (*domain.C
 	if t.Variables == nil {
 		t.Variables = map[string]string{}
 	}
+	// Same reason as the SQL side: a theme with no family is invisible to every
+	// List, and "the theme I just made is not in the list" is the most
+	// confusing possible symptom.
+	if t.FamilyID == "" {
+		t.FamilyID = domain.FallbackFamilyID
+	}
 	now := time.Now().UTC()
 	t.CreatedAt, t.UpdatedAt = now, now
 	if _, err := r.c("custom_themes").InsertOne(ctx, themeDoc{
-		ID: t.ID, SessionID: t.SessionID, Name: t.Name, Base: t.Base, Dark: t.Dark,
+		ID: t.ID, SessionID: t.SessionID, FamilyID: t.FamilyID, Name: t.Name, Base: t.Base, Dark: t.Dark,
 		Variables: t.Variables, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}); err != nil {
 		return nil, err

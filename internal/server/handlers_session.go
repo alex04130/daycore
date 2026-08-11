@@ -60,7 +60,7 @@ func (s *Server) handleSessionInit(w http.ResponseWriter, r *http.Request) {
 		}{sess, s.cookies.Sign(sid)})
 		return
 	}
-	s.writeJSON(w, http.StatusOK, sess)
+	s.writeJSON(w, http.StatusOK, s.sessionWithFamilyTheme(r, sess))
 }
 
 // POST /api/session/theme — record a theme switch and update current theme.
@@ -77,12 +77,13 @@ func (s *Server) handleSessionTheme(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	_ = s.store.ThemeLog().Add(ctx, sid, body.Theme) // audit log is best-effort
-	if _, err := s.store.Sessions().Update(ctx, sid, domain.SessionUpdate{CurrentTheme: &body.Theme}); err != nil {
+	fam := s.familyFor(r)
+	_ = s.store.ThemeLog().Add(ctx, sid, body.Theme, fam.ID) // audit log is best-effort
+	if err := s.setCurrentTheme(ctx, sid, fam.ID, body.Theme); err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionTheme.internal")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "familyId": fam.ID})
 }
 
 // PATCH /api/session/settings — update assistant name, theme, language, and/or persona.
@@ -121,6 +122,18 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "too_long", "err.sessionSettings.too_long")
 		return
 	}
+	// ⚠️ currentTheme is routed through setCurrentTheme rather than passed down
+	// with the rest, because for a non-fallback family it does not live on the
+	// session row at all. Sending it down with the others would write the
+	// desktop's theme every time a phone renamed its assistant.
+	fam := s.familyFor(r)
+	if body.CurrentTheme != nil && fam.ID != domain.FallbackFamilyID {
+		if err := s.setCurrentTheme(r.Context(), sid, fam.ID, *body.CurrentTheme); err != nil {
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionSettings.internal")
+			return
+		}
+		body.CurrentTheme = nil
+	}
 	sess, err := s.store.Sessions().Update(r.Context(), sid, domain.SessionUpdate{
 		AssistantName: body.AssistantName,
 		CurrentTheme:  body.CurrentTheme,
@@ -131,5 +144,5 @@ func (s *Server) handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.sessionSettings.internal")
 		return
 	}
-	s.writeJSON(w, http.StatusOK, sess)
+	s.writeJSON(w, http.StatusOK, s.sessionWithFamilyTheme(r, sess))
 }

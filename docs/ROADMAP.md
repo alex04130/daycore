@@ -428,7 +428,16 @@ F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** �
 - **主题读写现在按调用方的 family 判定**：`X-Frontend-Build` 请求头 → 一次 `GetBuild` 点查（在主题读写路径上，扫全表不行）→ family 的 token 空间。不带头、或者 build 不认识，落到内置**兜底 family**（就是原来那份写死的 13 条）—— 所以现役前端一字未改、行为完全不变。`X-Frontend-Build` **不是凭据**：伪造它换来的是「按另一个 family 的 token 空间校验」，那不是一个能拿来干什么的能力。
 - ⚠️ **删 family 不删它名下的主题，也不级联删 build**。服务端只拦「还有 build 指着它」这种运维看得见的情况（409 并列出是哪些）；主题可能有几千条、是用户数据，一次误点不该带走它们，所以那句话写在按钮旁边由人判断。`orphans` 那一栏能显示出东西，正是因为 build 行活了下来。
 
-⬜ 余下的 F7：**按 family 的主题存储**（`custom_themes.family_id` —— 校验已经按 family 走了，但**存**仍然是全局一份）、补算作业、DB 层的 kind 与第三档 pattern 的审批入口。**DB 层的 kind 仍然没有写入的路**：`Registry` 已经收 `OriginDB`，但生产代码没有人用它调 `Merge`，这是有意的 —— 一个存 kind 的地方而没有存进去的路，就是本仓犯过七次的那种半成品。
+### F7-D 主题按 family 存已落地（2026-08-10）
+
+`custom_themes.family_id` + `theme_switch_log.family_id` 三方言加列，Mongo 加字段并**显式回填**。当前主题按 family 分开。
+
+- **DDL 里的默认值是从 `domain.FallbackFamilyID` 拼出来的**，不是又抄一遍字面量。建表与 ALTER 共用一个来源 —— `reminders_off` 曾经在两处类型不同，那种分叉是永久的，而且只有比对两个部署才看得见。
+- ⚠️ **Mongo 是唯一不能白拿这次迁移的后端**。三个 SQL 引擎加 `NOT NULL DEFAULT` 列会顺手填满已有行；Mongo 没这条规则，加字段之前写的文档就是没有这个字段，查询匹配不上。少了 `Migrate` 里那次 `updateMany`，**此前所有人做过的主题会从列表里消失** —— 不报错、不告警，而且只在四个后端里的一个上消失。有一条真机测试手写迁移前的文档形状来钉它（那个形状已经无法再通过 repository 造出来）。
+- **当前主题：一个 family 一个家，不是一个值两个家**。兜底 family 留在 `sessions.current_theme`（现役前端读的就是它），其余在 `SessionPrefs.ThemeByFamily`。⚠️ 写 prefs 是读-改-写，两台设备同一瞬间换主题会丢一次 —— 有意接受，后果是「再点一次」，与其它每一项 preference 相同；**但如果主题切换有一天变成自动的，要重新评估**。
+- `ListAcrossFamilies` 是一个专给合并路径的方法，不是 `List(sid, "")`。空串在这个接口里到处都是「兜底 family」的意思，一个在写时表示「默认」、在读时表示「全部」的拼写，就是有人最终会一边以为在列一边删掉一整个 family 的主题。
+
+⬜ 余下的 F7：补算作业（`job_runs`，运维触发，每个缺 token 的主题一次 AI 调用）、DB 层的 kind 与第三档 pattern 的审批入口。**DB 层的 kind 仍然没有写入的路**：`Registry` 已经收 `OriginDB`，但生产代码没有人用它调 `Merge`，这是有意的 —— 一个存 kind 的地方而没有存进去的路，就是本仓犯过七次的那种半成品。
 
 ### 集群管理：口子已留（2026-08-10）
 

@@ -152,6 +152,7 @@ var cases = []suiteCase{
 	{"SessionUsage/ThreeScalesAndTumblingWindows", sessionUsageScales},
 	{"Pairing/RoundTripRolesAndThrottledLastSeen", pairingRoundTrip},
 	{"Frontend/FamilyUnionAndBuildFamilyStickiness", frontendRoundTrip},
+	{"Theme/ScopedToFamilyAndDefaultedOnWrite", themeFamilyScope},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -3381,5 +3382,103 @@ func frontendRoundTrip(t *testing.T, h Harness) {
 	// same button must not produce a red screen for the second.
 	if err := repo.DeleteFamily(ctx, "never-a-family"); err != nil {
 		t.Errorf("deleting an absent family reported %v", err)
+	}
+}
+
+// A theme belongs to a token space, not to a session.
+//
+// ⚠️ The failure this pins is silent on three backends and different on the
+// fourth: Mongo has no "NOT NULL DEFAULT backfills existing rows" rule, so a
+// theme written before family_id existed simply has no field, and a query for
+// `family_id: "default"` does not match it. Every theme anybody ever made would
+// vanish from the list — not error, not warn, gone — on exactly one backend.
+// mongostore.Migrate backfills explicitly for that reason; this case is what
+// says so out loud.
+func themeFamilyScope(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	repo := s.Themes()
+
+	mk := func(sid, fam, name string) *domain.CustomTheme {
+		t.Helper()
+		got, err := repo.Create(ctx, &domain.CustomTheme{
+			SessionID: sid, FamilyID: fam, Name: name,
+			Variables: map[string]string{"--primary": "#f472b6"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	liuli := mk("sid1", "liuli", "琉璃的")
+	ting := mk("sid1", "ting", "汀的")
+	// ⚠️ No family at all. It must land in the fallback rather than in a limbo
+	// no List can reach — "the theme I just made is not in the list" is the
+	// most confusing symptom this design can produce, so it is the one pinned.
+	none := mk("sid1", "", "没说是哪个端的")
+	if none.FamilyID != domain.FallbackFamilyID {
+		t.Errorf("a theme written with no family got %q, want the fallback", none.FamilyID)
+	}
+	mk("sid2", "liuli", "别人的")
+
+	for _, c := range []struct {
+		fam  string
+		want []string
+	}{
+		{"liuli", []string{liuli.ID}},
+		{"ting", []string{ting.ID}},
+		{domain.FallbackFamilyID, []string{none.ID}},
+		{"", []string{none.ID}}, // empty means the fallback on read too
+		{"never-existed", nil},
+	} {
+		got, err := repo.List(ctx, "sid1", c.fam)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, th := range got {
+			ids = append(ids, th.ID)
+		}
+		if len(ids) != len(c.want) {
+			t.Errorf("List(%q) returned %d themes, want %d", c.fam, len(ids), len(c.want))
+			continue
+		}
+		for i := range ids {
+			if ids[i] != c.want[i] {
+				t.Errorf("List(%q)[%d] = %q, want %q", c.fam, i, ids[i], c.want[i])
+			}
+		}
+	}
+
+	// Get is NOT scoped to a family — an id is an id, and the caller already had
+	// a reference. Scoping it would turn "you sent the wrong header" into "your
+	// theme disappeared".
+	if got, err := repo.Get(ctx, "sid1", liuli.ID); err != nil || got.FamilyID != "liuli" {
+		t.Errorf("Get across families: %+v err=%v", got, err)
+	}
+
+	// The merge path takes every family's themes, or signing in on the phone
+	// drops what the desktop made.
+	all, err := repo.ListAcrossFamilies(ctx, "sid1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 3 {
+		t.Errorf("ListAcrossFamilies returned %d, want all 3", len(all))
+	}
+	for _, th := range all {
+		if th.FamilyID == "" {
+			t.Errorf("theme %q came back with no family; the column is not being read", th.Name)
+		}
+	}
+
+	// The switch log carries it too — "switched to 深夜紫 at 23:40" means
+	// something different on the phone than on the desktop.
+	if err := s.ThemeLog().Add(ctx, "sid1", liuli.ID, "liuli"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ThemeLog().Add(ctx, "sid1", none.ID, ""); err != nil {
+		t.Fatal(err)
 	}
 }

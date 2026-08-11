@@ -5,6 +5,8 @@ package sqlstore
 // so keys use VARCHAR and indexes are declared inline in CREATE TABLE.
 
 import (
+	"daycore/internal/domain"
+
 	mysqldriver "github.com/go-sql-driver/mysql"
 )
 
@@ -219,6 +221,7 @@ func (mysqlDialect) Migrations() []string {
 		`CREATE TABLE IF NOT EXISTS theme_switch_log (
 			id VARCHAR(191) PRIMARY KEY,
 			session_id VARCHAR(191) NOT NULL,
+			family_id VARCHAR(64) NOT NULL DEFAULT '` + domain.FallbackFamilyID + `',
 			theme VARCHAR(64) NOT NULL,
 			switched_at BIGINT NOT NULL,
 			KEY theme_log_session (session_id)
@@ -336,6 +339,7 @@ func (mysqlDialect) Migrations() []string {
 		`CREATE TABLE IF NOT EXISTS custom_themes (
 			id VARCHAR(191) PRIMARY KEY,
 			session_id VARCHAR(191) NOT NULL,
+			family_id VARCHAR(64) NOT NULL DEFAULT '` + domain.FallbackFamilyID + `',
 			name VARCHAR(191) NOT NULL,
 			base VARCHAR(32) NOT NULL DEFAULT '',
 			dark TINYINT(1) NOT NULL DEFAULT 0,

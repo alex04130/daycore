@@ -2,7 +2,11 @@ package sqlstore
 
 // ─── SQLite (modernc.org/sqlite, pure Go, no CGO) ───────────────────────────
 
-import "strings"
+import (
+	"strings"
+
+	"daycore/internal/domain"
+)
 
 type sqliteDialect struct{}
 
@@ -215,6 +219,7 @@ func (sqliteDialect) Migrations() []string {
 		`CREATE TABLE IF NOT EXISTS theme_switch_log (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
+			family_id TEXT NOT NULL DEFAULT '` + domain.FallbackFamilyID + `',
 			theme TEXT NOT NULL,
 			switched_at BIGINT NOT NULL
 		)`,
@@ -332,6 +337,7 @@ func (sqliteDialect) Migrations() []string {
 		`CREATE TABLE IF NOT EXISTS custom_themes (
 			id TEXT PRIMARY KEY,
 			session_id TEXT NOT NULL,
+			family_id TEXT NOT NULL DEFAULT '` + domain.FallbackFamilyID + `',
 			name TEXT NOT NULL,
 			base TEXT NOT NULL DEFAULT '',
 			dark INTEGER NOT NULL DEFAULT 0,

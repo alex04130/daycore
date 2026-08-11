@@ -33,6 +33,17 @@ import (
 //
 // It is not "our own code" even when it is.
 
+// FallbackFamilyID is the family a request that names no build is judged
+// against, and the family every theme written before families existed belongs
+// to.
+//
+// ⚠️ It lives in domain rather than in the server package because the STORAGE
+// layer needs it too: the column that carries it defaults to this exact string,
+// so an upgraded database and a fresh one agree without anybody remembering to
+// keep two literals in step. There is no stored row for it — see
+// server/themes.go for why a seeded family would be worse than a constant.
+const FallbackFamilyID = "default"
+
 // TokenSpec is one theme variable a frontend declares.
 type TokenSpec struct {
 	// Name is the CSS custom property, "--primary".
