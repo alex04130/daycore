@@ -11,16 +11,20 @@ import (
 
 type frontendRepo struct{ *Store }
 
-const familyCols = `id, display_name, tokens_json, rules, rules_accepted, pinned, created_at, updated_at`
+const familyCols = `id, display_name, tokens_json, rules, rules_accepted, pinned, backfill_requested_at, created_at, updated_at`
 const buildCols = `build_hash, family_id, display_name, build_version, min_api, first_seen_at, last_seen_at`
 
 func scanFamily(s scanner) (domain.FrontendFamily, error) {
 	var f domain.FrontendFamily
 	var name, tokensJSON, rules sql.NullString
 	var accepted, pinned int
-	var created, updated int64
-	if err := s.Scan(&f.ID, &name, &tokensJSON, &rules, &accepted, &pinned, &created, &updated); err != nil {
+	var backfill, created, updated int64
+	if err := s.Scan(&f.ID, &name, &tokensJSON, &rules, &accepted, &pinned, &backfill, &created, &updated); err != nil {
 		return f, err
+	}
+	if backfill > 0 {
+		at := fromMillis(backfill)
+		f.BackfillRequestedAt = &at
 	}
 	f.DisplayName, f.Rules = name.String, rules.String
 	f.RulesAccepted, f.Pinned = accepted != 0, pinned != 0
@@ -88,18 +92,22 @@ func (r frontendRepo) UpsertFamily(ctx context.Context, f domain.FrontendFamily)
 		return err
 	}
 	now := nowMillis()
+	var backfill int64
+	if f.BackfillRequestedAt != nil {
+		backfill = f.BackfillRequestedAt.UnixMilli()
+	}
 	res, err := r.exec(ctx,
 		`UPDATE frontend_families SET display_name = ?, tokens_json = ?, rules = ?,
-		 rules_accepted = ?, pinned = ?, updated_at = ? WHERE id = ?`,
-		f.DisplayName, string(b), f.Rules, boolToInt(f.RulesAccepted), boolToInt(f.Pinned), now, f.ID)
+		 rules_accepted = ?, pinned = ?, backfill_requested_at = ?, updated_at = ? WHERE id = ?`,
+		f.DisplayName, string(b), f.Rules, boolToInt(f.RulesAccepted), boolToInt(f.Pinned), backfill, now, f.ID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		return nil
 	}
-	_, err = r.exec(ctx, `INSERT INTO frontend_families (`+familyCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.ID, f.DisplayName, string(b), f.Rules, boolToInt(f.RulesAccepted), boolToInt(f.Pinned), now, now)
+	_, err = r.exec(ctx, `INSERT INTO frontend_families (`+familyCols+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		f.ID, f.DisplayName, string(b), f.Rules, boolToInt(f.RulesAccepted), boolToInt(f.Pinned), backfill, now, now)
 	return err
 }
 

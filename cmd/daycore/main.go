@@ -297,6 +297,7 @@ func run(logger *slog.Logger) error {
 	srv.StartWorkerLease()
 	srv.StartJobRunPrune()
 	srv.StartAILogRollUp()
+	srv.StartThemeBackfill()
 	// Proposal lifecycle. Its first pass runs at boot, which is what settles the
 	// decision cards orphaned by the process that died — they are already lapsed
 	// (a decision card's TTL is the agent's own wait budget), so they need

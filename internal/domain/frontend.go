@@ -2,6 +2,10 @@ package domain
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -85,9 +89,75 @@ type FrontendFamily struct {
 	// "liuli" defines it. Pinning is the operator saying "this is the one I
 	// mean", after which a build claiming the same id joins as a member and
 	// cannot widen it.
-	Pinned    bool      `json:"pinned"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Pinned bool `json:"pinned"`
+	// BackfillRequestedAt is an operator saying "fill in the tokens my stored
+	// themes are missing". Zero means nobody has asked.
+	//
+	// ⚠️ It is REQUESTED, never automatic, because it costs one model call per
+	// theme — a family with two thousand themes is two thousand calls, and the
+	// widening that made them incomplete is a routine deploy. A backend that
+	// started spending on its own here would be spending because somebody
+	// shipped a frontend.
+	//
+	// It is also PERSISTENT rather than a goroutine started by the request: the
+	// work outlives any one process, and a restart halfway through has to
+	// resume rather than leave half the themes filled with nothing recording
+	// that.
+	//
+	// The leader clears it when a full pass finds nothing left to do. Widening
+	// the family again does NOT re-arm it — that is another decision, with
+	// another price.
+	// ⚠️ A POINTER, and that is not a style choice: `json:",omitempty"` does
+	// NOT omit a zero time.Time on this Go version (omitzero arrived in 1.24),
+	// so a value field shipped `"0001-01-01T00:00:00Z"` on every family and the
+	// console's "is a backfill running" test — a truthiness check on the field —
+	// was true for every family, forever. Same shape as JobRun.EndedAt, which is
+	// a pointer for the same reason.
+	BackfillRequestedAt *time.Time `json:"backfillRequestedAt,omitempty"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+}
+
+// TokenSpaceHash identifies this family's TOKEN SPACE — the thing a backfill is
+// filling against.
+//
+// ⚠️ Not UpdatedAt, and the difference is the whole point. The handshake calls
+// UpsertFamily on EVERY connection, whether or not anything changed, and that
+// writes updated_at = now. A run key built from it therefore rotated every time
+// any frontend loaded a page: each rotation minted a fresh job_runs occurrence,
+// which reset the attempts counter, which meant a permanently failing theme was
+// paid for again and again forever — with JobMaxAttempts recorded as 1 each
+// time, so nothing looked wrong.
+//
+// Keyed on names AND kinds because a token whose kind changed is a different
+// value to generate, and sorted because the union is built from an unordered
+// merge. Truncated to 16 hex characters: the only thing it has to do is differ
+// when the space differs, and collisions here would just mean one theme is not
+// re-filled after a widening.
+func (f FrontendFamily) TokenSpaceHash() string {
+	parts := make([]string, 0, len(f.Tokens))
+	for _, t := range f.Tokens {
+		parts = append(parts, t.Name+":"+t.Kind)
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// MissingTokens reports which of this family's tokens a theme does not carry.
+//
+// ⚠️ Missing, never extra. A theme holding a token the family has since dropped
+// keeps it: the family's token space is a union that only grows in practice, a
+// build that no longer uses a variable simply ignores it, and deleting values
+// somebody chose in order to tidy up a list is not a trade this makes.
+func (f FrontendFamily) MissingTokens(vars map[string]string) []TokenSpec {
+	var out []TokenSpec
+	for _, t := range f.Tokens {
+		if _, ok := vars[t.Name]; !ok {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // TokenByName finds a declared token.

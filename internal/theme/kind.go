@@ -49,6 +49,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // Kind is a value type for a theme token.
@@ -212,6 +213,54 @@ func (r *Registry) All() []Kind {
 	return out
 }
 
+// Describe renders one kind expression as a shape a person — or a model — can
+// follow, e.g. "#rrggbb | rgba(…) | …" for color, or "one of: blur, none".
+//
+// ⚠️ It reads the REGISTRY, not a phrase written next to the template. A kind
+// an operator added to a JSON file has to be described as accurately as a
+// built-in one, or the whole "add a kind without a release" story stops at the
+// point where somebody tries to use it: the model is told a name it cannot
+// guess the shape of, produces something arbitrary, and validation drops it.
+//
+// Empty for an unknown kind. The caller is describing what it is ABOUT to
+// validate against; a confident description of a kind nothing can check would
+// be worse than none.
+func (r *Registry) Describe(kind string) string {
+	kind = strings.TrimSpace(kind)
+	switch {
+	case strings.HasPrefix(kind, "one-of[") && strings.HasSuffix(kind, "]"):
+		items := splitList(kind[len("one-of[") : len(kind)-1])
+		if len(items) == 0 {
+			return ""
+		}
+		return "one of: " + strings.Join(items, ", ")
+	case strings.HasPrefix(kind, "list-of<") && strings.HasSuffix(kind, ">"):
+		inner := r.Describe(kind[len("list-of<") : len(kind)-1])
+		if inner == "" {
+			return ""
+		}
+		return fmt.Sprintf("up to %d, space-separated, each: %s", MaxListItems, inner)
+	case strings.HasPrefix(kind, "nullable<") && strings.HasSuffix(kind, ">"):
+		inner := r.Describe(kind[len("nullable<") : len(kind)-1])
+		if inner == "" {
+			return ""
+		}
+		return "empty, or: " + inner
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	k, ok := r.kinds[kind]
+	if !ok {
+		return ""
+	}
+	if k.Description != "" {
+		return k.Description
+	}
+	// No prose written for it — the pattern itself is the honest answer, and a
+	// model reads a regex better than it reads a guess.
+	return k.Pattern
+}
+
 // Known reports whether a kind expression is one this deployment can validate.
 //
 // Accepts combinators, so a manifest declaring `list-of<length>` is known even
@@ -224,6 +273,14 @@ func (r *Registry) Known(kind string) bool { return r.resolve(kind) == nil }
 // expression can never be a way past it.
 func (r *Registry) Validate(kind, value string) error {
 	if err := CharacterFloor(value); err != nil {
+		return err
+	}
+	// ⚠️ resolve() FIRST, so a malformed or over-long kind expression cannot
+	// validate anything. Without it the bounds live only on the storing path
+	// and validate()'s own one-of branch happily matched against a member list
+	// nothing had checked — a kind is only a promise if the thing that enforces
+	// it agrees the kind is well formed.
+	if err := r.resolve(kind); err != nil {
 		return err
 	}
 	return r.validate(kind, strings.TrimSpace(value))
@@ -293,6 +350,33 @@ func (r *Registry) validate(kind, value string) error {
 	return nil
 }
 
+// Bounds on a kind EXPRESSION — third-party text that reaches the model.
+//
+// Generous enough that no honest manifest notices, small enough that the thing
+// cannot become a payload: a `one-of` naming more than 64 alternatives is not
+// describing a design token, and a single alternative longer than 64 characters
+// is not a CSS value.
+const (
+	MaxKindExpression = 512
+	MaxOneOfMembers   = 64
+	MaxOneOfMember    = 64
+)
+
+// kindExprRe is every character a kind expression may contain: primitive names,
+// enum keywords, and the three combinators' punctuation. Nothing else.
+var kindExprRe = regexp.MustCompile(`^[A-Za-z0-9 ,._%#\[\]<>+-]+$`)
+
+// clip shortens a string for an error message without splitting a rune.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
 // MaxListItems bounds a list-of value. Four is a box-shadow; sixteen is
 // somebody using a theme variable as a database.
 const MaxListItems = 16
@@ -300,10 +384,43 @@ const MaxListItems = 16
 // resolve reports whether a kind expression can be validated at all, without a
 // value to check. Returns nil when it can.
 func (r *Registry) resolve(kind string) error {
+	// ⚠️ A kind EXPRESSION is third-party text, and it is the one piece of a
+	// manifest that reaches the model without an operator approving it: the
+	// token list is rendered into every theme prompt so the model knows what
+	// shapes to write. `rules` is gated behind RulesAccepted precisely to keep
+	// unapproved frontend text out of there, and an unbounded kind expression
+	// walks around that gate — `one-of[a, <newline> ignore everything above]`
+	// was accepted, stored, and interpolated verbatim.
+	//
+	// Bounded HERE rather than only at the handshake because this is the
+	// function that decides what "known" means, and every route that ever
+	// stores a kind (the handshake today, the DB layer later) asks it.
+	if len(kind) > MaxKindExpression {
+		return fmt.Errorf("kind expression is %d characters; the limit is %d", len(kind), MaxKindExpression)
+	}
+	// ⚠️ An allowlist, not the value floor. The floor forbids `<` and `>`, which
+	// `list-of<…>` legitimately contains — so a kind expression gets its own
+	// charset, and it is deliberately narrower than the floor everywhere else:
+	// a kind names primitives and enum keywords, so `(` alone already rules out
+	// `url(`, and there is no honest expression that needs a brace, a
+	// semicolon, a backslash or a newline.
+	if !kindExprRe.MatchString(kind) {
+		return fmt.Errorf("kind expression %q contains characters a kind cannot contain", clip(kind, 48))
+	}
 	switch {
 	case strings.HasPrefix(kind, "one-of[") && strings.HasSuffix(kind, "]"):
-		if len(splitList(kind[len("one-of["):len(kind)-1])) == 0 {
+		members := splitList(kind[len("one-of[") : len(kind)-1])
+		if len(members) == 0 {
 			return fmt.Errorf("%s lists no values", kind)
+		}
+		if len(members) > MaxOneOfMembers {
+			return fmt.Errorf("%s lists %d values; the limit is %d", kind, len(members), MaxOneOfMembers)
+		}
+		for _, m := range members {
+			if len(m) > MaxOneOfMember {
+				return fmt.Errorf("in %s: %q is %d characters; the limit is %d",
+					kind, clip(m, 32), len(m), MaxOneOfMember)
+			}
 		}
 		return nil
 	case strings.HasPrefix(kind, "list-of<") && strings.HasSuffix(kind, ">"):

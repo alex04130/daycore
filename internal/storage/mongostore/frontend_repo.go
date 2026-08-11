@@ -19,6 +19,7 @@ type familyDoc struct {
 	Rules         string             `bson:"rules,omitempty"`
 	RulesAccepted bool               `bson:"rules_accepted"`
 	Pinned        bool               `bson:"pinned"`
+	BackfillAt    int64              `bson:"backfill_requested_at,omitempty"`
 	CreatedAt     int64              `bson:"created_at"`
 	UpdatedAt     int64              `bson:"updated_at"`
 }
@@ -28,11 +29,16 @@ func (d familyDoc) toDomain() domain.FrontendFamily {
 	if tokens == nil {
 		tokens = []domain.TokenSpec{}
 	}
-	return domain.FrontendFamily{
+	f := domain.FrontendFamily{
 		ID: d.ID, DisplayName: d.DisplayName, Tokens: tokens,
 		Rules: d.Rules, RulesAccepted: d.RulesAccepted, Pinned: d.Pinned,
 		CreatedAt: fromMillis(d.CreatedAt), UpdatedAt: fromMillis(d.UpdatedAt),
 	}
+	if d.BackfillAt > 0 {
+		at := fromMillis(d.BackfillAt)
+		f.BackfillRequestedAt = &at
+	}
+	return f
 }
 
 type buildDoc struct {
@@ -89,10 +95,15 @@ func (r frontendRepo) UpsertFamily(ctx context.Context, f domain.FrontendFamily)
 		tokens = []domain.TokenSpec{}
 	}
 	now := nowMillis()
+	var backfill int64
+	if f.BackfillRequestedAt != nil {
+		backfill = f.BackfillRequestedAt.UnixMilli()
+	}
 	_, err := r.c("frontend_families").UpdateOne(ctx, bson.M{"_id": f.ID}, bson.M{
 		"$set": bson.M{
 			"display_name": f.DisplayName, "tokens": tokens, "rules": f.Rules,
-			"rules_accepted": f.RulesAccepted, "pinned": f.Pinned, "updated_at": now,
+			"rules_accepted": f.RulesAccepted, "pinned": f.Pinned,
+			"backfill_requested_at": backfill, "updated_at": now,
 		},
 		"$setOnInsert": bson.M{"created_at": now},
 	}, options.Update().SetUpsert(true))

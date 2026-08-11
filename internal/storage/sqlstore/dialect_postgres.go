@@ -197,6 +197,7 @@ func (postgresDialect) Migrations() []string {
 			rules TEXT,
 			rules_accepted INTEGER NOT NULL DEFAULT 0,
 			pinned INTEGER NOT NULL DEFAULT 0,
+			backfill_requested_at BIGINT NOT NULL DEFAULT 0,
 			created_at BIGINT NOT NULL,
 			updated_at BIGINT NOT NULL
 		)`,

@@ -114,6 +114,13 @@ const (
 	JobAutoPlan      = "auto_plan"
 	JobRhythmLearn   = "rhythm_learn"
 	JobProtector     = "protector"
+	// JobThemeBackfill fills the tokens a theme is missing after its family's
+	// token space widened. One occurrence per theme per version of that space.
+	//
+	// ⚠️ The only job here that COSTS MONEY per occurrence, which is why the
+	// attempts cap matters more for it than for the others: a theme that fails
+	// every time would otherwise be paid for on every sweep, forever.
+	JobThemeBackfill = "theme_backfill"
 )
 
 // JobStaleAfter is how long a row may sit in "running" before another instance

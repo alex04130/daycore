@@ -25,7 +25,9 @@
 
 **能力发现一律靠可选接口断言**，不进 `AIProvider`：`PartCarrier`（`CarriagesFor`）、`ToolStreamer`、`ImageGenerator`、`SpeechSynthesizer`、`Transcriber`、`Embedder`，各有 `As*` 助手函数。**沉默一律当「不支持」** —— 猜低只多一次 base64 往返，猜高是用户看着模型无视了他的附件。
 
-`ContentPart{Type, Text, MIME, Data, URL, FileID, Name}` 是消息里的一段；`ChatResponse.Parts` 装产物，`ChatResponse.Usage` 装用量（含 `CachedTokens` / `ReasoningTokens`）。三个格式的 Chat 与 ChatStream 都解析 usage（流式经 `ai.Chunk.Usage` 末帧 → `StreamAccumulator` 汇总；openai 发 `stream_options.include_usage`，anthropic 拼 message_start/message_delta，ollama 取末帧计数）。server 侧 `s.logAICall`（best-effort）把**每一次模型调用**落进 `ai_call_logs`：9 个非流式端点 + companion 每轮一条。Catalog 另有四个能力选择器（`Transcriber()`/`SpeechSynthesizer()`/`ImageGenerator()`/`Embedder()`，断言遍历目录首个命中），`GET /api/version` 的 `features` 字段由它们派生——端侧据此发现本部署能力，不硬编码假设。
+`ContentPart{Type, Text, MIME, Data, URL, FileID, Name}` 是消息里的一段；`ChatResponse.Parts` 装产物，`ChatResponse.Usage` 装用量（含 `CachedTokens` / `ReasoningTokens`）。三个格式的 Chat 与 ChatStream 都解析 usage（流式经 `ai.Chunk.Usage` 末帧 → `StreamAccumulator` 汇总；openai 发 `stream_options.include_usage`，anthropic 拼 message_start/message_delta，ollama 取末帧计数）。server 侧 `s.logAICall`（best-effort）把**每一次模型调用**落进 `ai_call_logs`：10 个非流式端点 + companion 每轮一条。
+
+⚠️ **有一条不进用户的用量计数：`theme_backfill`**（`logAICallNotBilledToTheAccount`，2026-08-11）。账本行照样带 `session_id` —— 那是「这笔钱买了什么」，是花销与它买到的那套主题之间唯一的连接；但 `sessions.usage_*` 回答的是「**这个账号在干什么**」，控制台拿它找谁在猛打 API，三小时的窗口正是为了反映行为。补算是运维按的按钮，不是账号做的事：一个两千套主题的 family 会同时把两千个账号的三小时窗口顶起来，然后去查原因的人看到的是两千个无辜用户，而不是那次部署。`endpoint` 列（`theme_backfill` 对 `theme_gen`）是账本区分两者的方式。Catalog 另有四个能力选择器（`Transcriber()`/`SpeechSynthesizer()`/`ImageGenerator()`/`Embedder()`，断言遍历目录首个命中），`GET /api/version` 的 `features` 字段由它们派生——端侧据此发现本部署能力，不硬编码假设。
 
 `GeneratedMedia` 拿的是字节不是 `blob.Ref`：这一层不许依赖存储层，而且 OpenAI 的图像端点现在只返回 base64，字节本来就是实际到手的东西。落不落盘由调用方决定。
 
@@ -45,7 +47,13 @@
 
 - `PromptService.Render(ctx, key, locale, data)`（text/template，missingkey=zero）。
 - **双 locale 铁律**：zh-CN 与 en-US 必须同名成对，缺一 `NewPromptService` 启动报错。
-- key 清单（2026-07-15）：auto_plan、companion_agent（L1 纯规则清单零人格）、companion_context、day_plan_text、day_plan_image、mood、schedule_extract_image、theme_gen、inbox_classify（随手记录归类器，Categories 注入启用类别清单）、food_recognize（拍照→diet 营养估计，走 vision）、travel_suggest（目的地→行程 JSON）。
+- key 清单（2026-08-11 更新）：auto_plan、companion_agent（L1 纯规则清单零人格）、companion_context、day_plan_text、day_plan_image、mood、schedule_extract_image、theme_gen、**theme_backfill**、inbox_classify（随手记录归类器，Categories 注入启用类别清单）、food_recognize（拍照→diet 营养估计，走 vision）、travel_suggest（目的地→行程 JSON）、persona、brief、replan。
+
+  ⚠️ **`theme_backfill` 是独立的一个 key，不是 `theme_gen` 的一个分支**。两者要的东西相反：`theme_gen` 从一句描述设计一整套配色，`theme_backfill` 往一套**用户已经选定、一个字都不许动**的配色里补几个值。合成一个模板，就是把「全部保留」和「全部重做」写进同一段字然后让模型自己挑。
+
+  ⚠️ **`theme_gen` 与 `theme_backfill` 的可用变量清单不是常量**，它按调用方前端的 family 生成（名字 + kind + 该 kind 允许的形状，形状**从 kind 注册表问出来**）。此前它写死 13 条颜色 token 却按调用方的 family 过滤输出 —— 声明了别的 token 的前端，被要求产出它没有的变量，然后产出的每一条都被丢掉。`{{if .Builtin}}` 保留设计系统自己那套规则给不握手的现役前端。
+
+  ⚠️ **前端自带的 `rules` 只有运维批准后才进模型**（`FamilyRules` 在未批准时是空串，模板转而按 token 清单机械生成规则）。与此配套：**token 的 `kind` 表达式本身也进提示词**，所以它同样有界 —— 见 `docs/specs/frontend-manifest.md`。
 - 组装顺序：L1 → L3 → L2(persona) → L1_reminder。
 - install 导出器 walk embed FS——新模板自动被导出，无需改 install.go。
 

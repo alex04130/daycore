@@ -196,6 +196,16 @@ export const deleteFrontendFamily = (id) =>
 export const setBuildFamily = (hash, familyId) =>
 	request(`/frontends/builds/${encodeURIComponent(hash)}/family`, { method: 'PUT', body: { familyId } });
 
+// ⚠️ The price is a read; spending it is not. Three verbs on one path because
+// this is one decision with a cost — see the section for what the DELETE does
+// and, more importantly, what it does not.
+export const getBackfillPrice = (id) =>
+	request(`/frontends/families/${encodeURIComponent(id)}/backfill`);
+export const startBackfill = (id) =>
+	request(`/frontends/families/${encodeURIComponent(id)}/backfill`, { method: 'POST' });
+export const stopBackfill = (id) =>
+	request(`/frontends/families/${encodeURIComponent(id)}/backfill`, { method: 'DELETE' });
+
 export const getUsers = () => request('/users');
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');

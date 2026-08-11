@@ -449,6 +449,67 @@
       '403': { $ref: '#/components/responses/Error' }
       '409': { description: Builds still point at this family. }
       '503': { description: 'Degraded: no database.' }
+/api/admin/frontends/families/{id}/backfill:
+  get:
+    operationId: adminBackfillPrice
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: How many themes in this family are missing tokens — the price.
+    description: >-
+      One model call per theme, so this is money. `capped: true` means the walk
+      stopped at its ceiling and `themes` is a floor — reported rather than
+      hidden, because "500" and "at least 500" are different sentences to
+      somebody deciding whether to press the button.
+
+      Separate from the family list on purpose: folding it in would make every
+      console load walk every theme of every family, slow in exactly the
+      deployment where the number matters most.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses:
+      '200': { description: OK }
+      '403': { $ref: '#/components/responses/Error' }
+      '404': { description: No such family. }
+      '503': { description: 'Degraded: no database.' }
+  post:
+    operationId: adminBackfillStart
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Ask for the missing tokens to be filled in. Costs one model call per theme.
+    description: >-
+      ⚠️ NEVER automatic. The widening that made these themes incomplete is a
+      routine deploy; a backend that started spending on its own here would be
+      spending because somebody shipped a frontend.
+
+      The request is stored on the family, not held in a goroutine — the work
+      outlives any one process and a restart resumes rather than leaving half
+      the themes filled with nothing recording that. The leader fills up to
+      `perSweep` themes a minute, through job_runs, so two instances cannot pay
+      for the same theme twice and one that fails permanently stops after three
+      attempts instead of being billed on every sweep forever.
+
+      Pressing it twice is not an error.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses:
+      '200': { description: OK }
+      '403': { $ref: '#/components/responses/Error' }
+      '404': { description: No such family. }
+      '503': { description: 'Degraded: no database.' }
+  delete:
+    operationId: adminBackfillStop
+    tags: [admin]
+    security: [{ adminToken: [] }]
+    summary: Call off a running backfill.
+    description: >-
+      ⚠️ A STOP, not an undo. Themes already filled stay filled — there is no
+      undo for a theme, which is also why the fill merges into what is there
+      rather than replacing it. Exists because a backfill can run for hours and
+      somebody who pressed the button on the wrong family has no other way out.
+    parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+    responses:
+      '200': { description: OK }
+      '403': { $ref: '#/components/responses/Error' }
+      '404': { description: No such family. }
+      '503': { description: 'Degraded: no database.' }
 /api/admin/frontends/builds/{hash}/family:
   put:
     operationId: adminMoveBuild

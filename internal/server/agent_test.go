@@ -1,6 +1,8 @@
 package server
 
 import (
+	"time"
+
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -62,6 +64,26 @@ func newAgentTestServer(t *testing.T) (*Server, string) {
 		Config: &config.Config{AgentMaxRounds: 3, RateLimitPerMin: 0},
 		Store:  store,
 		Logger: slog.New(slog.NewTextHandler(new(strings.Builder), nil)),
+	})
+	// ⚠️ Wait for tracked background work before the store closes and t.TempDir
+	// removes the directory under it.
+	//
+	// Handlers spawn GoTracked goroutines (operation logs, AI call logs) that
+	// outlive the request. Production waits for them — main.go calls
+	// WaitBackground on shutdown — and nothing here did, so a goroutine could
+	// still be writing when the directory went away. The symptom was a flaky
+	// "TempDir RemoveAll cleanup: directory not empty" in whichever test
+	// happened to be last, which reads like a bug in that test and is not one.
+	//
+	// Registered AFTER the store's Close so it runs BEFORE it (cleanups are
+	// LIFO) — closing the store out from under a goroutine that is mid-write is
+	// the thing being prevented, not a step towards it.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.WaitBackground(ctx); err != nil {
+			t.Errorf("background work outlived the test by more than 5s: %v", err)
+		}
 	})
 	return s, sid
 }

@@ -180,6 +180,7 @@ func TestFrontendReadAndManageAreSeparate(t *testing.T) {
 		} `json:"families"`
 		Kinds            []map[string]string `json:"kinds"`
 		FallbackFamilyID string              `json:"fallbackFamilyId"`
+		Limits           map[string]int      `json:"limits"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
@@ -195,8 +196,77 @@ func TestFrontendReadAndManageAreSeparate(t *testing.T) {
 	if body.FallbackFamilyID == "" {
 		t.Error("the fallback family is not named; the console cannot say which space applies to a frontend that never handshakes")
 	}
+	// ⚠️ Every number the screen states about this deployment comes FROM the
+	// deployment. A hardcoded copy in the UI is a second source that drifts
+	// silently the first time somebody tunes one — and the console shows the
+	// sweep size while a backfill is RUNNING, where it has no price response to
+	// read it from, so it cannot be left to that endpoint.
+	for _, want := range []struct {
+		key string
+		val int
+	}{
+		{"maxFamilies", domain.MaxFamilies},
+		{"maxFamilyTokens", domain.MaxFamilyTokens},
+		{"backfillPerSweep", ThemeBackfillPerSweep},
+	} {
+		if got := body.Limits[want.key]; got != want.val {
+			t.Errorf("limits.%s is %d, want %d — the console cannot state it correctly", want.key, got, want.val)
+		}
+	}
 
 	if rec := adminReq(t, s, http.MethodPut, "/api/admin/frontends/families/liuli", `{"pinned":true}`, withAdminCookie(t, s, "watcher")); rec.Code != http.StatusForbidden {
 		t.Errorf("frontends.read pinned a family: %d", rec.Code)
+	}
+}
+
+// A family nobody asked to backfill must not LOOK like one that is running.
+//
+// ⚠️ The trap: `json:",omitempty"` does NOT omit a zero time.Time on this Go
+// version (omitzero arrived in 1.24). A value field therefore shipped
+// `"backfillRequestedAt":"0001-01-01T00:00:00Z"` on every family, and the
+// console's check — a truthiness test on the field — was true for every family,
+// forever. Every row would have said 补算进行中 and the price button would never
+// have appeared.
+//
+// Found by an adversarial review pass, which then dismissed it. It is real:
+// this test fails against a value field.
+func TestAnIdleFamilyDoesNotReportABackfill(t *testing.T) {
+	s := adminServer(t)
+	handshake(t, s, `{"familyId":"liuli","theme":{"tokens":[{"name":"--primary","kind":"color"}]}}`)
+
+	rec := adminReq(t, s, http.MethodGet, "/api/admin/frontends", "", withRootHeader(s))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	// Asserted on the RAW JSON, because that is what the console sees. A typed
+	// round trip through the same struct would agree with itself and prove
+	// nothing.
+	var raw struct {
+		Families []map[string]any `json:"families"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Families) != 1 {
+		t.Fatalf("got %d families", len(raw.Families))
+	}
+	if v, present := raw.Families[0]["backfillRequestedAt"]; present {
+		t.Errorf("an idle family ships backfillRequestedAt=%v; every console row will read as 补算进行中", v)
+	}
+
+	// …and once somebody asks, it is there and it is a real time.
+	if rec := adminReq(t, s, http.MethodPost, "/api/admin/frontends/families/liuli/backfill", "", withRootHeader(s)); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	rec = adminReq(t, s, http.MethodGet, "/api/admin/frontends", "", withRootHeader(s))
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	v, present := raw.Families[0]["backfillRequestedAt"]
+	if !present {
+		t.Fatal("after asking for a backfill the field is still absent; the console can never show it as running")
+	}
+	if s, _ := v.(string); s == "" || strings.HasPrefix(s, "0001-") {
+		t.Errorf("backfillRequestedAt is %v, which is not a real request time", v)
 	}
 }

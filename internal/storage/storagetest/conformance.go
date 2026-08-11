@@ -3287,6 +3287,32 @@ func frontendRoundTrip(t *testing.T, h Harness) {
 		t.Errorf("the flags did not stick: accepted=%v pinned=%v", got.RulesAccepted, got.Pinned)
 	}
 
+	// ⚠️ The backfill request is the only field here that costs money when it
+	// is read wrong: a value that failed to round-trip reads as "nobody asked",
+	// and the leader silently never spends — a feature that looks implemented
+	// and does nothing. Millisecond precision because it is stored as an epoch.
+	asked := time.Now().UTC().Truncate(time.Millisecond)
+	fam.BackfillRequestedAt = &asked
+	if err := repo.UpsertFamily(ctx, fam); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = repo.GetFamily(ctx, "liuli")
+	if got.BackfillRequestedAt == nil || !got.BackfillRequestedAt.Equal(asked) {
+		t.Errorf("the backfill request round-tripped as %v, want %v", got.BackfillRequestedAt, asked)
+	}
+	// …and clearing it really clears it, or a finished backfill sweeps forever.
+	//
+	// ⚠️ nil, not a zero time: the field is a pointer because `omitempty` does
+	// not omit a zero struct on this Go version, and a family that always
+	// reported a timestamp made every console row read as "backfill running".
+	fam.BackfillRequestedAt = nil
+	if err := repo.UpsertFamily(ctx, fam); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = repo.GetFamily(ctx, "liuli"); got.BackfillRequestedAt != nil {
+		t.Errorf("clearing the backfill request left %v", *got.BackfillRequestedAt)
+	}
+
 	// ── builds ──────────────────────────────────────────────────────────────
 	now := time.Now().UTC()
 	b := domain.FrontendBuild{BuildHash: "web-1", FamilyID: "liuli", DisplayName: "琉璃 web", Version: "4.2.0", MinAPI: 1}
@@ -3480,5 +3506,53 @@ func themeFamilyScope(t *testing.T, h Harness) {
 	}
 	if err := s.ThemeLog().Add(ctx, "sid1", none.ID, ""); err != nil {
 		t.Fatal(err)
+	}
+
+	// ── ScanFamily: deployment-wide, keyset-paged ───────────────────────────
+	//
+	// ⚠️ The backfill's only reader, and it walks EVERY SESSION — a family's
+	// themes belong to thousands of people. A scan that stayed session-scoped
+	// would fill one person's themes and report the family done.
+	//
+	// Keyset on id rather than OFFSET because the sweep WRITES to the rows it
+	// is walking: under OFFSET, a row updated mid-scan can shift and be skipped
+	// or repeated, and a skipped row is a theme that stays broken while the
+	// console says the family is complete.
+	seen := map[string]bool{}
+	after, pages := "", 0
+	for {
+		page, err := repo.ScanFamily(ctx, "liuli", after, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		pages++
+		if pages > 10 {
+			t.Fatal("ScanFamily never returned an empty page; the cursor is not advancing")
+		}
+		for _, th := range page {
+			if seen[th.ID] {
+				t.Errorf("ScanFamily returned %q twice", th.ID)
+			}
+			seen[th.ID] = true
+			if th.FamilyID != "liuli" {
+				t.Errorf("ScanFamily(\"liuli\") returned a theme from family %q", th.FamilyID)
+			}
+			after = th.ID
+		}
+	}
+	// sid1's 琉璃 theme and sid2's, across two sessions.
+	if len(seen) != 2 {
+		t.Errorf("ScanFamily saw %d themes across sessions, want 2", len(seen))
+	}
+	// A page size of 1 must actually be honoured, or the cap that keeps a
+	// two-thousand-theme family from being read into memory at once is fiction.
+	if page, _ := repo.ScanFamily(ctx, "liuli", "", 1); len(page) != 1 {
+		t.Errorf("ScanFamily with limit 1 returned %d rows", len(page))
+	}
+	if page, _ := repo.ScanFamily(ctx, "never-a-family", "", 10); len(page) != 0 {
+		t.Errorf("ScanFamily on an unknown family returned %d rows", len(page))
 	}
 }

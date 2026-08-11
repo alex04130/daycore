@@ -352,6 +352,10 @@ var routePermissions = map[string]string{
 	"PUT /api/admin/frontends/families/{id}":        PermFrontendsManage,
 	"DELETE /api/admin/frontends/families/{id}":     PermFrontendsManage,
 	"PUT /api/admin/frontends/builds/{hash}/family": PermFrontendsManage,
+	// The price is a read; spending the money is not.
+	"GET /api/admin/frontends/families/{id}/backfill":    PermFrontendsRead,
+	"POST /api/admin/frontends/families/{id}/backfill":   PermFrontendsManage,
+	"DELETE /api/admin/frontends/families/{id}/backfill": PermFrontendsManage,
 
 	"GET /api/admin/pairings":            PermPairingsRead,
 	"POST /api/admin/pairings":           PermPairingsManage,

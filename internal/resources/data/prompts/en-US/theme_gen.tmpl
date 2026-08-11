@@ -19,7 +19,15 @@ These are its current variables; modify per the description (keep untouched vari
 ```
 {{end}}
 
-## Design rules (strict)
+{{if .FamilyRules}}## Design rules (this frontend's own, approved by the operator)
+
+{{.FamilyRules}}
+
+Whatever the above says, these two still hold:
+
+1. **Provide every variable listed above — not one fewer, not one more.** Keys that were not listed are discarded.
+2. **Every value must match the kind noted beside its variable.** The permitted shape is written next to the kind; follow it.
+{{else}}{{if .Builtin}}## Design rules (strict)
 
 1. **Readability first**: `--text-primary` must contrast strongly with `--bg-start`/`--bg-end` (WCAG AA intuition). Dark backgrounds get light text; light backgrounds get dark text.
 2. **The dark flag**: when the background is overall dark (deep purple, navy, black), set `"dark": true` and use a translucent dark `--surface` (e.g. `rgba(55,50,120,0.75)`) with light text throughout; otherwise `"dark": false` with a translucent white surface (e.g. `rgba(255,255,255,0.72)`).
@@ -29,9 +37,19 @@ These are its current variables; modify per the description (keep untouched vari
 6. **Provide all 12 variables** — no omissions.
 7. Give the theme a fitting short name (1–4 words, one emoji allowed).
 
-## Output format
+{{else}}## Design rules (strict)
 
-Output JSON only, no other text:
+1. **Provide every variable listed above — not one fewer, not one more.** Keys that were not listed are discarded; keys that are missing leave this frontend rendering incompletely.
+2. **Every value must match the kind noted beside its variable.** The permitted shape is written next to the kind; follow it — no lengths where a color is asked for, no percent signs where a ratio is.
+3. **Readability first**: text variables must contrast strongly with background variables (WCAG AA intuition). Dark grounds get light text; light grounds get dark text.
+4. **One theme, one character**: colors within a single family or a deliberate complement; numeric variables (radius, blur, spacing) keep one personality across the set — all restrained or all bold, not a mix.
+5. **The dark flag**: `true` when the whole thing reads dark, `false` otherwise.
+6. **Literals only** — no `url()`, `var()`, `calc()`, or any other CSS syntax.
+7. Give the theme a fitting short name (1–4 words, one emoji allowed).
+
+{{end}}{{end}}## Output format
+
+Output JSON only, no other text.{{if .Builtin}}
 
 ```json
 {
@@ -53,7 +71,17 @@ Output JSON only, no other text:
   }
 }
 ```
-
+{{else}}
+```json
+{
+  "name": "the theme's name 🍑",
+  "dark": false,
+  "variables": {
+    "every key listed above": "a value matching the kind noted beside it"
+  }
+}
+```
+{{end}}
 ### When the description isn't about a theme
 If the description can't be turned into colors at all (e.g. it's a scheduling question), return:
 ```json

@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"daycore/internal/domain"
@@ -183,3 +185,57 @@ func (e errThemeValue) Error() string { return e.name + ": " + e.err.Error() }
 func (e errThemeValue) Unwrap() error { return e.err }
 
 func themeValueError(name string, err error) error { return errThemeValue{name, err} }
+
+// themePromptData is what the model is told about the frontend it is designing
+// for.
+//
+// # ⚠️ Generation and validation must describe the SAME token space
+//
+// They did not. AllowedVars was built from the built-in thirteen while the
+// output was checked against the caller's family, so a build declaring
+// `--glass-alpha: ratio` and no `--surface` was told to produce `--surface` and
+// then had every value it produced dropped. Latent while nothing sends the
+// build header; wrong the moment a second frontend exists, which is the entire
+// point of families.
+//
+// # The kind travels with the name
+//
+// A model told `--glass-alpha` writes a colour. Told `--glass-alpha (ratio: a
+// number from 0 to 1)` it writes 0.72. The permitted shape comes from the
+// registry rather than a phrase in the template, so a kind an operator added is
+// described as accurately as a built-in one.
+func (s *Server) themePromptData(fam domain.FrontendFamily) (allowedVars, rules string, builtin bool) {
+	builtin = fam.ID == domain.FallbackFamilyID
+	tokens := append([]domain.TokenSpec(nil), fam.Tokens...)
+	sort.Slice(tokens, func(i, j int) bool { return tokens[i].Name < tokens[j].Name })
+
+	// ⚠️ Unapproved text does not reach the model. Not "is filtered", not "is
+	// escaped" — is not sent. The template writes a mechanical set of rules from
+	// the token list instead, so the feature is complete on day one for a
+	// frontend nobody has vetted, and the injection surface is zero by default.
+	if fam.RulesAccepted {
+		rules = fam.Rules
+	}
+	return s.tokenListMarkdown(tokens), rules, builtin
+}
+
+// tokenListMarkdown renders tokens for a prompt: name, kind, the shape that
+// kind permits, and what it is for.
+//
+// Shared by generation and backfill so the two describe a token identically —
+// two renderings would drift, and the one that drifted would be the one whose
+// output gets silently dropped.
+func (s *Server) tokenListMarkdown(tokens []domain.TokenSpec) string {
+	var b strings.Builder
+	for _, t := range tokens {
+		fmt.Fprintf(&b, "- `%s` — %s", t.Name, t.Kind)
+		if shape := s.themeKinds.Describe(t.Kind); shape != "" {
+			fmt.Fprintf(&b, "（%s）", shape)
+		}
+		if t.Description != "" {
+			fmt.Fprintf(&b, " · %s", t.Description)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}

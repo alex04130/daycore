@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -15,6 +16,9 @@ func init() {
 		mux.HandleFunc("PUT /api/admin/frontends/families/{id}", s.handleAdminFamilyPut)
 		mux.HandleFunc("DELETE /api/admin/frontends/families/{id}", s.handleAdminFamilyDelete)
 		mux.HandleFunc("PUT /api/admin/frontends/builds/{hash}/family", s.handleAdminBuildFamily)
+		mux.HandleFunc("GET /api/admin/frontends/families/{id}/backfill", s.handleAdminBackfillPrice)
+		mux.HandleFunc("POST /api/admin/frontends/families/{id}/backfill", s.handleAdminBackfillStart)
+		mux.HandleFunc("DELETE /api/admin/frontends/families/{id}/backfill", s.handleAdminBackfillStop)
 	})
 }
 
@@ -144,6 +148,12 @@ func (s *Server) handleAdminFrontends(w http.ResponseWriter, r *http.Request) {
 		"limits": map[string]int{
 			"maxFamilies":     domain.MaxFamilies,
 			"maxFamilyTokens": domain.MaxFamilyTokens,
+			// ⚠️ Here as well as on the price endpoint, because the console
+			// shows it while a backfill is RUNNING — and at that point it has no
+			// price to read it from. A hardcoded copy in the UI is a second
+			// source for a number that lives in Go, and it drifts silently the
+			// first time somebody tunes the sweep.
+			"backfillPerSweep": ThemeBackfillPerSweep,
 		},
 	})
 }
@@ -286,4 +296,106 @@ func (s *Server) handleAdminBuildFamily(w http.ResponseWriter, r *http.Request) 
 	s.log.Warn("a frontend build was moved between families",
 		"build", r.PathValue("hash"), "family", body.FamilyID)
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "familyId": body.FamilyID})
+}
+
+// themeBackfillPriceCap bounds the count the price endpoint will walk to.
+//
+// Five hundred is well past "is this a lot". The console says "至少 500 套"
+// beyond it, which answers the only question being asked at this button.
+const themeBackfillPriceCap = 500
+
+// GET  …/backfill — the price, before anybody presses anything.
+// POST …/backfill — an operator saying yes.
+// DELETE …/backfill — an operator changing their mind.
+//
+// # ⚠️ Three verbs on one path because this is one decision with a cost
+//
+// The read exists so the number is on the screen next to the button. Folding it
+// into the family list would make every console load walk every theme of every
+// family — slow in exactly the deployment where the number matters.
+//
+// The DELETE exists because a backfill can run for hours and somebody who
+// pressed the button on the wrong family has no other way out. It stops the
+// sweep from picking the family up again; it does NOT undo what already
+// happened, and it says so — there is no undo for a theme, which is also why
+// the fill merges rather than replaces.
+func (s *Server) handleAdminBackfillPrice(w http.ResponseWriter, r *http.Request) {
+	fam, ok := s.familyForBackfill(w, r)
+	if !ok {
+		return
+	}
+	n, capped, err := s.themeBackfillCount(r.Context(), *fam, themeBackfillPriceCap)
+	if err != nil {
+		s.log.Error("theme backfill price", "err", err)
+		s.writeErr(w, http.StatusInternalServerError, "internal", i18n.T(keyFrontendInternal, s.requestLocale(r)))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"familyId": fam.ID,
+		// themes是要花钱的那个数：缺 token 的主题数，一套一次模型调用。
+		"themes": n,
+		// capped says the walk stopped early, so `themes` is a floor. Reported
+		// rather than hidden: "500" and "at least 500" are different sentences
+		// to somebody deciding whether to press this.
+		"capped":    capped,
+		"requested": fam.BackfillRequestedAt != nil,
+		"perSweep":  ThemeBackfillPerSweep,
+	})
+}
+
+func (s *Server) handleAdminBackfillStart(w http.ResponseWriter, r *http.Request) {
+	fam, ok := s.familyForBackfill(w, r)
+	if !ok {
+		return
+	}
+	// Already requested is not an error — two operators pressing the same button
+	// is not a conflict, and the second one should see the same state as the
+	// first rather than a red screen.
+	if fam.BackfillRequestedAt == nil {
+		now := time.Now().UTC()
+		fam.BackfillRequestedAt = &now
+		if err := s.store.Frontends().UpsertFamily(r.Context(), *fam); err != nil {
+			s.log.Error("theme backfill start", "err", err)
+			s.writeErr(w, http.StatusInternalServerError, "internal", i18n.T(keyFrontendInternal, s.requestLocale(r)))
+			return
+		}
+		s.log.Warn("a theme backfill was requested", "family", fam.ID)
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true, "requestedAt": fam.BackfillRequestedAt})
+}
+
+func (s *Server) handleAdminBackfillStop(w http.ResponseWriter, r *http.Request) {
+	fam, ok := s.familyForBackfill(w, r)
+	if !ok {
+		return
+	}
+	fam.BackfillRequestedAt = nil
+	if err := s.store.Frontends().UpsertFamily(r.Context(), *fam); err != nil {
+		s.log.Error("theme backfill stop", "err", err)
+		s.writeErr(w, http.StatusInternalServerError, "internal", i18n.T(keyFrontendInternal, s.requestLocale(r)))
+		return
+	}
+	s.log.Warn("a theme backfill was called off", "family", fam.ID)
+	// ⚠️ Says plainly that this is a stop, not an undo. A theme that was already
+	// filled stays filled; there is no undo for a theme.
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "alreadyFilledStayFilled": true,
+	})
+}
+
+func (s *Server) familyForBackfill(w http.ResponseWriter, r *http.Request) (*domain.FrontendFamily, bool) {
+	if !s.frontendsReady(w, r) {
+		return nil, false
+	}
+	fam, err := s.store.Frontends().GetFamily(r.Context(), r.PathValue("id"))
+	if errors.Is(err, domain.ErrNotFound) {
+		s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyFrontendNotFound, s.requestLocale(r)))
+		return nil, false
+	}
+	if err != nil {
+		s.log.Error("theme backfill family", "err", err)
+		s.writeErr(w, http.StatusInternalServerError, "internal", i18n.T(keyFrontendInternal, s.requestLocale(r)))
+		return nil, false
+	}
+	return fam, true
 }

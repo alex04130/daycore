@@ -57,6 +57,7 @@ export function Frontends({ onUnauthorized, principal }) {
               family={f}
               kinds={state.data.kinds}
               families={state.data.families}
+              limits={state.data.limits}
               isFallback={f.id === state.data.fallbackFamilyId}
               canManage={canManage}
               onChanged={reload}
@@ -98,7 +99,7 @@ export function Frontends({ onUnauthorized, principal }) {
   );
 }
 
-function Family({ family: f, kinds, families, isFallback, canManage, onChanged }) {
+function Family({ family: f, kinds, families, limits, isFallback, canManage, onChanged }) {
   const [err, setErr] = useState('');
   const [showTokens, setShowTokens] = useState(false);
   const set = (patch) => api.setFrontendFamily(f.id, patch).then(onChanged, (e) => setErr(e.message));
@@ -137,6 +138,8 @@ function Family({ family: f, kinds, families, isFallback, canManage, onChanged }
             </div>
           </div>
         )}
+
+        <Backfill family={f} limits={limits} canManage={canManage} onChanged={onChanged} />
 
         {err && <Notice kind="error">{err}</Notice>}
       </div>
@@ -291,6 +294,92 @@ function Build({ build: b, families, canManage, onChanged }) {
           <button className="linkish" onClick={() => setMoving(false)}>
             取消
           </button>
+        </>
+      )}
+      {err && <Notice kind="error">{err}</Notice>}
+    </div>
+  );
+}
+
+// Filling in the tokens a family's stored themes are missing.
+//
+// # ⚠️ The price is on the screen before the button is
+//
+// One model call per theme. A family with two thousand themes is two thousand
+// calls, and the widening that made them incomplete is a routine deploy — so
+// this is never automatic, and the number is loaded on demand rather than with
+// the family list (counting it for every family on every console load would be
+// slow in exactly the deployment where the number matters).
+//
+// `capped` means the count stopped at its ceiling, and the screen says "至少"
+// rather than pretending to be exact. That is the honest sentence for the only
+// question being asked here, which is "is this a lot".
+function Backfill({ family: f, limits, canManage, onChanged }) {
+  const [price, setPrice] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const running = !!f.backfillRequestedAt;
+
+  const look = () => {
+    setBusy(true);
+    setErr('');
+    api.getBackfillPrice(f.id).then(
+      (p) => { setPrice(p); setBusy(false); },
+      (e) => { setErr(e.message); setBusy(false); },
+    );
+  };
+
+  if (running) {
+    return (
+      <Notice kind="info" title="补算进行中">
+        运维已经点过了。leader 每分钟补一批（一批 {limits?.backfillPerSweep} 套），补完会自己停。
+        主题多的话要跑很久 —— 这是对的速度，没有人在同步等它。
+        {canManage && (
+          <div className="row-actions">
+            <Confirm
+              word={f.id}
+              label="停掉"
+              danger={
+                '⚠️ 这是停，不是撤销。已经补好的主题**保持补好的样子** —— 主题没有撤销这回事，' +
+                '这也是补算只往里加、从不覆盖已有取值的原因。'
+              }
+              onConfirm={() => api.stopBackfill(f.id).then(onChanged, (e) => setErr(e.message))}
+            />
+          </div>
+        )}
+        {err && <Notice kind="error">{err}</Notice>}
+      </Notice>
+    );
+  }
+
+  return (
+    <div className="usage-line">
+      {price === null ? (
+        <button className="linkish" disabled={busy} onClick={look}>
+          {busy ? '数着…' : '看看有多少主题缺变量'}
+        </button>
+      ) : price.themes === 0 ? (
+        <span className="muted">这个 family 的主题都是全的，不用补。</span>
+      ) : (
+        <>
+          <span>
+            有 <b>{price.capped ? `至少 ${price.themes}` : price.themes}</b> 套主题缺变量
+          </span>
+          <span className="muted" title="补算是一套主题一次模型调用。这是要花的钱，所以永远不会自动跑。">
+            补一次 = {price.capped ? '至少 ' : ''}{price.themes} 次模型调用
+          </span>
+          {canManage && (
+            <Confirm
+              word={f.id}
+              label="开始补算"
+              danger={
+                `会对 ${price.capped ? '至少 ' : ''}${price.themes} 套主题各做一次模型调用，按用户已有的配色补上缺的变量。` +
+                '只往里加，不动用户自己选的取值。跑起来之后可以停，但停不回已经补好的那些。'
+              }
+              onConfirm={() => api.startBackfill(f.id).then(onChanged, (e) => setErr(e.message))}
+            />
+          )}
+          <button className="linkish" onClick={look}>重新数</button>
         </>
       )}
       {err && <Notice kind="error">{err}</Notice>}

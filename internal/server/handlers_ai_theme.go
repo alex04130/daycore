@@ -44,9 +44,16 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.runtime().AIRequestTimeout)
 	defer cancel()
 
+	// ⚠️ The family is resolved ONCE and used for both the prompt and the
+	// filtering below. Describing one token space and validating against
+	// another is the bug this replaces — see themePromptData.
+	fam := s.familyFor(r)
+	allowed, rules, builtin := s.themePromptData(fam)
 	data := ai.ThemeGenData{
 		Description: strings.TrimSpace(body.Description),
-		AllowedVars: allowedVarsMarkdown(),
+		AllowedVars: allowed,
+		FamilyRules: rules,
+		Builtin:     builtin,
 	}
 	if body.ThemeID != "" {
 		cur, err := s.store.Themes().Get(ctx, sid, body.ThemeID)
@@ -70,8 +77,14 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, http.StatusBadRequest, "invalid_theme", "base must be one of the builtin theme ids")
 			return
 		}
-		data.BaseName = preset.Name
-		data.BaseVariables = marshalCompact(preset.Variables)
+		// ⚠️ The four builtin presets are the FALLBACK family's. Handing them to
+		// another family as a starting point would show the model twelve token
+		// names it must not use, right under a list of the ones it must — the
+		// most direct way to get an answer that is entirely discarded.
+		if builtin {
+			data.BaseName = preset.Name
+			data.BaseVariables = marshalCompact(preset.Variables)
+		}
 	}
 
 	sys, err := s.prompts.Render(ctx, ai.PromptThemeGen, s.requestLocale(r), data)
@@ -108,7 +121,7 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 			vars[k] = sv
 		}
 	}
-	clean, dropped := s.sanitizeThemeVariables(s.familyFor(r), vars)
+	clean, dropped := s.sanitizeThemeVariables(fam, vars)
 	if len(clean) == 0 {
 		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "主题解析出了点问题，请重试"})
 		return
@@ -127,18 +140,4 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "dark": dark, "base": body.Base, "variables": clean, "warnings": warnings,
 	})
-}
-
-// allowedVarsMarkdown renders the whitelist for the prompt, in stable order.
-func allowedVarsMarkdown() string {
-	keys := make([]string, 0, len(themeVarWhitelist))
-	for k := range themeVarWhitelist {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	var b strings.Builder
-	for _, k := range keys {
-		fmt.Fprintf(&b, "- `%s` — %s\n", k, themeVarWhitelist[k])
-	}
-	return b.String()
 }

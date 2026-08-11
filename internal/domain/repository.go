@@ -356,6 +356,17 @@ type ThemeRepository interface {
 	// them. The merge must carry every family's themes across or signing in
 	// loses whatever the other device made.
 	ListAcrossFamilies(ctx context.Context, sessionID string) ([]CustomTheme, error)
+	// ScanFamily walks every theme in one family ACROSS EVERY SESSION, ordered
+	// by id, starting after the given id. It is the backfill's only reader.
+	//
+	// ⚠️ Deployment-wide and therefore not session-scoped, which is why it is a
+	// separate method rather than a flag on List: every other read here is a
+	// user reading their own themes, and one method that is sometimes scoped and
+	// sometimes not is one refactor away from being never scoped.
+	//
+	// Keyset paging on id rather than OFFSET: the sweep writes to the rows it is
+	// walking, and OFFSET over a table being written to skips and repeats.
+	ScanFamily(ctx context.Context, familyID, afterID string, limit int) ([]CustomTheme, error)
 	Create(ctx context.Context, t *CustomTheme) (*CustomTheme, error)
 	Update(ctx context.Context, sessionID, id string, upd CustomThemeUpdate) (*CustomTheme, error)
 	Delete(ctx context.Context, sessionID, id string) error

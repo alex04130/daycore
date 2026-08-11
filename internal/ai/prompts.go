@@ -24,6 +24,7 @@ const (
 	PromptAutoPlan             = "auto_plan"
 	PromptScheduleExtractImage = "schedule_extract_image"
 	PromptThemeGen             = "theme_gen"
+	PromptThemeBackfill        = "theme_backfill"
 	PromptInboxClassify        = "inbox_classify"
 	PromptFoodRecognize        = "food_recognize"
 	PromptTravelSuggest        = "travel_suggest"
@@ -41,7 +42,7 @@ const (
 var promptKeys = []string{
 	PromptDayPlanText, PromptDayPlanImage, PromptMood,
 	PromptCompanionAgent, PromptCompanionContext,
-	PromptAutoPlan, PromptScheduleExtractImage, PromptThemeGen,
+	PromptAutoPlan, PromptScheduleExtractImage, PromptThemeGen, PromptThemeBackfill,
 	PromptInboxClassify, PromptFoodRecognize, PromptTravelSuggest,
 	PromptPersona, PromptBrief, PromptReplan,
 }
@@ -309,12 +310,50 @@ type CompanionContextData struct {
 
 // ThemeGenData feeds prompts/<locale>/theme_gen.tmpl.
 type ThemeGenData struct {
-	Description      string // what the user asked for
-	AllowedVars      string // markdown list of themeable CSS variables + meaning
+	Description string // what the user asked for
+	// AllowedVars is a markdown list of the CALLING FRONTEND'S themeable
+	// variables — name, kind, the shape that kind permits, and what it is for.
+	//
+	// ⚠️ It is built from that frontend's family, not from a constant. A build
+	// that declares `--glass-alpha: ratio` and no `--surface` used to be told
+	// about `--surface` and then have every value it produced dropped, because
+	// generation described one token space and validation used another.
+	AllowedVars string
+	// Builtin says this is the fallback family — the design system's own
+	// thirteen colour tokens. Its rules live in the template because they are
+	// the design system's rules; every other family gets FamilyRules instead.
+	Builtin bool
+	// FamilyRules is that frontend's own "how to design for this end" fragment,
+	// and it is EMPTY UNLESS AN OPERATOR APPROVED IT.
+	//
+	// ⚠️ This is the one place client-supplied text reaches the model. Empty is
+	// not a degraded state: the template then writes a mechanical set of rules
+	// from the token list, so a third-party frontend has the full feature on day
+	// one with an injection surface of zero.
+	FamilyRules      string
 	BaseName         string // builtin base theme name ("" when none)
 	BaseVariables    string // JSON of the base theme's variables ("" when none)
 	CurrentName      string // edit mode: the theme being edited ("" when creating)
 	CurrentVariables string // edit mode: its current variables JSON
+}
+
+// ThemeBackfillData feeds prompts/<locale>/theme_backfill.tmpl.
+//
+// ⚠️ A separate prompt from theme_gen, not a mode of it. The two ask for
+// opposite things: theme_gen designs a whole palette from a description,
+// backfill adds a few values to a palette somebody already chose and must not
+// touch. Folding them together would put "keep everything" and "design
+// everything" in one template and let the model pick.
+type ThemeBackfillData struct {
+	ThemeName        string
+	CurrentVariables string // JSON of what the theme already has
+	Dark             bool
+	// MissingVars is the markdown list of tokens to fill, with kind and shape —
+	// the same rendering theme_gen's AllowedVars uses.
+	MissingVars string
+	// FamilyRules is the frontend's own fragment, and EMPTY UNLESS APPROVED.
+	// Same rule as theme_gen: unapproved client text is not sent.
+	FamilyRules string
 }
 
 // AutoPlanData feeds prompts/<locale>/auto_plan.tmpl.

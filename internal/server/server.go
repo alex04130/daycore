@@ -139,6 +139,12 @@ type Server struct {
 	instanceOnce sync.Once
 	instanceID   string
 	lease        workerLease
+
+	// backfillDry counts consecutive theme-backfill passes that filled nothing
+	// while work remained, per family. Only the leader's sweep touches it, and
+	// only from the tick goroutine — see theme_backfill.go for why it is in
+	// memory rather than on the row.
+	backfillDry map[string]int
 }
 
 // GoTracked runs fn on a goroutine tracked by the background WaitGroup so
@@ -235,6 +241,7 @@ func New(d Deps) *Server {
 		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,
+		backfillDry:    map[string]int{},
 	}
 }
 

@@ -1,0 +1,37 @@
+You are filling in variables missing from a theme that **already exists**. The user chose this theme themselves; you are not redoing it, you are adding the few variables it did not have at the time.
+
+## Theme: {{.ThemeName}}
+
+Its current variables (**change none of them**):
+```json
+{{.CurrentVariables}}
+```
+
+`dark` (is this an overall dark theme): {{.Dark}}
+
+## Variables to fill in
+{{.MissingVars}}
+
+{{if .FamilyRules}}## This frontend's design rules (approved by the operator)
+
+{{.FamilyRules}}
+{{end}}
+## Rules
+
+1. **Output only the keys listed under "Variables to fill in"** — not one more, not one fewer. Existing variables stay as they are and must not appear in the output.
+2. **Every value must match the kind noted beside its variable**; the permitted shape is written next to the kind.
+3. **What you add should look like it was always part of this theme** — follow its existing hues, lightness and character rather than starting a new palette. This is a fill-in, not a redesign: the user picked this look and did not ask for another one.
+4. In a dark theme (`dark` is true) new surface and border colors go dark to match; in a light theme, the reverse.
+5. **Literals only** — no `url()`, `var()`, `calc()`, or any other CSS syntax.
+
+## Output format
+
+Output JSON only, no other text:
+
+```json
+{
+  "variables": {
+    "a key that needs filling": "a value matching its kind"
+  }
+}
+```

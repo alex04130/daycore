@@ -122,6 +122,12 @@ func sessionColumnMigrations(textType, boolType string) []ColumnMigration {
 		// (Mongo has no such rule, so mongostore.Migrate does the same backfill
 		// explicitly. See the note there — it is the one place the four
 		// backends do not converge for free.)
+		// An operator's "fill in what my stored themes are missing". BIGINT
+		// DEFAULT 0 for the same reason the usage counters are: it is only ever
+		// read as a number, and a NULL would make the comparison that decides
+		// whether to sweep return NULL on all three engines.
+		{Table: "frontend_families", Column: "backfill_requested_at",
+			DDL: `ALTER TABLE frontend_families ADD COLUMN backfill_requested_at BIGINT NOT NULL DEFAULT 0`},
 		{Table: "custom_themes", Column: "family_id",
 			DDL: `ALTER TABLE custom_themes ADD COLUMN family_id ` + textType +
 				` NOT NULL DEFAULT '` + domain.FallbackFamilyID + `'`},

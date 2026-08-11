@@ -86,6 +86,29 @@ func (r themeRepo) ListAcrossFamilies(ctx context.Context, sessionID string) ([]
 	return out, cur.Err()
 }
 
+func (r themeRepo) ScanFamily(ctx context.Context, familyID, afterID string, limit int) ([]domain.CustomTheme, error) {
+	if familyID == "" {
+		familyID = domain.FallbackFamilyID
+	}
+	cur, err := r.c("custom_themes").Find(ctx,
+		bson.M{"family_id": familyID, "_id": bson.M{"$gt": afterID}},
+		options.Find().SetSort(bson.D{{Key: "_id", Value: 1}}).
+			SetLimit(int64(domain.ListLimit(limit, 200, 500))))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []domain.CustomTheme{}
+	for cur.Next(ctx) {
+		var d themeDoc
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, *d.toDomain())
+	}
+	return out, cur.Err()
+}
+
 func (r themeRepo) Create(ctx context.Context, t *domain.CustomTheme) (*domain.CustomTheme, error) {
 	if t.ID == "" {
 		t.ID = uuid.NewString()

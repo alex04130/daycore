@@ -5,6 +5,7 @@
   "operations": [
     "DELETE /api/admin/db/table/{name}/{id} adminDBDelete",
     "DELETE /api/admin/frontends/families/{id} adminDeleteFamily",
+    "DELETE /api/admin/frontends/families/{id}/backfill adminBackfillStop",
     "DELETE /api/admin/pairings/{id} adminDeletePairing",
     "DELETE /api/admin/roles/{name} adminDeleteRole",
     "DELETE /api/admin/session adminLogout",
@@ -28,6 +29,7 @@
     "GET /api/admin/db/table/{name} adminDBBrowse",
     "GET /api/admin/db/tables adminDBTables",
     "GET /api/admin/frontends adminFrontends",
+    "GET /api/admin/frontends/families/{id}/backfill adminBackfillPrice",
     "GET /api/admin/health adminHealth",
     "GET /api/admin/models adminModelsGet",
     "GET /api/admin/oauth adminOAuthGet",
@@ -87,6 +89,7 @@
     "PATCH /api/themes/{id} patchTheme",
     "PATCH /api/wishes/{id} updateWish",
     "POST /api/admin/db/import adminDBImport",
+    "POST /api/admin/frontends/families/{id}/backfill adminBackfillStart",
     "POST /api/admin/models/{id}/test adminModelTest",
     "POST /api/admin/pairings adminCreatePairing",
     "POST /api/admin/restart adminRestart",
