@@ -89,10 +89,26 @@ make core-min-api                                   # 重算 core 的最低兼�
 make core-dev                                       # 四端先指向工作区的 packages/core
 # 改 packages/core，四端 npm run build 验它
 cd packages/core && git commit && git push && git tag vX.Y.Z && git push origin vX.Y.Z
-# 四端各自把 package.json 的 pin 改成 vX.Y.Z，commit + push
-rm -rf node_modules package-lock.json && npm install # 让 npm 重新解析 tag（旧 lock 会赖着不动）
-git add packages/core web/* && git commit            # 超级仓 bump 五个 gitlink
+
+# 四端各自：改 pin **并重生成 lock**，然后 commit + push
+for a in ting zhiyu liuli liuli-classic; do (
+  cd web/$a
+  # 把 package.json 的 @daycore/core 改成 …#vX.Y.Z
+  rm -f package-lock.json && npm install     # ⚠️ 这一行不能省，见下
+  git commit -am '钉 core vX.Y.Z' && git push
+); done
+
+rm -rf node_modules package-lock.json && npm install # 超级仓：让 npm 重新解析 tag
+git add packages/core web/* && git commit            # bump 五个 gitlink
 ```
+
+⚠️ **只改 `package.json` 不重生成 `package-lock.json` 是不够的，而且症状只在别人
+那边出现。** lock 记的是解析后的 **commit**；改了 pin 不重生成，独立 clone 的人
+拿到的仍然是旧 core（`package.json` 说 v2.2.0，lock 说切仓当天那个 commit，npm
+听 lock 的），`tsc` 报 `has no exported member`。
+
+超级仓里发现不了 —— 那边跑的是**根上**那份 lock，各仓自己的 lock 在 workspace 下
+根本不参与。这条是真的踩过一次，是「独立 clone 出来构建」这一步验出来的。
 
 ⚠️ **版本号不是随便挑的**：`@daycore/core` 的版本 = **兼容的最低 API 版本**（`make
 core-min-api` 重算，不要手填），
