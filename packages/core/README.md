@@ -73,5 +73,13 @@ APP=web/ting make check-core-pack
 所以 κ 不是一次重构，是一次机械搬运 —— **渠道的选择被降级成一个可以以后再改的
 决定**，因为包边界本身已经被证明是真的。
 
+四条路都实测过（见 `docs/ROADMAP.md`）。两条要记住的事实：
+
+- **npm 的 git 依赖不支持子目录**（实测 npm 11.13，`#path:` 被当成 commit-ish，
+  `&path=` 直接被拒）。所以「git 依赖」和「嵌套 submodule」有同一个前提：**core
+  得是自己的仓**。
+- **超级仓根加 npm workspaces，会在树内自动覆盖掉 git 依赖**。一份 package.json
+  两种世界：树内解析到 `packages/core`，独立 clone 回落到 git 依赖。
+
 ⚠️ `"private": true` 还留着，它是那道保险：`npm publish` 会被它挡住。选定渠道之前
 不要删这一行。
