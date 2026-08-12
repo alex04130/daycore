@@ -34,6 +34,9 @@ internal/
   storage/storagetest/      行为一致性套件（43 例，四个后端跑同一份）
   server/                   路由（分散注册，见 routes.go）+ 中间件 + handlers + agent loop + cron Worker
 api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
+package.json                ⚠️ 不是一个包，是 workspace 根（core + 四端；
+                            web/frontend 与 web/console 有意不在里面）
+scripts/split-repos.sh      阶段 κ：切成兄弟仓 + 挂回 submodule（默认空跑）
 packages/core/              @daycore/core：四端共享层（HTTP / 握手 / 多语言 / 后端地址）
 web/frontend/               现役 React 前端（Vite）。⚠️ 将来被下面四端替换，替换完成前不要动它
 web/ting/                   汀 · 此刻（单件流）        :5175
@@ -65,9 +68,19 @@ make test-mongo                                     # 行为套件对真机 Mong
 cd web/frontend && npm run dev / build
 node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐校验
 
-# 四端各自：npm install && npm run build（= tsc --noEmit && vitest run && vite build）
+# 前端依赖在根上装一次就够（workspace），@daycore/core 解析成 packages/core 的符号链接
+npm install
 for a in ting zhiyu liuli liuli-classic; do (cd web/$a && npm run build); done
+
+make check-core-pack                                # 证明 core 是个真包（切仓的前提）
+make submodules                                     # 切仓之后：别人 clone 的第一步
 ```
+
+⚠️ **切仓之后**（阶段 κ），`packages/core` 与 `web/ting|zhiyu|liuli|liuli-classic`
+都是 submodule。读它们的那些契约闸门在目录缺席时**跳过** —— 那个跳过是对的（可选
+checkout 不该变成必需的），但它意味着一次普通 `git clone` 拿不到任何契约检查还报绿。
+`make test` 里的 `submodules-present` 挡这个；单独跑 `go test ./...` 不挡（后端单独
+干活的人需要它）。
 
 ⚠️ **四端的多语言校验不是那个 `check-i18n.mjs`**，是各自 `src/locales.test.ts`，跑在
 `npm run build` 里 —— 一个没人记得跑的检查等于不存在。它比脚本那份严：双向对齐、
