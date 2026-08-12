@@ -81,7 +81,7 @@ func TestMoodCheckinRejectsDisplayStrings(t *testing.T) {
 func TestMoodKindsAreExactlyWhatIsAccepted(t *testing.T) {
 	s, sid := newMoodTestServer(t)
 
-	req := httptest.NewRequest("GET", "/api/mood/kinds", nil)
+	req := httptest.NewRequest("GET", versionPath("/api/mood/kinds"), nil)
 	req.Header.Set("X-Session-Token", sid)
 	rec := httptest.NewRecorder()
 	s.handleMoodKinds(rec, req.WithContext(withSession(req.Context(), sid)))
@@ -139,7 +139,7 @@ func newMoodTestServer(t *testing.T) (*Server, string) {
 
 func postMood(t *testing.T, s *Server, sid, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("POST", "/api/mood", strings.NewReader(body))
+	req := httptest.NewRequest("POST", versionPath("/api/mood"), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.handleMoodCreate(rec, req.WithContext(withSession(req.Context(), sid)))

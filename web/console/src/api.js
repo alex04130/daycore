@@ -19,7 +19,10 @@
 // nothing in this module accepts an absolute URL. A console that could be
 // pointed at another origin would send its cookie there.
 
-const BASE = '/api/admin';
+// ⚠️ Versioned. The API lives under /api/v2 (internal/apipath) — the console is
+// version-locked to its binary, so it simply follows. A frontend that is NOT
+// version-locked would read the prefix from GET /api/version instead.
+const BASE = '/api/v2/admin';
 
 // Sentinel for "the credential is gone". Thrown rather than returned so no
 // caller can forget to check it and render an empty screen where a login

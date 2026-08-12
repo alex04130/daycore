@@ -56,8 +56,31 @@ export function markSetupDone(): void {
   }
 }
 
+// ⚠️ The API lives under /api/v2 — see internal/apipath for why the version is
+// in the path, and which routes stay outside it.
+//
+// Rewritten here rather than at every call site, for the same reason the server
+// applies it in one mux wrapper: src/api.ts names RESOURCES, and which major
+// serves them is one decision.
+//
+// ⚠️ Hardcoded for now, and that is a KNOWN LIMIT rather than a design. A build
+// that is not version-locked ought to read the prefix from the handshake and
+// refuse a backend whose major it does not speak — 汀 checks the major
+// (session.ts) but still builds paths from a constant, so a v3 backend would
+// give it 404s rather than a clear refusal. Fixing that means the handshake
+// reporting its own prefix, which is a backend change.
+const API_PREFIX = '/api/v2';
+const UNVERSIONED = ['/api/version', '/api/healthz'];
+
+export function apiPath(path: string): string {
+  const bare = path.split('?')[0]!;
+  if (!path.startsWith('/api/') || UNVERSIONED.includes(bare)) return path;
+  if (path.startsWith(API_PREFIX + '/')) return path;
+  return API_PREFIX + path.slice('/api'.length);
+}
+
 export function url(path: string): string {
-  return backendBase() + path;
+  return backendBase() + apiPath(path);
 }
 
 // ── build identity ─────────────────────────────────────────────────────────

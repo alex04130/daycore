@@ -157,7 +157,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminCookie,
 		Value:    tok,
-		Path:     "/api/admin",
+		Path:     versionPath("/api/admin"),
 		HttpOnly: true,
 		Secure:   s.cfg.SecureCookies,
 		// Strict, not Lax, and not the deployment's COOKIE_SAMESITE. The session
@@ -206,7 +206,7 @@ func (s *Server) handleAdminLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     adminCookie,
 		Value:    "",
-		Path:     "/api/admin",
+		Path:     versionPath("/api/admin"),
 		HttpOnly: true,
 		Secure:   s.cfg.SecureCookies,
 		SameSite: http.SameSiteStrictMode,

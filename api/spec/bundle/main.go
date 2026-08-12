@@ -21,6 +21,8 @@
 package main
 
 import (
+	"daycore/internal/apipath"
+
 	"bytes"
 	"encoding/json"
 	"flag"
@@ -157,7 +159,7 @@ func Bundle(root string) ([]byte, error) {
 	out.WriteString("\n\npaths:\n")
 	for _, tag := range declared {
 		out.WriteString(sectionHeader(tag))
-		out.WriteString(indent(shards[tag]))
+		out.WriteString(indent(versionShardPaths(shards[tag])))
 		out.WriteString("\n")
 	}
 	out.WriteString(strings.TrimRight(string(componentsRaw), "\n"))
@@ -441,4 +443,36 @@ func diffOps(old, cur []string) (added, removed []string) {
 	sort.Strings(added)
 	sort.Strings(removed)
 	return
+}
+
+// versionShardPaths rewrites each shard's top-level path keys into the
+// versioned surface.
+//
+// ⚠️ Here rather than in the shards themselves, for the same reason the server
+// does it in one mux wrapper rather than in a hundred registrations: the shards
+// describe RESOURCES, and which major serves them is one decision, made once. A
+// bump would otherwise be a hundred-line diff in which one missed line produces
+// a contract entry for an endpoint nobody serves — and routes_test.go would
+// report it as a MISSING route, pointing at the wrong half of the problem.
+//
+// It uses internal/apipath, the same function the mux uses. A regex here that
+// re-stated the rule would be the copy that kept saying v2 after the server
+// moved on.
+func versionShardPaths(shard []byte) []byte {
+	var out bytes.Buffer
+	for _, line := range strings.Split(string(shard), "\n") {
+		// A top-level path key: column zero, starts with /, ends with a colon.
+		if strings.HasPrefix(line, "/") {
+			if key, rest, found := strings.Cut(line, ":"); found {
+				out.WriteString(apipath.Path(key))
+				out.WriteString(":")
+				out.WriteString(rest)
+				out.WriteString("\n")
+				continue
+			}
+		}
+		out.WriteString(line)
+		out.WriteString("\n")
+	}
+	return []byte(strings.TrimRight(out.String(), "\n"))
 }

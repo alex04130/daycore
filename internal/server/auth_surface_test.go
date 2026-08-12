@@ -114,7 +114,12 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 
 	var leaks []string
 	for _, rt := range RouteTable(s) {
-		if _, public := publicRoutes[rt.Pattern]; public {
+		// ⚠️ Keyed on Logical. publicRoutes is a hand-written list of RESOURCES
+		// that are deliberately open; keying it on the wire path would mean every
+		// entry had to be rewritten on a major bump, and an entry that was missed
+		// fails in the direction of "this route is not public" — which is the
+		// safe direction, but produces a wall of false failures nobody reads.
+		if _, public := publicRoutes[rt.Logical]; public {
 			continue
 		}
 		method, path, ok := strings.Cut(rt.Pattern, " ")
@@ -148,7 +153,7 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 func TestPublicRouteListHasNoStaleEntries(t *testing.T) {
 	served := map[string]bool{}
 	for _, rt := range RouteTable(&Server{}) {
-		served[rt.Pattern] = true
+		served[rt.Logical] = true
 	}
 	var stale []string
 	for pattern := range publicRoutes {

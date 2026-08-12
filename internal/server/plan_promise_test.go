@@ -82,7 +82,7 @@ func TestKeepManualFlipIsServerSide(t *testing.T) {
 func patchPlanReq(t *testing.T, s *Server, sid, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", "/api/plan", strings.NewReader(body))
+	req := httptest.NewRequest("PATCH", versionPath("/api/plan"), strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), ctxSessionID, sid))
 	s.handlePlanPatch(rec, req)
 	return rec
@@ -161,7 +161,7 @@ func autoPlanReq(t *testing.T, s *Server, sid, from, to string) *httptest.Respon
 	t.Helper()
 	rec := httptest.NewRecorder()
 	body := fmt.Sprintf(`{"mode":"replace_all","from":%q,"to":%q,"timezone":"UTC"}`, from, to)
-	req := httptest.NewRequest("POST", "/api/ai/auto-plan", strings.NewReader(body))
+	req := httptest.NewRequest("POST", versionPath("/api/ai/auto-plan"), strings.NewReader(body))
 	req = req.WithContext(context.WithValue(req.Context(), ctxSessionID, sid))
 	s.handleAIAutoPlan(rec, req)
 	return rec

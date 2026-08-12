@@ -268,7 +268,11 @@ func (s *Server) Handler() http.Handler {
 	// permission each /api/admin/ route declares, and registering past it would
 	// publish that route with no check at all — see admin_gate.go.
 	for _, g := range routeGroups {
-		g.register(s, adminGate{s: s, mux: mux})
+		// adminGate OUTSIDE versionedMux: the gate looks a route's permission up
+		// by its logical pattern ("/api/admin/users"), so routePermissions keys
+		// stay version-free — a permission is about a resource, not about which
+		// major serves it. versionedMux then rewrites on the way to the real mux.
+		g.register(s, adminGate{s: s, mux: versionedMux{mux}})
 	}
 
 	// static frontend (SPA) — stays here because it is conditional on

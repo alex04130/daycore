@@ -57,7 +57,7 @@ func (s *Server) corsMW(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		switch {
-		case strings.HasPrefix(r.URL.Path, "/api/import/"):
+		case strings.HasPrefix(r.URL.Path, versionPath("/api/import/")):
 			// The browser extension pushes cross-origin with X-Import-Token
 			// (token auth, no cookies), so any origin is safe to allow here.
 			if origin != "" {

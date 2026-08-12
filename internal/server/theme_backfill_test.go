@@ -284,7 +284,7 @@ func TestStoppingDoesNotUndoWhatWasAlreadyFilled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := httptest.NewRequest(http.MethodDelete, "/api/admin/frontends/families/liuli/backfill", strings.NewReader(""))
+	rec := httptest.NewRequest(http.MethodDelete, versionPath("/api/admin/frontends/families/liuli/backfill"), strings.NewReader(""))
 	w := httptest.NewRecorder()
 	rec.SetPathValue("id", "liuli")
 	s.handleAdminBackfillStop(w, rec)

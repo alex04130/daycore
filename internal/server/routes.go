@@ -30,8 +30,10 @@ import (
 // the single list in Handler() also lost the one place you could read the whole
 // surface; this puts it back.
 type Mux interface {
-	HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request))
+	HandleFunc(pattern string, handler handlerFunc)
 }
+
+type handlerFunc = func(http.ResponseWriter, *http.Request)
 
 type routeGroup struct {
 	// name groups related routes the way the comment headers in Handler() used
@@ -62,9 +64,25 @@ func registerRoutes(name string, f func(*Server, Mux)) {
 
 // Route is one registered pattern, the group that owns it, and the file it was
 // registered from.
+// Route is one registration, seen two ways.
+//
+// ⚠️ Both, and named apart on purpose. They answer different questions and the
+// wrong one is silently wrong:
+//
+//	Pattern   what the server SERVES — versioned. "GET /api/v2/plan". This is
+//	          the wire, so it is what docs/API_SURFACE.md and the openapi
+//	          cross-check are built from.
+//	Logical   what the code REGISTERED — version-free. "GET /api/plan". This is
+//	          what the permission table and the admin gate key on, because a
+//	          permission is about a resource and not about which major serves it.
+//
+// One field would have forced every caller to strip or add the prefix at the
+// point of use, and the ones that forgot would have failed open: an admin gate
+// that does not recognise "/api/v2/admin/…" as an admin route waves it through.
 type Route struct {
 	Group   string
 	Pattern string
+	Logical string
 	File    string
 }
 
@@ -75,8 +93,10 @@ type recorder struct {
 	out   *[]Route
 }
 
-func (r recorder) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.Request)) {
-	*r.out = append(*r.out, Route{Group: r.group, Pattern: pattern, File: r.file})
+func (r recorder) HandleFunc(pattern string, _ handlerFunc) {
+	*r.out = append(*r.out, Route{
+		Group: r.group, Pattern: versionPattern(pattern), Logical: pattern, File: r.file,
+	})
 }
 
 // RouteTable replays every registration and returns the patterns, sorted.
@@ -87,6 +107,10 @@ func (r recorder) HandleFunc(pattern string, _ func(http.ResponseWriter, *http.R
 func RouteTable(s *Server) []Route {
 	var out []Route
 	for _, g := range routeGroups {
+		// The recorder versions the pattern itself and keeps the logical one
+		// beside it — see Route. Wrapping it in versionedMux instead would have
+		// produced a table with only the wire view, and the permission gates
+		// read the other one.
 		g.register(s, recorder{group: g.name, file: g.file, out: &out})
 	}
 	sort.Slice(out, func(i, j int) bool {

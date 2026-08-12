@@ -20,7 +20,7 @@ func tzServer(t *testing.T) (*Server, string) {
 
 func patchPrefs(t *testing.T, s *Server, sid, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("PATCH", "/api/session/preferences", strings.NewReader(body))
+	req := httptest.NewRequest("PATCH", versionPath("/api/session/preferences"), strings.NewReader(body))
 	req = req.WithContext(withSessionID(req.Context(), sid))
 	rec := httptest.NewRecorder()
 	s.handleSessionPreferences(rec, req)

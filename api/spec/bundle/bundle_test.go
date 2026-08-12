@@ -1,6 +1,8 @@
 package main
 
 import (
+	"daycore/internal/apipath"
+
 	"bytes"
 	"os"
 	"path/filepath"
@@ -176,9 +178,15 @@ func TestBundleParsesAndKeepsEveryPath(t *testing.T) {
 		}
 		for path, item := range sp {
 			total++
-			got, ok := doc.Paths[path]
+			// ⚠️ The shard names a RESOURCE and the bundle names the WIRE. The
+			// bundler applies internal/apipath, so the comparison has to as
+			// well — and it uses the same function rather than restating the
+			// rule, because a second copy here would go green on a bundle that
+			// versioned nothing.
+			got, ok := doc.Paths[apipath.Path(path)]
 			if !ok {
-				t.Errorf("%s: %s is in the shard but not in the bundle", filepath.Base(f), path)
+				t.Errorf("%s: %s is in the shard but not in the bundle (as %s)",
+					filepath.Base(f), path, apipath.Path(path))
 				continue
 			}
 			if len(got) != len(item) {

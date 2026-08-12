@@ -216,7 +216,7 @@ func TestPlanGateHTTPEnvelope(t *testing.T) {
 	})
 
 	body := `{"date":"` + today + `","action":{"action":"update","match":{"id":"b"},"changes":{"time":"15:00"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/plan", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPatch, versionPath("/api/plan"), strings.NewReader(body))
 	req.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
@@ -325,7 +325,7 @@ func TestPlanLockEndpoint(t *testing.T) {
 
 	post := func(t *testing.T, payload string) *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/api/plan/lock", strings.NewReader(payload))
+		req := httptest.NewRequest(http.MethodPost, versionPath("/api/plan/lock"), strings.NewReader(payload))
 		req.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, req)

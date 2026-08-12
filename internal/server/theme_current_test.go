@@ -25,7 +25,7 @@ func TestTwoFrontendsHoldTwoThemesAtOnce(t *testing.T) {
 
 	req := func(build, method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := httptest.NewRequest(method, versionPath(path), strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 		if build != "" {
@@ -91,7 +91,7 @@ func TestThemesAreListedAndResetPerFamily(t *testing.T) {
 
 	req := func(build, method, path, body string) *httptest.ResponseRecorder {
 		t.Helper()
-		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r := httptest.NewRequest(method, versionPath(path), strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 		if build != "" {

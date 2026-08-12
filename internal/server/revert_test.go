@@ -14,7 +14,7 @@ import (
 func revertOp(t *testing.T, s *Server, sid, opID string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/ops/"+opID+"/revert", nil)
+	req := httptest.NewRequest("POST", versionPath("/api/ops/")+opID+"/revert", nil)
 	req = req.WithContext(context.WithValue(req.Context(), ctxSessionID, sid))
 	req.SetPathValue("id", opID)
 	s.handleOpRevert(rec, req)
@@ -94,7 +94,7 @@ func TestRulePatchRejectsInvalidWithoutCorrupting(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("PATCH", "/api/rules/"+rule.ID, strings.NewReader(`{"kind":"once"}`))
+	req := httptest.NewRequest("PATCH", versionPath("/api/rules/")+rule.ID, strings.NewReader(`{"kind":"once"}`))
 	req = req.WithContext(context.WithValue(req.Context(), ctxSessionID, sid))
 	req.SetPathValue("id", rule.ID)
 	s.handleRulePatch(rec, req)

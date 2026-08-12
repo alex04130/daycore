@@ -90,7 +90,7 @@ func TestAbsoluteTimesAreNotFloating(t *testing.T) {
 
 func importICS(t *testing.T, s *Server, sid, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("POST", "/api/import/ics", strings.NewReader(body))
+	req := httptest.NewRequest("POST", versionPath("/api/import/ics"), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(withSessionID(req.Context(), sid))
 	rec := httptest.NewRecorder()

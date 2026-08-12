@@ -93,7 +93,7 @@ func newAgentTestServer(t *testing.T) (*Server, string) {
 func runAgent(t *testing.T, s *Server, provider ai.AIProvider, sid, userMsg string) []map[string]any {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("POST", "/api/ai/companion", nil)
+	req := httptest.NewRequest("POST", versionPath("/api/ai/companion"), nil)
 	rc := http.NewResponseController(rec)
 	messages := []ai.Message{
 		{Role: ai.RoleSystem, Content: "system"},

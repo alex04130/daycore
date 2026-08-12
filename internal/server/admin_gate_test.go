@@ -33,10 +33,10 @@ func TestEveryAdminRouteChecksItsOwnPermission(t *testing.T) {
 	checked := 0
 	for _, rt := range RouteTable(s) {
 		method, path, ok := strings.Cut(rt.Pattern, " ")
-		if !ok || !isAdminPattern(rt.Pattern) {
+		if !ok || !isAdminPattern(rt.Logical) {
 			continue
 		}
-		perm, declared := PermissionFor(rt.Pattern)
+		perm, declared := PermissionFor(rt.Logical)
 		if !declared {
 			continue // the forward gate in permissions_test.go owns this case
 		}
@@ -70,10 +70,10 @@ func TestAnUndeclaredAdminRouteIsRefused(t *testing.T) {
 	s := adminServer(t)
 	mux := http.NewServeMux()
 	reached := false
-	adminGate{s: s, mux: mux}.HandleFunc("GET /api/admin/invented-yesterday",
+	adminGate{s: s, mux: versionedMux{mux}}.HandleFunc("GET /api/admin/invented-yesterday",
 		func(w http.ResponseWriter, r *http.Request) { reached = true })
 
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/invented-yesterday", nil)
+	req := httptest.NewRequest(http.MethodGet, versionPath("/api/admin/invented-yesterday"), nil)
 	req.Header.Set("X-Admin-Token", s.cfg.AdminToken) // even the root credential
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -95,11 +95,11 @@ func TestTheGateOnlyTouchesTheAdminSurface(t *testing.T) {
 	s := adminServer(t)
 	mux := http.NewServeMux()
 	reached := false
-	adminGate{s: s, mux: mux}.HandleFunc("GET /api/plan/today",
+	adminGate{s: s, mux: versionedMux{mux}}.HandleFunc("GET /api/plan/today",
 		func(w http.ResponseWriter, r *http.Request) { reached = true })
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/plan/today", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, versionPath("/api/plan/today"), nil))
 	if !reached {
 		t.Error("the admin gate intercepted an ordinary route")
 	}

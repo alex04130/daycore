@@ -81,7 +81,7 @@ func TestDegradedServesTheConsoleAndRefusesEverythingElse(t *testing.T) {
 
 	// The console's login path was built DB-free (F4a) precisely so it works
 	// here. This is the assertion that keeps the two designs tied together.
-	login := httptest.NewRequest(http.MethodPost, "/api/admin/session", strings.NewReader(`{"token":"the-real-token"}`))
+	login := httptest.NewRequest(http.MethodPost, versionPath("/api/admin/session"), strings.NewReader(`{"token":"the-real-token"}`))
 	login.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, login)
@@ -195,7 +195,7 @@ func TestDegradedSurvivesALoggedInBrowser(t *testing.T) {
 	}
 
 	// And the admin surface, which is the whole reason the process is up.
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	req := httptest.NewRequest(http.MethodGet, versionPath("/api/admin/health"), nil)
 	req.AddCookie(&http.Cookie{Name: authCookie, Value: tok})
 	req.Header.Set("X-Admin-Token", "the-real-token")
 	rec := httptest.NewRecorder()
@@ -213,7 +213,7 @@ func TestDegradedSurvivesALoggedInBrowser(t *testing.T) {
 	// handler that had carefully considered degraded mode still panicked before
 	// reaching the consideration.
 	signed := s.cookies.Sign("sess-1")
-	put := httptest.NewRequest(http.MethodPut, "/api/admin/config", strings.NewReader(`{"settings":{"MaxUploadBytes":"1"}}`))
+	put := httptest.NewRequest(http.MethodPut, versionPath("/api/admin/config"), strings.NewReader(`{"settings":{"MaxUploadBytes":"1"}}`))
 	put.AddCookie(&http.Cookie{Name: sessionCookie, Value: signed})
 	put.Header.Set("X-Admin-Token", "the-real-token")
 	put.Header.Set("Content-Type", "application/json")
@@ -226,7 +226,7 @@ func TestDegradedSurvivesALoggedInBrowser(t *testing.T) {
 
 	// A session cookie takes a different path (cookies.Verify, no store), but
 	// assert it too rather than reasoning about it.
-	req2 := httptest.NewRequest(http.MethodGet, "/api/version", nil)
+	req2 := httptest.NewRequest(http.MethodGet, versionPath("/api/version"), nil)
 	req2.AddCookie(&http.Cookie{Name: sessionCookie, Value: "anything"})
 	rec2 := httptest.NewRecorder()
 	h.ServeHTTP(rec2, req2)

@@ -1,5 +1,12 @@
 # Daycore v2 — 前端产品与对接规范（已合并版）
 
+> ⚠️ **本文引用的 `/api/…` 路径实际服务在 `/api/v2/…` 下**（2026-08-11 起，规则见 `internal/apipath`）。
+> 正文按**资源**写，因为哪个 major 在服务它是另一件事、只决定一次。
+> 三条例外留在 `/api/` 外面：`/api/version`（发现）、`/api/healthz`（存活探针）、
+> `/api/auth/oauth/{provider}/callback`（注册在第三方控制台里的重定向目标）。
+> 权威的完整线上路径见 `docs/API_SURFACE.md` 与 `api/openapi.yaml`。
+
+
 > **状态（2026-07-08，路径更新 2026-07-25）**：设计交付已完成，前端已按原型 **1:1 实现在 `web/frontend/`**（Vite + React 18）。设计系统 bundle 已 vendor 进 `web/frontend/src/ds/` 与 `src/vendor/ds-bundle.js`，**这两处即仓库内的权威副本**；设计交付原件不在仓库内（在 Claude Design 网页版）。本文件由原 handoff、增量 01（自定义主题）与 §7（长期记忆）合并而成，作为**产品意图 + 前端对接协议的唯一权威文档**；REST 契约以 `api/openapi.yaml` 为准。
 
 **产品主线**：自主规划（Autonomous Planning）——系统汇总用户的所有资料（Canvas 作业与成绩、课程表、重复规则、长期记忆），一键生成当日/多日计划，用户再通过聊天微调。

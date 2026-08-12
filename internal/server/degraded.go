@@ -90,7 +90,11 @@ func (s *Server) DegradedReason() string {
 var degradedRoutes = []string{
 	"/api/healthz", // must answer, and answers 503
 	"/api/version", // contract negotiation; reads no rows
-	"/api/admin/",  // the console's API, including its login (F4a built it DB-free)
+	// ⚠️ Built through versionPath, not written out. This list is matched
+	// against REQUEST PATHS, which are versioned — a literal "/api/admin/" here
+	// would match nothing after a major bump, and the symptom is the degraded
+	// console refusing its own login with a 503. Which is exactly what happened.
+	versionPath("/api/admin/"), // the console's API, including its login (F4a built it DB-free)
 	// The console's own HTML and assets (F5). This line was missing for as long
 	// as the console was only an API: the comment above said "the console" and
 	// meant the endpoints, so the day a page appeared at /admin it would have

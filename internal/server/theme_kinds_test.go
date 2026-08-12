@@ -380,7 +380,7 @@ func toStrings(v any) []string {
 func itoaTest(i int) string { return strconv.Itoa(i) }
 
 func httptestNewJSON(method, path, body string) *http.Request {
-	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r := httptest.NewRequest(method, versionPath(path), strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	return r
 }

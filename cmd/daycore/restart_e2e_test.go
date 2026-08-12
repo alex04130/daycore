@@ -1,6 +1,8 @@
 package main
 
 import (
+	"daycore/internal/apipath"
+
 	"encoding/json"
 	"fmt"
 	"io"
@@ -128,7 +130,7 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 	firstInherited, _ := inheritedAt(addr, adminToken)
 
 	// ── the button ──────────────────────────────────────────────────────────
-	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/api/admin/restart", nil)
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+apipath.Path("/api/admin/restart"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +282,7 @@ func freePort(t *testing.T) int {
 // GET /api/admin/health, not /api/healthz: the instance id is admin-only, which
 // is right — it is an operational detail, and this test has the token anyway.
 func instanceAt(addr, token string) string {
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/admin/health", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+apipath.Path("/api/admin/health"), nil)
 	if err != nil {
 		return ""
 	}
@@ -302,7 +304,7 @@ func instanceAt(addr, token string) string {
 // inheritedAt asks whether the process now serving adopted its predecessor's
 // listening socket.
 func inheritedAt(addr, token string) (bool, bool) {
-	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/api/admin/health", nil)
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+apipath.Path("/api/admin/health"), nil)
 	if err != nil {
 		return false, false
 	}
@@ -451,7 +453,7 @@ func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
 	// changes — and presses restart.
 	writeEnvFile(t, dir, newPort)
 
-	req, _ := http.NewRequest(http.MethodPost, "http://"+oldAddr+"/api/admin/restart", nil)
+	req, _ := http.NewRequest(http.MethodPost, "http://"+oldAddr+apipath.Path("/api/admin/restart"), nil)
 	req.Header.Set("X-Admin-Token", adminToken)
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {

@@ -22,7 +22,7 @@ func proposalTestServer(t *testing.T) (*Server, string) {
 
 func do(t *testing.T, s *Server, sid, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequest(method, versionPath(path), strings.NewReader(body))
 	req.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)

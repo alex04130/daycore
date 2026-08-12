@@ -98,7 +98,7 @@ func TestFileRefNeverReachesTheClient(t *testing.T) {
 		t.Errorf("ChatMessage serialises an attachment ref: %s", raw)
 	}
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/files", nil).WithContext(withSessionID(context.Background(), sid))
+	req := httptest.NewRequest("GET", versionPath("/api/files"), nil).WithContext(withSessionID(context.Background(), sid))
 	s.handleFileListPending(rec, req)
 	if strings.Contains(rec.Body.String(), stored.Ref) {
 		t.Errorf("the pending list serialises refs: %s", rec.Body.String())
@@ -131,7 +131,7 @@ func TestFileUploadAndDownload(t *testing.T) {
 	}
 
 	// If-None-Match is exact because the validator is the content hash.
-	req := httptest.NewRequest("GET", "/api/files/"+a.ID, nil)
+	req := httptest.NewRequest("GET", versionPath("/api/files/")+a.ID, nil)
 	req.SetPathValue("id", a.ID)
 	req.Header.Set("If-None-Match", `"`+a.SHA256+`"`)
 	req = req.WithContext(withSessionID(req.Context(), sid))
@@ -144,7 +144,7 @@ func TestFileUploadAndDownload(t *testing.T) {
 
 func download(t *testing.T, s *Server, sid, id, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/api/files/"+id+query, nil)
+	req := httptest.NewRequest("GET", versionPath("/api/files/")+id+query, nil)
 	req.SetPathValue("id", id)
 	req = req.WithContext(withSessionID(req.Context(), sid))
 	rec := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestFileDeleteTakesTheBytesAndSparesSentOnes(t *testing.T) {
 	stored, _ := s.store.Attachments().Get(ctx, sid, a.ID)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("DELETE", "/api/files/"+a.ID, nil)
+	req := httptest.NewRequest("DELETE", versionPath("/api/files/")+a.ID, nil)
 	req.SetPathValue("id", a.ID)
 	req = req.WithContext(withSessionID(req.Context(), sid))
 	s.handleFileDelete(rec, req)
@@ -238,7 +238,7 @@ func TestFileDeleteTakesTheBytesAndSparesSentOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest("DELETE", "/api/files/"+sent.ID, nil)
+	req = httptest.NewRequest("DELETE", versionPath("/api/files/")+sent.ID, nil)
 	req.SetPathValue("id", sent.ID)
 	req = req.WithContext(withSessionID(req.Context(), sid))
 	s.handleFileDelete(rec, req)
@@ -297,7 +297,7 @@ func TestAttachmentSweepReclaimsRowsAndBytes(t *testing.T) {
 // contentDisposition builds a response header out of a client-supplied string,
 // which makes it the one place an upload can reach into the response itself.
 func TestContentDispositionCannotBeInjected(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/files/x", nil)
+	req := httptest.NewRequest("GET", versionPath("/api/files/x"), nil)
 	cases := []struct{ name, filename string }{
 		{"crlf", "a\r\nX-Evil: 1.png"},
 		{"quote", `a".png`},
@@ -324,7 +324,7 @@ func TestContentDispositionCannotBeInjected(t *testing.T) {
 	}
 	// ?download=1 forces a save dialog; the default is inline so an image can
 	// render in a chat bubble.
-	dl := httptest.NewRequest("GET", "/api/files/x?download=1", nil)
+	dl := httptest.NewRequest("GET", versionPath("/api/files/x?download=1"), nil)
 	if got := contentDisposition(dl, a); !strings.HasPrefix(got, "attachment;") {
 		t.Errorf("download=1 gave %q", got)
 	}

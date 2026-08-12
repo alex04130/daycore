@@ -57,7 +57,7 @@ security:
 
 paths:
   # ─── session ──────────────────────────────────────────────────────────────
-  /api/session/init:
+  /api/v2/session/init:
     post:
       operationId: sessionInit
       tags: [session]
@@ -68,7 +68,7 @@ paths:
         jar; send it back as the X-Session-Token header.
       requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { tokenInBody: { type: boolean } } } } } }
       responses: { '200': { description: "OK (Session; + sessionToken when tokenInBody)", content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
-  /api/session/theme:
+  /api/v2/session/theme:
     post:
       operationId: sessionTheme
       tags: [session]
@@ -99,7 +99,7 @@ paths:
             every manifest and every stylesheet).
       requestBody: { content: { application/json: { schema: { type: object, properties: { theme: { type: string } } } } } }
       responses: { '200': { description: OK } }
-  /api/session/settings:
+  /api/v2/session/settings:
     patch:
       operationId: sessionSettings
       tags: [session]
@@ -114,7 +114,7 @@ paths:
         changing your pair never breaks your settings page.
       requestBody: { content: { application/json: { schema: { type: object, properties: { assistantName: { type: string }, currentTheme: { type: string }, language: { type: string, enum: [zh-CN, en-US] }, personaPrompt: { type: string, maxLength: 2000 } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
-  /api/session/preferences:
+  /api/v2/session/preferences:
     get:
       operationId: getPreferences
       tags: [session]
@@ -130,7 +130,7 @@ paths:
         '400': { description: "bad_timezone (not an IANA zone this build can load), bad_category, or unsupported_locale." }
 
   # ─── plan ─────────────────────────────────────────────────────────────────
-  /api/plan:
+  /api/v2/plan:
     get:
       operationId: getPlan
       tags: [plan]
@@ -153,7 +153,7 @@ paths:
         '409':
           description: The plan gate refused — the block is locked or has petrified.
           content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
-  /api/plan/lock:
+  /api/v2/plan/lock:
     post:
       operationId: lockPlanBlock
       tags: [plan]
@@ -177,7 +177,7 @@ paths:
         '409':
           description: The plan gate refused — the block has petrified, so its lock is history too.
           content: { application/json: { schema: { $ref: '#/components/schemas/PlanBlocked' } } }
-  /api/plan/range:
+  /api/v2/plan/range:
     get:
       operationId: getPlanRange
       tags: [plan]
@@ -186,7 +186,7 @@ paths:
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
 
   # ─── proposals ────────────────────────────────────────────────────────────
-  /api/proposals:
+  /api/v2/proposals:
     get:
       operationId: listProposals
       tags: [proposals]
@@ -201,7 +201,7 @@ paths:
         - { name: level, in: query, schema: { type: string, enum: [L1, L2, L3] } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { proposals: { type: array, items: { $ref: '#/components/schemas/Proposal' } } } } } } }
-  /api/proposals/{id}/respond:
+  /api/v2/proposals/{id}/respond:
     post:
       operationId: respondProposal
       tags: [proposals]
@@ -216,7 +216,7 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
         '404': { description: No such card. }
         '409': { description: Already answered, or expired. }
-  /api/plan/conflict:
+  /api/v2/plan/conflict:
     post:
       operationId: markPlanConflict
       tags: [proposals]
@@ -234,21 +234,21 @@ paths:
         '422': { description: Nothing else wants that time. }
 
   # ─── rules ────────────────────────────────────────────────────────────────
-  /api/rules:
+  /api/v2/rules:
     get: { operationId: listRules, tags: [rules], summary: All rules (active + paused)., responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/ScheduleRule' } } } } } } } } }
     post:
       operationId: createRule
       tags: [rules]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RuleInput' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleRule' } } } }, '400': { $ref: '#/components/responses/Error' } }
-  /api/rules/batch:
+  /api/v2/rules/batch:
     post:
       operationId: batchCreateRules
       tags: [rules]
       summary: Create many rules (ICS/timetable confirmations).
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { rules: { type: array, items: { $ref: '#/components/schemas/RuleInput' } } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/rules/{id}:
+  /api/v2/rules/{id}:
     patch:
       operationId: patchRule
       tags: [rules]
@@ -263,7 +263,7 @@ paths:
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
   # ─── ai ───────────────────────────────────────────────────────────────────
-  /api/ai/companion:
+  /api/v2/ai/companion:
     post:
       operationId: companion
       tags: [ai]
@@ -276,7 +276,7 @@ paths:
         history; client roles are whitelisted to user/assistant.
       requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { message: { type: string, description: "May be empty when attachmentIds is not — dropping in a photo with no words is a complete thing to say." }, timezone: { type: string }, location: { type: string, maxLength: 128, description: "Where the device is, free text. Fills in or updates a device-detected location; never overwrites one the user set on the settings page. Used only by the briefs — the chat tool takes a location as an argument." }, assistantName: { type: string }, threadId: { type: string }, attachmentIds: { type: array, maxItems: 20, items: { type: string }, description: "Ids from POST /api/files. Must be this session's unsent uploads; they become part of the persisted user message. Files the chosen model cannot read are described to it by name rather than dropped." }, conversationHistory: { type: array, items: { type: object, properties: { role: { type: string, enum: [user, assistant] }, content: { type: string } } } } } } } } }
       responses: { '200': { description: SSE stream (text/event-stream), content: { text/event-stream: { schema: { type: string }, example: 'data: {"type":"delta","text":"好的"}\n\ndata: {"type":"done"}\n\n' } } } }
-  /api/ai/companion/async:
+  /api/v2/ai/companion/async:
     post:
       operationId: companionAsync
       tags: [ai]
@@ -295,35 +295,35 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
-  /api/ai/auto-plan:
+  /api/v2/ai/auto-plan:
     post:
       operationId: autoPlan
       tags: [ai]
       summary: Autonomous multi-day planning from imported materials.
       requestBody: { content: { application/json: { schema: { type: object, properties: { from: { type: string }, to: { type: string }, mode: { type: string, enum: [keep_manual, replace_all] }, extra: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/ai/plan-text:
+  /api/v2/ai/plan-text:
     post:
       operationId: planText
       tags: [ai]
       summary: Natural language → day plan JSON (candidates).
       requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, date: { type: string } } } } } }
       responses: { '200': { description: OK } }
-  /api/ai/plan-image:
+  /api/v2/ai/plan-image:
     post:
       operationId: planImage
       tags: [ai]
       summary: "Image → day plan (vision). imageBase64 has no data: prefix."
       requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string }, date: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/ai/extract-schedule-image:
+  /api/v2/ai/extract-schedule-image:
     post:
       operationId: extractScheduleImage
       tags: [ai]
       summary: Timetable screenshot → rule candidates.
       requestBody: { content: { application/json: { schema: { type: object, properties: { imageBase64: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/ai/travel:
+  /api/v2/ai/travel:
     post:
       operationId: aiTravel
       tags: [ai]
@@ -335,21 +335,21 @@ paths:
         Requires the travel category to be enabled. Rate-limited.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [destination], properties: { destination: { type: string }, startDate: { type: string }, endDate: { type: string }, notes: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '500': { $ref: '#/components/responses/Error' } }
-  /api/ai/mood:
+  /api/v2/ai/mood:
     post:
       operationId: aiMood
       tags: [ai]
       summary: Mood → AI response (memory facts injected).
       requestBody: { content: { application/json: { schema: { type: object, properties: { mood: { type: string } } } } } }
       responses: { '200': { description: OK } }
-  /api/ai/theme:
+  /api/v2/ai/theme:
     post:
       operationId: aiTheme
       tags: [ai]
       summary: AI-generated theme palette (preview, not persisted).
       requestBody: { content: { application/json: { schema: { type: object, properties: { description: { type: string }, base: { type: string }, themeId: { type: string } } } } } }
       responses: { '200': { description: OK } }
-  /api/decisions/{id}/respond:
+  /api/v2/decisions/{id}/respond:
     post:
       operationId: respondDecision
       tags: [ai]
@@ -359,14 +359,14 @@ paths:
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
   # ─── chat ─────────────────────────────────────────────────────────────────
-  /api/chat/threads:
+  /api/v2/chat/threads:
     get: { operationId: listThreads, tags: [chat], summary: List threads (first call auto-imports legacy companion_memory once)., responses: { '200': { description: OK } } }
     post:
       operationId: createThread
       tags: [chat]
       requestBody: { content: { application/json: { schema: { type: object, properties: { title: { type: string } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatThread' } } } } }
-  /api/chat/threads/{id}:
+  /api/v2/chat/threads/{id}:
     patch:
       operationId: updateThread
       tags: [chat]
@@ -379,7 +379,7 @@ paths:
       summary: Delete a thread and cascade its messages.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK } }
-  /api/chat/threads/{id}/messages:
+  /api/v2/chat/threads/{id}/messages:
     get:
       operationId: listMessages
       tags: [chat]
@@ -392,19 +392,19 @@ paths:
       summary: Clear all messages (keep the thread).
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK } }
-  /api/chat/messages/{id}:
+  /api/v2/chat/messages/{id}:
     get:
       operationId: getMessage
       tags: [chat]
       summary: One message by id — cheap polling target for async turns.
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ChatMessage' } } } }, '404': { $ref: '#/components/responses/Error' } }
-  /api/companion-history:
+  /api/v2/companion-history:
     get: { operationId: getCompanionHistory, tags: [chat], summary: Legacy companion memory blob (superseded by chat threads)., responses: { '200': { description: OK } } }
     post: { operationId: setCompanionHistory, tags: [chat], responses: { '200': { description: OK } } }
 
   # ─── files ────────────────────────────────────────────────────────────────
-  /api/files:
+  /api/v2/files:
     post:
       operationId: uploadFile
       tags: [files]
@@ -439,7 +439,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { files: { type: array, items: { $ref: '#/components/schemas/Attachment' } } } } } } }
-  /api/files/{id}:
+  /api/v2/files/{id}:
     get:
       operationId: downloadFile
       tags: [files]
@@ -473,7 +473,7 @@ paths:
         '409': { description: It belongs to a message now. }
 
   # ─── materials ────────────────────────────────────────────────────────────
-  /api/materials:
+  /api/v2/materials:
     get:
       operationId: listMaterials
       tags: [materials]
@@ -484,7 +484,7 @@ paths:
       tags: [materials]
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } } }
-  /api/materials/search:
+  /api/v2/materials/search:
     get:
       operationId: searchMaterials
       tags: [materials]
@@ -499,7 +499,7 @@ paths:
         guaranteed by the fallback.
       parameters: [{ name: q, in: query, required: true, schema: { type: string } }, { name: category, in: query, schema: { type: string } }, { name: limit, in: query, schema: { type: integer } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { results: { type: array, items: { $ref: '#/components/schemas/SearchResult' } } } } } } }, '501': { $ref: '#/components/responses/Error' } }
-  /api/materials/categories:
+  /api/v2/materials/categories:
     get:
       operationId: materialCategories
       tags: [materials]
@@ -512,7 +512,7 @@ paths:
         "note", unknown → 400 bad_category); reads never reject legacy free-text
         categories.
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { categories: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, icon: { type: string }, enabled: { type: boolean }, default: { type: boolean } } } } } } } } } }
-  /api/materials/{id}:
+  /api/v2/materials/{id}:
     get: { operationId: getMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Material' } } } }, '404': { $ref: '#/components/responses/Error' } } }
     patch:
       operationId: updateMaterial
@@ -523,7 +523,7 @@ paths:
     delete: { operationId: deleteMaterial, tags: [materials], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
 
   # ─── wishes ───────────────────────────────────────────────────────────────
-  /api/wishes:
+  /api/v2/wishes:
     get:
       operationId: listWishes
       tags: [wishes]
@@ -534,7 +534,7 @@ paths:
       tags: [wishes]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, note: { type: string }, effortMin: { type: integer } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } } }
-  /api/wishes/{id}:
+  /api/v2/wishes/{id}:
     get: { operationId: getWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Wish' } } } }, '404': { $ref: '#/components/responses/Error' } } }
     patch:
       operationId: updateWish
@@ -545,7 +545,7 @@ paths:
     delete: { operationId: deleteWish, tags: [wishes], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
 
   # ─── inbox ────────────────────────────────────────────────────────────────
-  /api/inbox/process:
+  /api/v2/inbox/process:
     post:
       operationId: inboxProcess
       tags: [inbox]
@@ -561,7 +561,7 @@ paths:
         Rate-limited like other AI endpoints.
       requestBody: { content: { application/json: { schema: { type: object, properties: { text: { type: string }, temp_id: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
-  /api/inbox/commit:
+  /api/v2/inbox/commit:
     post:
       operationId: inboxCommit
       tags: [inbox]
@@ -574,14 +574,14 @@ paths:
         classification→module mapping lives once, server-side.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [draftId], properties: { draftId: { type: string }, overrides: { type: object, properties: { category: { type: string }, title: { type: string }, summary: { type: string }, body: { type: string } } }, alsoKeepNote: { type: boolean, description: "when the draft routes to an assignment, also keep the raw capture as a material" } } } } } }
       responses: { '200': { description: "OK {type: material|assignment, material?, assignment?} — academic drafts with a due date become manual assignments" }, '400': { $ref: '#/components/responses/Error' }, '404': { $ref: '#/components/responses/Error' } }
-  /api/inbox/upload:
+  /api/v2/inbox/upload:
     post:
       operationId: inboxUpload
       tags: [inbox]
       summary: Upload a file (≤8MB); small files (≤1MB) persist for /process to consume. Requires session + rate-limited.
       requestBody: { content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { temp_id: { type: string }, filename: { type: string }, size: { type: integer }, content_type: { type: string }, stored: { type: boolean } } } } } } }
-  /api/temp-context:
+  /api/v2/temp-context:
     get:
       operationId: getTempContext
       tags: [inbox]
@@ -595,7 +595,7 @@ paths:
       responses: { '200': { description: OK } }
 
   # ─── memory ───────────────────────────────────────────────────────────────
-  /api/memory:
+  /api/v2/memory:
     get: { operationId: listMemory, tags: [memory], responses: { '200': { description: OK } } }
     post:
       operationId: addMemory
@@ -603,11 +603,11 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [fact], properties: { fact: { type: string, maxLength: 500 }, source: { type: string, enum: [chat, user, import] } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
     delete: { operationId: clearMemory, tags: [memory], summary: Forget everything (privacy)., responses: { '200': { description: OK } } }
-  /api/memory/{id}:
+  /api/v2/memory/{id}:
     delete: { operationId: deleteMemory, tags: [memory], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
 
   # ─── mood ─────────────────────────────────────────────────────────────────
-  /api/mood/kinds:
+  /api/v2/mood/kinds:
     get:
       operationId: listMoodKinds
       tags: [mood]
@@ -638,7 +638,7 @@ paths:
                         id: { type: string, example: happy }
                         emoji: { type: string, example: "😊" }
                         name: { type: string, example: 开心 }
-  /api/mood:
+  /api/v2/mood:
     get:
       operationId: listMood
       tags: [mood]
@@ -678,7 +678,7 @@ paths:
       responses: { '200': { description: OK } }
 
   # ─── themes ───────────────────────────────────────────────────────────────
-  /api/themes:
+  /api/v2/themes:
     get:
       operationId: listThemes
       tags: [themes]
@@ -732,7 +732,7 @@ paths:
             every manifest and every stylesheet).
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CustomTheme' } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/themes/{id}:
+  /api/v2/themes/{id}:
     patch:
       operationId: patchTheme
       tags: [themes]
@@ -765,17 +765,17 @@ paths:
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
 
   # ─── import ───────────────────────────────────────────────────────────────
-  /api/import/token:
+  /api/v2/import/token:
     get: { operationId: getImportToken, tags: [import], responses: { '200': { description: OK } } }
     post: { operationId: rotateImportToken, tags: [import], responses: { '200': { description: OK } } }
-  /api/import/canvas:
+  /api/v2/import/canvas:
     post:
       operationId: importCanvas
       tags: [import]
       security: [{ importToken: [] }, { sessionCookie: [] }]
       summary: Canvas direct push (extension) or JSON upload.
       responses: { '200': { description: OK } }
-  /api/import/ics:
+  /api/v2/import/ics:
     post:
       operationId: importICS
       tags: [import]
@@ -834,11 +834,11 @@ paths:
                   calendarTimezone: { type: string }
                   sessionTimezone: { type: string }
                   events: { type: integer }
-  /api/import/history:
+  /api/v2/import/history:
     get: { operationId: importHistory, tags: [import], responses: { '200': { description: OK } } }
-  /api/courses:
+  /api/v2/courses:
     get: { operationId: listCourses, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Course' } } } } } } }
-  /api/assignments:
+  /api/v2/assignments:
     get: { operationId: listAssignments, tags: [import], responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Assignment' } } } } } } }
     post:
       operationId: createAssignment
@@ -847,7 +847,7 @@ paths:
       description: Source "manual"; Canvas re-imports never touch manual rows. dueAt accepts RFC3339, YYYY-MM-DDTHH:MM, or YYYY-MM-DD.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [title], properties: { title: { type: string }, dueAt: { type: string }, courseId: { type: string } } } } } }
       responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Assignment' } } } }, '400': { $ref: '#/components/responses/Error' } }
-  /api/assignments/{id}:
+  /api/v2/assignments/{id}:
     patch:
       operationId: patchAssignment
       tags: [import]
@@ -866,16 +866,16 @@ paths:
         '404': { description: No such assignment in this session. }
 
   # ─── channels ─────────────────────────────────────────────────────────────
-  /api/channels:
+  /api/v2/channels:
     get: { operationId: listChannels, tags: [channels], summary: Available channels + binding status., responses: { '200': { description: OK } } }
-  /api/channels/{channel}/bind:
+  /api/v2/channels/{channel}/bind:
     post:
       operationId: bindChannel
       tags: [channels]
       summary: Generate a 12-char token (10-min TTL) to send to the bot.
       parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { token: { type: string }, channel: { type: string }, note: { type: string } } } } } } }
-  /api/channels/{channel}/verify:
+  /api/v2/channels/{channel}/verify:
     post:
       operationId: verifyChannel
       tags: [channels]
@@ -883,17 +883,17 @@ paths:
       parameters: [{ name: channel, in: path, required: true, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token, externalId], properties: { token: { type: string }, externalId: { type: string } } } } } }
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '410': { $ref: '#/components/responses/Error' } }
-  /api/channels/{channel}/unbind:
+  /api/v2/channels/{channel}/unbind:
     delete: { operationId: unbindChannel, tags: [channels], parameters: [{ name: channel, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK } } }
 
   # ─── ops ──────────────────────────────────────────────────────────────────
-  /api/ops:
+  /api/v2/ops:
     get:
       operationId: listOps
       tags: [ops]
       parameters: [{ name: limit, in: query, schema: { type: integer } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ops: { type: array, items: { $ref: '#/components/schemas/OperationLog' } } } } } } } }
-  /api/ops/{id}/revert:
+  /api/v2/ops/{id}/revert:
     post:
       operationId: revertOp
       tags: [ops]
@@ -902,7 +902,7 @@ paths:
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
 
   # ─── feedback ─────────────────────────────────────────────────────────────
-  /api/feedback:
+  /api/v2/feedback:
     post:
       operationId: addFeedback
       tags: [feedback]
@@ -910,25 +910,25 @@ paths:
       responses: { '200': { description: OK } }
 
   # ─── auth ─────────────────────────────────────────────────────────────────
-  /api/auth/register:
+  /api/v2/auth/register:
     post:
       operationId: register
       tags: [auth]
       summary: Email + password sign-up (rate-limited).
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string, minLength: 8 }, name: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
       responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
-  /api/auth/login:
+  /api/v2/auth/login:
     post:
       operationId: login
       tags: [auth]
       summary: Email + password sign-in; merges anonymous data into the canonical session.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string }, password: { type: string }, tokenInBody: { type: boolean, description: "true → response includes the JWT as \"token\" (native clients)" } } } } } }
       responses: { '200': { description: "OK {ok, user; + token when tokenInBody}" }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
-  /api/auth/logout:
+  /api/v2/auth/logout:
     post: { operationId: logout, tags: [auth], summary: Clear the auth cookie and revoke all issued JWTs., responses: { '200': { description: OK } } }
-  /api/auth/providers:
+  /api/v2/auth/providers:
     get: { operationId: oauthProviders, tags: [auth], summary: List enabled OAuth providers., responses: { '200': { description: OK } } }
-  /api/auth/oauth/{provider}:
+  /api/v2/auth/oauth/{provider}:
     get:
       operationId: oauthStart
       tags: [auth]
@@ -942,11 +942,11 @@ paths:
       summary: OAuth callback; links only verified emails, sets dc_auth, redirects to /.
       parameters: [{ name: provider, in: path, required: true, schema: { type: string } }, { name: code, in: query, schema: { type: string } }, { name: state, in: query, schema: { type: string } }]
       responses: { '302': { description: Redirect to / } }
-  /api/me:
+  /api/v2/me:
     get: { operationId: me, tags: [auth], summary: "Current user, or {user:null} when anonymous.", responses: { '200': { description: OK } } }
 
   # ─── admin ────────────────────────────────────────────────────────────────
-  /api/admin/config:
+  /api/v2/admin/config:
     get:
       operationId: adminConfigGet
       tags: [admin]
@@ -1040,7 +1040,7 @@ paths:
         '400': { description: "unknown_setting, not_editable, or bad_value." }
         '401': { description: No admin credential. }
         '503': { description: "degraded — storage is unavailable, so overrides cannot be written. The environment layer still applies." }
-  /api/admin/restart:
+  /api/v2/admin/restart:
     post:
       operationId: adminRestart
       tags: [admin]
@@ -1103,7 +1103,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '501': { description: This build has no restart hook (not a real server process). }
         '503': { description: 'Preflight failed — e.g. the executable path cannot be resolved. The process stays up.' }
-  /api/admin/session:
+  /api/v2/admin/session:
     post:
       operationId: adminLogin
       tags: [admin]
@@ -1173,9 +1173,9 @@ paths:
       description: Deliberately open — a logout that 401s leaves somebody unable to clear a session they cannot use.
       responses:
         '200': { description: OK }
-  /api/admin/prompts:
+  /api/v2/admin/prompts:
     get: { operationId: adminListPrompts, tags: [admin], security: [{ adminToken: [] }], responses: { '200': { description: OK }, '401': { $ref: '#/components/responses/Error' } } }
-  /api/admin/prompts/{key}:
+  /api/v2/admin/prompts/{key}:
     get:
       operationId: adminGetPrompt
       tags: [admin]
@@ -1189,9 +1189,9 @@ paths:
       parameters: [{ name: key, in: path, required: true, schema: { type: string } }, { name: locale, in: query, schema: { type: string } }]
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [content], properties: { content: { type: string } } } } } }
       responses: { '200': { description: OK }, '400': { $ref: '#/components/responses/Error' } }
-  /api/admin/stats:
+  /api/v2/admin/stats:
     get: { operationId: adminStats, tags: [admin], security: [{ adminToken: [] }], summary: Dashboard aggregation (incl. feedbackUseful/feedbackTotal)., responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStats' } } } } } }
-  /api/admin/ailogs:
+  /api/v2/admin/ailogs:
     get:
       operationId: adminAILogs
       tags: [admin]
@@ -1240,7 +1240,7 @@ paths:
                   nextBeforeId: { type: string }
         '400': { description: Bad status, since, or half a cursor. }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/usage:
+  /api/v2/admin/usage:
     get:
       operationId: adminUsage
       tags: [admin]
@@ -1284,7 +1284,7 @@ paths:
                   throughDay: { type: string, description: Newest day the rollup can cover. }
         '400': { description: from or to is not YYYY-MM-DD. }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/users:
+  /api/v2/admin/users:
     get:
       operationId: adminUsers
       tags: [admin]
@@ -1325,9 +1325,9 @@ paths:
                   fastWindowHours: { type: integer }
                   slowWindowDays: { type: integer }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/users/{id}:
+  /api/v2/admin/users/{id}:
     delete: { operationId: adminDeleteUser, tags: [admin], security: [{ adminToken: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
-  /api/admin/theme-kinds:
+  /api/v2/admin/theme-kinds:
     get:
       operationId: adminThemeKinds
       tags: [admin]
@@ -1350,7 +1350,7 @@ paths:
         '200': { description: OK }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database. The embedded six and THEME_KINDS_DIR are still in force.' }
-  /api/admin/theme-kinds/{name}:
+  /api/v2/admin/theme-kinds/{name}:
     put:
       operationId: adminSetThemeKind
       tags: [admin]
@@ -1407,7 +1407,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { description: No such kind. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/frontends:
+  /api/v2/admin/frontends:
     get:
       operationId: adminFrontends
       tags: [admin]
@@ -1426,7 +1426,7 @@ paths:
         '200': { description: OK }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/frontends/families/{id}:
+  /api/v2/admin/frontends/families/{id}:
     put:
       operationId: adminSetFamily
       tags: [admin]
@@ -1477,7 +1477,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '409': { description: Builds still point at this family. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/frontends/families/{id}/backfill:
+  /api/v2/admin/frontends/families/{id}/backfill:
     get:
       operationId: adminBackfillPrice
       tags: [admin]
@@ -1538,7 +1538,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { description: No such family. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/frontends/builds/{hash}/family:
+  /api/v2/admin/frontends/builds/{hash}/family:
     put:
       operationId: adminMoveBuild
       tags: [admin]
@@ -1564,7 +1564,7 @@ paths:
         '403': { $ref: '#/components/responses/Error' }
         '404': { description: No such build, or no such target family. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/pairings:
+  /api/v2/admin/pairings:
     get:
       operationId: adminPairings
       tags: [admin]
@@ -1654,7 +1654,7 @@ paths:
         '403': { description: Missing pairings.manage, or an admin group without roles.edit. }
         '404': { description: One of the named groups does not exist. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/pairings/{id}:
+  /api/v2/admin/pairings/{id}:
     delete:
       operationId: adminDeletePairing
       tags: [admin]
@@ -1670,7 +1670,7 @@ paths:
         '200': { description: OK }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/pairings/{id}/roles:
+  /api/v2/admin/pairings/{id}/roles:
     put:
       operationId: adminSetPairingRoles
       tags: [admin]
@@ -1690,7 +1690,7 @@ paths:
         '403': { description: Missing pairings.manage, or an admin group without roles.edit. }
         '404': { description: No such pairing, or no such group. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/pairings/{id}/full:
+  /api/v2/admin/pairings/{id}/full:
     put:
       operationId: adminSetPairingFull
       tags: [admin]
@@ -1736,7 +1736,7 @@ paths:
         '403': { description: Not the root credential. }
         '404': { description: No such pairing. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/permissions:
+  /api/v2/admin/permissions:
     get:
       operationId: adminPermissions
       tags: [admin]
@@ -1754,7 +1754,7 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { permissions: { type: array, items: { type: object, properties: { id: { type: string }, damage: { type: string } } } } } } } } }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/roles:
+  /api/v2/admin/roles:
     get:
       operationId: adminRoles
       tags: [admin]
@@ -1768,7 +1768,7 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { type: object, properties: { roles: { type: array, items: { $ref: '#/components/schemas/AdminRole' } } } } } } }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database, so groups cannot be read.' }
-  /api/admin/roles/{name}:
+  /api/v2/admin/roles/{name}:
     put:
       operationId: adminSetRole
       tags: [admin]
@@ -1809,7 +1809,7 @@ paths:
         '200': { description: OK }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/users/{id}/roles:
+  /api/v2/admin/users/{id}/roles:
     put:
       operationId: adminSetUserRoles
       tags: [admin]
@@ -1834,7 +1834,7 @@ paths:
         '403': { description: Missing users.assign, or an admin group without roles.edit. }
         '404': { description: No such user, or no such group. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/users/{id}/owner:
+  /api/v2/admin/users/{id}/owner:
     put:
       operationId: adminSetOwner
       tags: [admin]
@@ -1868,7 +1868,7 @@ paths:
         '403': { description: Not the root credential. }
         '404': { description: No such user. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/db/tables:
+  /api/v2/admin/db/tables:
     get:
       operationId: adminDBTables
       tags: [admin]
@@ -1896,7 +1896,7 @@ paths:
                   tables: { type: array, items: { $ref: '#/components/schemas/AdminDBTable' } }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/db/table/{name}:
+  /api/v2/admin/db/table/{name}:
     get:
       operationId: adminDBBrowse
       tags: [admin]
@@ -1943,7 +1943,7 @@ paths:
         '403': { description: This table's class needs a permission the caller does not hold. }
         '404': { description: Not a catalogued table. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/db/table/{name}/{id}:
+  /api/v2/admin/db/table/{name}/{id}:
     delete:
       operationId: adminDBDelete
       tags: [admin]
@@ -1968,7 +1968,7 @@ paths:
         '404': { description: No such table, or no such row. }
         '409': { description: This table has no single-row key. }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/db/export:
+  /api/v2/admin/db/export:
     get:
       operationId: adminDBExport
       tags: [admin]
@@ -2001,7 +2001,7 @@ paths:
                   tables: { type: object, additionalProperties: { type: array, items: { type: object } } }
         '403': { $ref: '#/components/responses/Error' }
         '503': { description: 'Degraded: no database.' }
-  /api/admin/db/import:
+  /api/v2/admin/db/import:
     post:
       operationId: adminDBImport
       tags: [admin]
@@ -2019,7 +2019,7 @@ paths:
       responses:
         '501': { description: Import is not available; the message says what to do instead. }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/db/backup:
+  /api/v2/admin/db/backup:
     get:
       operationId: adminDBBackup
       tags: [admin]
@@ -2034,7 +2034,7 @@ paths:
       responses:
         '501': { description: Not available; the message names the tool to use. }
         '403': { $ref: '#/components/responses/Error' }
-  /api/admin/providers:
+  /api/v2/admin/providers:
     get:
       operationId: adminProvidersGet
       tags: [admin]
@@ -2135,7 +2135,7 @@ paths:
         '400': { description: Unknown source, or a description that is not in both locales. }
         '401': { description: No admin credential. }
         '503': { description: Degraded — the override table is in the database. }
-  /api/admin/models:
+  /api/v2/admin/models:
     get:
       operationId: adminModelsGet
       tags: [admin]
@@ -2176,7 +2176,7 @@ paths:
                   models: { type: array, items: { $ref: '#/components/schemas/ModelDetail' } }
                   configPath: { type: string, description: The file to edit, since nothing here is writable. }
         '401': { description: No admin credential. }
-  /api/admin/models/{id}/test:
+  /api/v2/admin/models/{id}/test:
     post:
       operationId: adminModelTest
       tags: [admin]
@@ -2215,7 +2215,7 @@ paths:
                   message: { type: string }
         '400': { description: No such model in the catalog. }
         '401': { description: No admin credential. }
-  /api/admin/oauth:
+  /api/v2/admin/oauth:
     get:
       operationId: adminOAuthGet
       tags: [admin]
@@ -2291,7 +2291,7 @@ paths:
       responses:
         '200': { description: An asset, or index.html for a client-side route. }
         '404': { description: This build carries no console. }
-  /api/admin/health:
+  /api/v2/admin/health:
     get:
       operationId: adminHealth
       tags: [admin]
@@ -2357,7 +2357,7 @@ paths:
       tags: [meta]
       security: []
       responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, db: { type: string }, version: { type: string }, channel: { type: string }, env: { type: string } } } } } }, '503': { description: DB unavailable } }
-  /api/models:
+  /api/v2/models:
     get: { operationId: listModels, tags: [meta], security: [], responses: { '200': { description: OK } } }
   /api/version:
     post:

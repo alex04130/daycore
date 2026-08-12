@@ -130,7 +130,7 @@ func TestThemesAreJudgedAgainstTheCallersFamily(t *testing.T) {
 		{"name":"--primary","kind":"color"}]}}`)
 
 	post := func(build, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, "/api/themes", strings.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, versionPath("/api/themes"), strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-Token", s.cookies.Sign(sid))
 		if build != "" {

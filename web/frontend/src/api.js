@@ -24,8 +24,21 @@ async function handle(res) {
   return body;
 }
 
+// ⚠️ The API moved under /api/v2 (see internal/apipath). Rewriting HERE rather
+// than at ~90 call sites: those name a RESOURCE, and which major serves it is
+// one decision. /api/version and /api/healthz stay put — discovery cannot be
+// behind the thing it discovers, and liveness is configured by people who do
+// not track this contract.
+const UNVERSIONED = ['/api/version', '/api/healthz'];
+
+function versioned(url) {
+  if (!url.startsWith('/api/') || UNVERSIONED.includes(url.split('?')[0])) return url;
+  if (url.startsWith('/api/v2/')) return url;
+  return '/api/v2' + url.slice('/api'.length);
+}
+
 function req(method, url, body) {
-  return fetch(url, {
+  return fetch(versioned(url), {
     method,
     credentials: 'include',
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
@@ -44,7 +57,7 @@ export const del = (url) => req('DELETE', url);
 // error(f), done()}. An error frame invokes on.error then rejects with
 // ApiError; a done frame resolves. Pass an AbortSignal to cancel mid-stream.
 export async function streamAgent(url, body, on, signal) {
-  const res = await fetch(url, {
+  const res = await fetch(versioned(url), {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

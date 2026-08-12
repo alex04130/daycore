@@ -1,5 +1,12 @@
 # 开发者手册
 
+> ⚠️ **本文引用的 `/api/…` 路径实际服务在 `/api/v2/…` 下**（2026-08-11 起，规则见 `internal/apipath`）。
+> 正文按**资源**写，因为哪个 major 在服务它是另一件事、只决定一次。
+> 三条例外留在 `/api/` 外面：`/api/version`（发现）、`/api/healthz`（存活探针）、
+> `/api/auth/oauth/{provider}/callback`（注册在第三方控制台里的重定向目标）。
+> 权威的完整线上路径见 `docs/API_SURFACE.md` 与 `api/openapi.yaml`。
+
+
 > 从 README 搬来（2026-07-29）—— README 只留「这是什么 / 怎么跑起来」，其余瀑布式下沉到 `docs/`。
 
 ### 项目结构

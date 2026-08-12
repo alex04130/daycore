@@ -38,7 +38,11 @@ func adminServer(t *testing.T) *Server {
 
 func adminReq(t *testing.T, s *Server, method, path, body string, mut func(*http.Request)) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	// ⚠️ versionPath here, not at every call site. Callers name the resource
+	// ("/api/admin/stats") and this turns it into what the server actually
+	// serves — the same argument the mux makes, applied to the tests so the two
+	// cannot drift apart.
+	req := httptest.NewRequest(method, versionPath(path), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if mut != nil {
 		mut(req)
@@ -118,7 +122,7 @@ func TestAdminLoginExchangesTheTokenForACookie(t *testing.T) {
 	if admin.SameSite != http.SameSiteStrictMode {
 		t.Errorf("SameSite = %v, want Strict — nobody should arrive at the console by following a link", admin.SameSite)
 	}
-	if admin.Path != "/api/admin" {
+	if admin.Path != versionPath("/api/admin") {
 		t.Errorf("cookie path %q — it should not be sent to endpoints that do not need it", admin.Path)
 	}
 	if admin.MaxAge <= 0 || admin.MaxAge > int(auth.AdminTokenTTL.Seconds()) {

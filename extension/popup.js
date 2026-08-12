@@ -137,7 +137,7 @@ pushBtn.addEventListener("click", async () => {
 
   pushBtn.disabled = true;
   try {
-    const res = await fetch(`${base}/api/import/canvas`, {
+    const res = await fetch(`${base}/api/v2/import/canvas`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Import-Token": importToken },
       body: JSON.stringify(exportData),

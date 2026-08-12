@@ -37,17 +37,17 @@ func TestEveryAdminRouteDeclaresAPermission(t *testing.T) {
 	used := map[string]bool{}
 
 	for _, r := range routes {
-		if !strings.Contains(r.Pattern, "/api/admin/") {
+		if !strings.Contains(r.Logical, "/api/admin/") {
 			continue
 		}
 		seen++
-		perm, declared := PermissionFor(r.Pattern)
+		perm, declared := PermissionFor(r.Logical)
 		if !declared {
 			t.Errorf("%s (group %q) declares no permission.\n"+
 				"  An undeclared admin route is DENIED for everybody except the root credential, so this is\n"+
 				"  not a security hole — it is an endpoint nobody can reach. Add it to routePermissions with\n"+
 				"  the permission whose CONSEQUENCE matches, or with \"\" and a comment saying why it needs none.",
-				r.Pattern, r.Group)
+				r.Logical, r.Group)
 			continue
 		}
 		switch perm {
@@ -58,7 +58,7 @@ func TestEveryAdminRouteDeclaresAPermission(t *testing.T) {
 			continue
 		}
 		if !PermissionExists(perm) {
-			t.Errorf("%s requires %q, which is not a registered permission — a typo here is a route nobody can ever reach", r.Pattern, perm)
+			t.Errorf("%s requires %q, which is not a registered permission — a typo here is a route nobody can ever reach", r.Logical, perm)
 		}
 		used[perm] = true
 	}

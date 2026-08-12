@@ -310,14 +310,14 @@ func TestAFullPairingIsNotRootForDisclosure(t *testing.T) {
 	if rec := adminReq(t, s, http.MethodPut, "/api/admin/pairings/"+id+"/full", `{"full":true}`, withRootHeader(s)); rec.Code != http.StatusOK {
 		t.Fatal(rec.Body.String())
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	req := httptest.NewRequest(http.MethodGet, versionPath("/api/admin/health"), nil)
 	req.Header.Set(pairingHeader, key)
 	if s.isRootCredential(req) {
 		t.Error("a full pairing satisfies isRootCredential — it would be shown a DSN password it " +
 			"cannot read from the machine it runs on")
 	}
 	// The header holder still does.
-	req2 := httptest.NewRequest(http.MethodGet, "/api/admin/health", nil)
+	req2 := httptest.NewRequest(http.MethodGet, versionPath("/api/admin/health"), nil)
 	req2.Header.Set("X-Admin-Token", s.cfg.AdminToken)
 	if !s.isRootCredential(req2) {
 		t.Error("the admin token stopped satisfying isRootCredential")
