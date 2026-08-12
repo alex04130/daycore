@@ -3,6 +3,7 @@ package theme
 import (
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,6 +193,122 @@ func cssValuesByKind(t *testing.T) map[string][]string {
 	}
 	if len(out) == 0 {
 		t.Fatal("纸屿's stylesheet declares none of the tokens whose kinds it proposes")
+	}
+	return out
+}
+
+// 长卷 proposes one kind, and it is the first that unions two PRIMITIVES rather
+// than describing a new syntax: an inset is a ratio or a length, and no
+// combinator over the embedded six expresses a union.
+//
+// ⚠️ It also declares a `list-of<length>` token and proposes NOTHING for it —
+// that combinator already says what a dash pattern is. Worth asserting: a
+// frontend that proposed a kind it did not need would put a decision on an
+// operator's desk for nothing, and the tier is only cheap while that stays rare.
+func TestLiulisProposedKindsAcceptLiulisOwnValues(t *testing.T) {
+	src, err := os.ReadFile("../../web/liuli/src/manifest.ts")
+	if err != nil {
+		t.Skipf("长卷 is not checked out here (%v)", err)
+	}
+	kinds := extractTSPatterns(t, string(src))
+	pattern := kinds["ratio-or-length"]
+	if pattern == "" {
+		t.Fatalf("长卷's manifest no longer proposes ratio-or-length (found %v)", keysOf(kinds))
+	}
+	if len(kinds) != 1 {
+		t.Errorf("长卷 proposes %v; every extra kind is a decision on an operator's desk", keysOf(kinds))
+	}
+
+	r := NewRegistry()
+	if problems := r.SetDBKinds([]Kind{{Name: "ratio-or-length", Pattern: pattern}}); len(problems) > 0 {
+		t.Fatalf("did not register: %v", problems)
+	}
+	for _, ok := range []string{"0", "0.06", ".5", "1", "1.0", "12px", "1.5rem"} {
+		if err := r.Validate("ratio-or-length", ok); err != nil {
+			t.Errorf("长卷's inset kind refuses %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"1.5", "-0.5", "12", "12pt", "red", "0.5; color:red"} {
+		if err := r.Validate("ratio-or-length", bad); err == nil {
+			t.Errorf("长卷's inset kind accepted %q", bad)
+		}
+	}
+
+	// ⚠️ The dash token uses a COMBINATOR the deployment already has. If this
+	// ever stops being true the frontend has to propose something, and the
+	// silent failure is a token nothing can validate.
+	if !r.Known("list-of<length>") {
+		t.Error("list-of<length> is not known, so 长卷's dash token has no validator")
+	}
+	if err := r.Validate("list-of<length>", "4px 3px"); err != nil {
+		t.Errorf("长卷 ships --cj-ghost-dash: 4px 3px and the combinator refuses it: %v", err)
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Every kind a frontend's tokens DECLARE must be resolvable — by the embedded
+// floor, by a combinator, or by that frontend's own proposal.
+//
+// ⚠️ The gap this closes was found by a mutation that survived: changing a
+// token's kind from `list-of<length>` to an invented `dash-pattern` broke
+// nothing, because the per-frontend tests only checked the PROPOSED patterns
+// and never the kinds the tokens actually name. A token whose kind nothing can
+// resolve is a token the handshake refuses — and the frontend learns that from
+// a 400 at runtime rather than from a build.
+//
+// One test over all three, because the failure is identical in each and three
+// copies is three places to forget the fourth frontend.
+func TestEveryDeclaredTokenKindCanBeResolved(t *testing.T) {
+	for _, app := range []struct{ name, dir string }{
+		{"汀", "ting"},
+		{"纸屿", "zhiyu"},
+		{"长卷", "liuli"},
+	} {
+		src, err := os.ReadFile("../../web/" + app.dir + "/src/manifest.ts")
+		if err != nil {
+			t.Logf("%s is not checked out here; skipping", app.name)
+			continue
+		}
+		proposed := extractTSPatterns(t, string(src))
+		r := NewRegistry()
+		var decl []Kind
+		for name, pattern := range proposed {
+			decl = append(decl, Kind{Name: name, Pattern: pattern})
+		}
+		if problems := r.SetDBKinds(decl); len(problems) > 0 {
+			t.Errorf("%s: its own proposals do not compile: %v", app.name, problems)
+			continue
+		}
+
+		kinds := extractTokenKinds(t, string(src))
+		if len(kinds) < 5 {
+			t.Errorf("%s: only found %d token kinds; this check is not reading the manifest", app.name, len(kinds))
+		}
+		for token, kind := range kinds {
+			if !r.Known(kind) {
+				t.Errorf("%s declares %s as kind %q, which nothing can resolve — "+
+					"the handshake refuses it and the frontend finds out from a 400 at runtime",
+					app.name, token, kind)
+			}
+		}
+	}
+}
+
+// extractTokenKinds reads the `{ name: '--x', kind: 'y' }` entries.
+func extractTokenKinds(t *testing.T, src string) map[string]string {
+	t.Helper()
+	re := regexp.MustCompile(`\{\s*name:\s*'(--[\w-]+)',\s*kind:\s*'([^']+)'`)
+	out := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(src, -1) {
+		out[m[1]] = m[2]
 	}
 	return out
 }
