@@ -1,4 +1,4 @@
-.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n check-core-pack submodules submodules-present api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
@@ -83,8 +83,29 @@ test-mongo: ## Run the storage conformance suite against a real MongoDB
 	@echo "requires a mongod on 127.0.0.1:27017 — the suite creates and drops its own databases"
 	MONGO_TEST_DSN=mongodb://127.0.0.1:27017 go test -count=1 -run TestConformance -v ./internal/storage/mongostore/
 
-test: check-i18n ## Run all tests
+test: submodules-present check-i18n ## Run all tests
 	go test ./...
+
+submodules-present: ## Fail if a submodule is listed but not checked out
+	@# ⚠️ Not decoration. Several gates read files that live in a submodule —
+	@# internal/server/core_client_test.go reads packages/core, and
+	@# internal/theme/frontend_manifest_test.go reads web/*/src/manifest.ts — and
+	@# every one of them SKIPS when the directory is absent. That skip is correct
+	@# (an optional checkout must not become a mandatory one), but it means a
+	@# plain `git clone` gets no contract checking at all and still reports green.
+	@#
+	@# So the raw `go test ./...` stays usable for backend-only work, and the
+	@# documented full-verification path — this target — is where the requirement
+	@# is enforced. A rule that depends on remembering is not a rule.
+	@if [ -f .gitmodules ] && git submodule status --recursive 2>/dev/null | grep -q '^-'; then \
+		echo "⚠️  有 submodule 没有 checkout —— 下面这些闸门会静默跳过："; \
+		git submodule status --recursive | grep '^-' | sed 's/^/    /'; \
+		echo "    跑 make submodules 再来"; \
+		exit 1; \
+	fi
+
+submodules: ## Check out every submodule (safe to re-run)
+	git submodule update --init --recursive
 
 check-i18n: ## Verify zh-CN/en-US i18n key sets stay aligned
 	node web/frontend/scripts/check-i18n.mjs
