@@ -1,0 +1,12 @@
+{
+  "name": "daycore-workspace",
+  "private": true,
+  "description": "Not a package — the superproject's workspace root. See docs/ROADMAP.md 阶段 κ.",
+  "workspaces": [
+    "packages/core",
+    "web/ting",
+    "web/zhiyu",
+    "web/liuli",
+    "web/liuli-classic"
+  ]
+}
