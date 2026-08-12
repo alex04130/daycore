@@ -1,0 +1,214 @@
+/* 汀「此刻」— 单件流 · 画面永远只回答一个问题
+ *
+ * Ported from design-ui/ting/app/ting.css, with one systematic change: every
+ * themeable custom property is prefixed --tg-.
+ *
+ * ⚠️ The prefix is not tidiness. These names are the token space 汀 declares in
+ * its handshake (src/manifest.ts), so they become the vocabulary an operator
+ * reads in the console and the model writes against. Unprefixed --bg / --ink in
+ * a page that also hosts something else is a collision whose symptom is a theme
+ * half-applying, and the names must match manifest.ts exactly or the theme
+ * editor offers a variable that changes nothing.
+ *
+ * ⚠️ The desktop @media block MUST stay last — it overrides the mobile base
+ * values, and a wrong cascade order shows up as "desktop styles partly working",
+ * which reads like a broken build rather than a CSS ordering mistake.
+ */
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;overflow:hidden}
+[data-tg="night"]{--tg-bg:#0a1014;--tg-bg2:#0d151b;--tg-water:#12241f;--tg-ink:#e9f0ef;--tg-ink2:#9fb2b0;--tg-ink3:#5f7370;--tg-line:rgba(233,240,239,.09);--tg-card:#101a1e;--tg-card2:#152226;--tg-accent:#59d0b2;--tg-accent-ink:#06231b;--tg-warm:#e2b565;--tg-soft:rgba(89,208,178,.13);--tg-shadow:0 24px 70px rgba(0,0,0,.55);color-scheme:dark}
+[data-tg="dawn"]{--tg-bg:#edf3f1;--tg-bg2:#e4edea;--tg-water:#d7e8e0;--tg-ink:#152a26;--tg-ink2:#4e6a63;--tg-ink3:#8ba39b;--tg-line:rgba(21,42,38,.10);--tg-card:#f7fbf9;--tg-card2:#eaf2ee;--tg-accent:#118a6f;--tg-accent-ink:#f2fbf7;--tg-warm:#bd8a2f;--tg-soft:rgba(17,138,111,.10);--tg-shadow:0 24px 70px rgba(31,64,55,.18);color-scheme:light}
+body{font-family:-apple-system,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--tg-bg);color:var(--tg-ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:var(--tg-accent);text-decoration:none}a:hover{color:var(--tg-ink)}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer;padding:0}
+input{font:inherit;color:inherit}
+.tg-app{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(120vw 60vh at 50% 108%,var(--tg-water),transparent 62%),var(--tg-bg)}
+.tg-desk{position:absolute;bottom:18px;left:0;right:0;text-align:center;font-size:11px;color:var(--tg-ink3);letter-spacing:.08em;display:none}
+.tg-frame{position:relative;width:100%;height:100%;max-width:100%;display:flex;flex-direction:column;overflow:hidden;background:linear-gradient(180deg,var(--tg-bg2),var(--tg-bg) 45%)}
+
+/* 顶部 */
+.tg-top{flex:none;display:flex;align-items:center;gap:8px;padding:16px 18px 6px;z-index:5}
+.tg-clock{font-size:13px;font-weight:650;font-variant-numeric:tabular-nums;color:var(--tg-ink2)}
+.tg-l0{font-size:11px;color:var(--tg-ink3);font-variant-numeric:tabular-nums}
+.tg-l0:hover{color:var(--tg-accent)}
+.tg-dots{margin-left:auto;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--tg-ink2);transition:all .15s}
+.tg-dots:hover{background:var(--tg-soft);color:var(--tg-accent)}
+.tg-handle{flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:2px 0 6px;color:var(--tg-ink3);font-size:10.5px;letter-spacing:.14em;cursor:pointer;transition:color .2s}
+.tg-handle:hover{color:var(--tg-ink2)}
+.tg-handle .bar{width:38px;height:4px;border-radius:2px;background:var(--tg-line)}
+/* 主卡区 */
+.tg-main{flex:1;display:flex;flex-direction:column;justify-content:center;padding:8px 26px 10px;position:relative;min-height:0}
+.tg-card{touch-action:none;user-select:none;-webkit-user-select:none;will-change:transform}
+.tg-eyebrow{font-size:11px;font-weight:750;letter-spacing:.22em;color:var(--tg-accent);display:flex;align-items:center;gap:8px}
+.tg-eyebrow.mute{color:var(--tg-ink3)}
+.tg-eyebrow .ln{flex:1;height:1px;background:var(--tg-line)}
+.tg-title{font-size:32px;line-height:1.22;font-weight:760;letter-spacing:-.015em;margin-top:14px;text-wrap:pretty}
+.tg-sub{font-size:14px;color:var(--tg-ink2);margin-top:12px;line-height:1.7;text-wrap:pretty}
+.tg-metarow{display:flex;align-items:center;gap:10px;margin-top:16px;font-size:12px;color:var(--tg-ink3);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+.tg-origin{font-size:10.5px;font-weight:650;border:1px dashed var(--tg-ink3);border-radius:6px;padding:1px 7px}
+.tg-origin.manual{border-style:solid}
+.tg-prog{margin-top:22px;height:3px;border-radius:2px;background:var(--tg-line);overflow:hidden}
+.tg-prog i{display:block;height:100%;border-radius:2px;background:linear-gradient(90deg,var(--tg-accent),color-mix(in srgb,var(--tg-accent) 55%,var(--tg-warm)));transition:width 1s linear}
+.tg-note{margin-top:14px;font-size:12.5px;color:var(--tg-ink2);font-style:italic;border-left:2px solid var(--tg-line);padding-left:10px}
+.tg-swipehint{position:absolute;left:0;right:0;bottom:6px;text-align:center;font-size:11px;color:var(--tg-ink3);letter-spacing:.1em;display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:none}
+.tg-swipehint .up{animation:tg-float 2.6s ease-in-out infinite}
+@keyframes tg-float{0%,100%{transform:translateY(0);opacity:.5}50%{transform:translateY(-5px);opacity:1}}
+.tg-actrow{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap}
+.tg-btn{height:44px;padding:0 20px;border-radius:999px;font-size:13.5px;font-weight:700;display:inline-flex;align-items:center;gap:8px;justify-content:center;transition:all .15s;min-width:44px}
+.tg-btn.pri{background:var(--tg-accent);color:var(--tg-accent-ink);box-shadow:0 8px 26px color-mix(in srgb,var(--tg-accent) 30%,transparent)}
+.tg-btn.pri:hover{filter:brightness(1.07)}
+.tg-btn.sec{background:var(--tg-card2);border:1px solid var(--tg-line);color:var(--tg-ink2)}
+.tg-btn.sec:hover{color:var(--tg-ink)}
+.tg-btn.ghost{color:var(--tg-ink3)}
+.tg-btn.ghost:hover{color:var(--tg-accent)}
+/* 空档卡 */
+.tg-gapface{font-size:52px;line-height:1;margin-bottom:18px}
+/* 提案整屏 */
+.tg-prop{background:var(--tg-card);border:1.5px dashed color-mix(in srgb,var(--tg-accent) 45%,transparent);border-radius:26px;padding:26px 24px 22px;box-shadow:var(--tg-shadow);position:relative}
+.tg-prop .why{margin-top:14px;font-size:13px;color:var(--tg-ink2);line-height:1.7;text-wrap:pretty}
+.tg-prop .ev{margin-top:12px;font-size:11px;color:var(--tg-ink3);display:flex;gap:6px;align-items:center}
+.tg-prop .ttl{position:absolute;top:18px;right:20px;font-size:10.5px;color:var(--tg-ink3);font-variant-numeric:tabular-nums}
+.tg-rows{margin-top:14px;display:flex;flex-direction:column;gap:8px}
+.tg-row{display:flex;gap:9px;align-items:center;background:var(--tg-card2);border:1px solid var(--tg-line);border-radius:13px;padding:10px 12px;font-size:13px}
+.tg-row .lb{flex:1;text-wrap:pretty}
+.tg-row.acc{border-color:color-mix(in srgb,var(--tg-accent) 50%,transparent)}
+.tg-row.rej .lb{text-decoration:line-through;color:var(--tg-ink3)}
+.tg-row .rb{width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;transition:all .15s}
+.tg-row .rb.y{background:var(--tg-soft);color:var(--tg-accent)}
+.tg-row .rb.n{background:color-mix(in srgb,var(--tg-ink3) 14%,transparent);color:var(--tg-ink3)}
+.tg-sidecue{position:absolute;top:50%;font-size:11px;font-weight:750;letter-spacing:.18em;color:var(--tg-ink3);opacity:0;transition:opacity .2s}
+.tg-sidecue.l{left:-4px;transform:translateY(-50%) rotate(90deg)}
+.tg-sidecue.r{right:-4px;transform:translateY(-50%) rotate(-90deg)}
+.tg-qbadge{font-size:10.5px;font-weight:700;color:var(--tg-ink3);letter-spacing:.12em}
+/* 心情过渡帧 */
+.tg-moodrow{display:flex;gap:8px;margin-top:22px;flex-wrap:wrap;justify-content:center}
+.tg-moodrow button{display:flex;flex-direction:column;align-items:center;gap:5px;width:62px;padding:12px 0 9px;border-radius:18px;background:var(--tg-card2);border:1px solid var(--tg-line);font-size:10.5px;color:var(--tg-ink2);transition:all .15s}
+.tg-moodrow button:hover{border-color:var(--tg-accent);color:var(--tg-ink)}
+.tg-moodrow .e{font-size:24px;line-height:1}
+/* 下一件 peek */
+.tg-next{flex:none;margin:0 18px;margin-bottom:12px;display:flex;align-items:center;gap:11px;background:var(--tg-card);border:1px solid var(--tg-line);border-radius:18px 18px 8px 8px;padding:12px 16px;cursor:pointer;transition:all .2s;box-shadow:0 -8px 30px rgba(0,0,0,.12)}
+.tg-next:hover{transform:translateY(-2px)}
+.tg-next .k{font-size:10px;font-weight:750;letter-spacing:.16em;color:var(--tg-ink3);flex:none}
+.tg-next .t{flex:1;font-size:13px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tg-next .tm{font-size:12px;color:var(--tg-ink3);font-variant-numeric:tabular-nums;flex:none}
+/* 胶囊 + 底部 */
+.tg-foot{flex:none;display:flex;align-items:center;gap:10px;padding:0 18px calc(16px + env(safe-area-inset-bottom))}
+.tg-caps{flex:1;height:46px;border-radius:999px;background:var(--tg-card);border:1px solid var(--tg-line);display:flex;align-items:center;gap:10px;padding:0 8px 0 16px;color:var(--tg-ink3);font-size:12.5px;cursor:text;transition:border-color .2s}
+.tg-caps:hover{border-color:color-mix(in srgb,var(--tg-accent) 40%,transparent)}
+.tg-caps .mic{margin-left:auto;width:34px;height:34px;border-radius:50%;background:var(--tg-soft);color:var(--tg-accent);display:flex;align-items:center;justify-content:center;flex:none}
+/* 撤销条 */
+.tg-undo{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;background:var(--tg-ink);color:var(--tg-bg);border-radius:999px;padding:8px 9px 8px 16px;font-size:12.5px;font-weight:650;box-shadow:var(--tg-shadow);animation:tg-drop .3s cubic-bezier(.34,1.5,.5,1);max-width:92%}
+@keyframes tg-drop{from{transform:translate(-50%,-14px);opacity:0}}
+.tg-undo span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tg-undo button{background:var(--tg-bg);color:var(--tg-ink);border-radius:999px;padding:4px 13px;font-size:11.5px;font-weight:750;flex:none}
+.tg-undo .x{background:none;color:var(--tg-bg);opacity:.7;padding:4px 6px}
+/* sheets */
+.tg-veil{position:absolute;inset:0;z-index:40;background:rgba(0,0,0,.4);backdrop-filter:blur(3px);animation:tg-fade .2s}
+[data-tg="dawn"] .tg-veil{background:rgba(31,64,55,.25)}
+@keyframes tg-fade{from{opacity:0}}
+.tg-sheet{position:absolute;left:0;right:0;bottom:0;z-index:50;background:var(--tg-bg2);border:1px solid var(--tg-line);border-bottom:none;border-radius:26px 26px 0 0;max-height:78%;display:flex;flex-direction:column;animation:tg-up .32s cubic-bezier(.22,.9,.24,1)}
+@keyframes tg-up{from{transform:translateY(40px);opacity:0}}
+.tg-shead{flex:none;display:flex;align-items:center;gap:9px;padding:16px 20px 8px}
+.tg-shead h3{font-size:14.5px;font-weight:750;flex:1;display:flex;gap:8px;align-items:center}
+.tg-shead .ic{color:var(--tg-accent);display:inline-flex}
+.tg-sbody{flex:1;overflow-y:auto;padding:4px 20px 24px;scrollbar-width:thin}
+/* 顶部 peek（概览是抽屉，不是家） */
+.tg-peek{position:absolute;left:0;right:0;top:0;z-index:50;background:var(--tg-bg2);border-bottom:1px solid var(--tg-line);border-radius:0 0 26px 26px;max-height:82%;display:flex;flex-direction:column;animation:tg-down .32s cubic-bezier(.22,.9,.24,1);box-shadow:var(--tg-shadow)}
+@keyframes tg-down{from{transform:translateY(-40px);opacity:0}}
+.tg-axis{flex:1;overflow-y:auto;padding:4px 22px 14px;scrollbar-width:thin}
+.tg-ax{display:flex;gap:12px;align-items:center;padding:7px 0;font-size:13px}
+.tg-ax .tm{width:44px;font-variant-numeric:tabular-nums;color:var(--tg-ink3);font-size:11.5px;flex:none;text-align:right}
+.tg-ax .d{width:9px;height:9px;border-radius:50%;flex:none;border:2px solid var(--tg-ink3);background:transparent}
+.tg-ax .d.done{background:var(--tg-accent);border-color:var(--tg-accent)}
+.tg-ax .d.now{border-color:var(--tg-accent);box-shadow:0 0 0 4px var(--tg-soft)}
+.tg-ax .d.miss{border-color:var(--tg-ink3);background:var(--tg-ink3)}
+.tg-ax .d.stone{border-color:var(--tg-line);background:var(--tg-line)}
+.tg-ax .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tg-ax.past .t{color:var(--tg-ink3)}
+.tg-ax.ghost .t{color:var(--tg-ink3);font-style:italic}
+.tg-ax.ghost .d{border-style:dashed}
+.tg-axnow{display:flex;align-items:center;gap:8px;margin:4px 0}
+.tg-axnow .chip{font-size:10px;font-weight:750;color:var(--tg-accent-ink);background:var(--tg-accent);border-radius:999px;padding:2px 9px;font-variant-numeric:tabular-nums}
+.tg-axnow .ln{flex:1;height:1.5px;background:linear-gradient(90deg,var(--tg-accent),transparent)}
+.tg-peekfoot{flex:none;display:flex;gap:8px;padding:10px 20px 16px}
+/* 列表行（账本/雷达/愿望） */
+.tg-li{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px dashed var(--tg-line);font-size:12.5px}
+.tg-li:last-child{border:none}
+.tg-li .tm{font-size:10.5px;color:var(--tg-ink3);font-variant-numeric:tabular-nums;width:38px;flex:none;padding-top:2px}
+.tg-li .bd{flex:1;min-width:0}
+.tg-li .lb{line-height:1.45;text-wrap:pretty}
+.tg-li .sb{font-size:11px;color:var(--tg-ink3)}
+.tg-li.silent .lb{color:var(--tg-ink3)}
+.tg-li.undone .lb{text-decoration:line-through;color:var(--tg-ink3)}
+.tg-li .who{flex:none;font-size:9.5px;font-weight:750;border-radius:5px;padding:1px 6px;color:var(--tg-accent);background:var(--tg-soft);margin-top:2px}
+.tg-li .who.me{color:var(--tg-ink3);background:color-mix(in srgb,var(--tg-ink3) 14%,transparent)}
+.tg-li .un{flex:none;font-size:11px;font-weight:700;color:var(--tg-accent)}
+.tg-li .un:hover{text-decoration:underline}
+.tg-u{width:8px;height:8px;border-radius:50%;flex:none;margin-top:5px}
+.tg-u[data-u="0"]{background:var(--tg-ink3);opacity:.4}
+.tg-u[data-u="1"]{background:var(--tg-accent)}
+.tg-u[data-u="2"]{background:var(--tg-warm);box-shadow:0 0 0 4px color-mix(in srgb,var(--tg-warm) 18%,transparent)}
+/* 菜单 sheet 内 seg */
+.tg-seg{display:flex;background:var(--tg-card2);border:1px solid var(--tg-line);border-radius:12px;padding:3px;gap:2px;margin:6px 0 14px}
+.tg-seg button{flex:1;height:32px;border-radius:9px;font-size:12.5px;font-weight:650;color:var(--tg-ink3);transition:all .15s}
+.tg-seg button.on{background:var(--tg-accent);color:var(--tg-accent-ink)}
+.tg-menuitem{display:flex;align-items:center;gap:11px;width:100%;padding:12px 4px;border-bottom:1px dashed var(--tg-line);font-size:13.5px;font-weight:600;text-align:left}
+.tg-menuitem:hover{color:var(--tg-accent)}
+.tg-menuitem .ic{color:var(--tg-ink3);display:inline-flex}
+.tg-cap{font-size:10.5px;font-weight:750;letter-spacing:.14em;color:var(--tg-ink3);margin:14px 0 4px}
+/* 输入 sheet */
+.tg-inrow{display:flex;gap:9px;align-items:center}
+.tg-inrow input{flex:1;height:46px;border-radius:14px;border:1px solid var(--tg-line);background:var(--tg-card);padding:0 15px;font-size:14px}
+.tg-inrow input:focus{outline:none;border-color:var(--tg-accent)}
+.tg-quick{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.tg-quick button{font-size:11.5px;color:var(--tg-ink2);border:1px dashed var(--tg-line);border-radius:999px;padding:5px 12px;transition:all .15s}
+.tg-quick button:hover{color:var(--tg-accent);border-color:var(--tg-accent)}
+/* 导语整屏 */
+.tg-brieflines p{font-size:15px;color:var(--tg-ink2);line-height:1.9;text-wrap:pretty}
+/* 推送条 */
+.tg-push{margin:0 18px 8px;flex:none;display:flex;gap:9px;align-items:flex-start;background:var(--tg-card);border:1px solid color-mix(in srgb,var(--tg-warm) 30%,transparent);border-radius:16px;padding:11px 14px;font-size:12px;animation:tg-drop .3s}
+.tg-push .dot{width:7px;height:7px;border-radius:50%;background:var(--tg-warm);flex:none;margin-top:5px;box-shadow:0 0 0 4px color-mix(in srgb,var(--tg-warm) 16%,transparent)}
+.tg-push .bd{flex:1}.tg-push b{font-weight:700}
+.tg-push .s{color:var(--tg-ink2);margin-top:2px;line-height:1.5}
+.tg-push button{color:var(--tg-accent);font-weight:700;font-size:11.5px;flex:none}
+
+/* 键盘提示（基础态） */
+.tg-keyhint{display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:86px;gap:16px;font-size:11.5px;color:var(--tg-ink3);letter-spacing:.04em;pointer-events:none}
+.tg-keyhint kbd{font:inherit;font-weight:700;color:var(--tg-ink2);border:1px solid var(--tg-line);border-bottom-width:2px;border-radius:5px;padding:1px 6px;margin-right:5px}
+/* ===== 汀 · 桌面端：整屏只答一个问题（放在最后，压过手机基础值） ===== */
+@media (min-width:860px){
+.tg-frame{width:100%;height:100%;border:none;border-radius:0;box-shadow:none;background:none}
+.tg-desk{display:none}
+.tg-top{padding:26px 34px 0}
+.tg-clock{font-size:15px}
+.tg-l0{font-size:12.5px}
+.tg-handle{padding-top:10px}
+.tg-main{padding:0 34px;align-items:center}
+.tg-main > *{width:100%;max-width:660px}
+.tg-title{font-size:clamp(38px,4.4vw,58px)!important;margin-top:20px;letter-spacing:-.025em}
+.tg-eyebrow{font-size:12px;letter-spacing:.26em}
+.tg-sub{font-size:16.5px;margin-top:16px;max-width:52ch}
+.tg-metarow{font-size:13px;margin-top:22px}
+.tg-actrow{margin-top:34px;gap:12px}
+.tg-btn{height:50px;padding:0 26px;font-size:14.5px}
+.tg-next{width:min(660px,100%);margin-left:auto;margin-right:auto}
+.tg-foot{justify-content:center;padding:0 34px 30px}
+.tg-caps{flex:0 0 auto;width:min(660px,100%);height:54px;font-size:13.5px}
+.tg-prop .tg-title{font-size:clamp(30px,3vw,40px)!important}
+.tg-sidecue{font-size:13px}
+.tg-undo{top:22px}
+.tg-swipehint .up{display:none}
+.tg-keyhint{display:flex}
+}
+.tg-title.sm{font-size:26px}
+.tg-title.md{font-size:28px}
+@media (min-width:860px){
+.tg-title.sm{font-size:clamp(30px,3.1vw,42px)!important}
+.tg-title.md{font-size:clamp(34px,3.8vw,50px)!important}
+}
+
+/* 首次设置那一屏用到的输入框。基础样式跟着 --tg-card2 / --tg-line 走，
+   所以它和别的表面一起被主题。 */
+.tg-input{width:100%;height:46px;border-radius:14px;background:var(--tg-card2);border:1px solid var(--tg-line);padding:0 14px;font-size:14px;color:var(--tg-ink)}
+.tg-input:focus{outline:none;border-color:color-mix(in srgb,var(--tg-accent) 55%,transparent)}
+.tg-btn:disabled{opacity:.5;cursor:default}
