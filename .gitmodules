@@ -1,0 +1,15 @@
+[submodule "packages/core"]
+	path = packages/core
+	url = ../daycore-frontendcore.git
+[submodule "web/ting"]
+	path = web/ting
+	url = ../daycore-ting.git
+[submodule "web/zhiyu"]
+	path = web/zhiyu
+	url = ../daycore-zhiyu.git
+[submodule "web/liuli"]
+	path = web/liuli
+	url = ../daycore-liuli.git
+[submodule "web/liuli-classic"]
+	path = web/liuli-classic
+	url = ../daycore-liuli-classic.git
