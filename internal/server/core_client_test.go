@@ -85,24 +85,35 @@ func TestCoreClientUsesThisBackendsAPIPrefix(t *testing.T) {
 //
 // # ⚠️ The scheme, and why "highest or lowest" turned out to be the wrong question
 //
-//	@daycore/core 的版本 = <APIVersion>.<APIMinor>.<patch>
+//	@daycore/core 的版本 = <最低兼容 major>.<最低兼容 minor>.<patch>
 //
 //	major  the contract it speaks. NOT a range — paths.ts builds one prefix from
 //	       it and every request carries that, so "the highest it supports" and
 //	       "the lowest" are the same number. Pointing this package at an older
 //	       major is not degraded operation, it is every request 404ing at once.
-//	minor  the minor whose endpoints it uses — a genuine LOWER BOUND on the
-//	       backend, because contract minors are additive: a backend reporting
-//	       more is fine, one reporting less is missing calls this package makes.
-//	patch  fixes that do not change which contract it speaks.
+//	minor  the OLDEST backend minor it can work with. Contract minors are
+//	       additive, so a backend reporting more is fine and one reporting less
+//	       is missing calls this package makes.
+//	patch  this package's own iterations, which do not change what it requires.
 //
-// This is what makes "the frontend pinned a core the backend does not match"
-// reportable AT THE HANDSHAKE instead of as a screenful of 404s — which was the
-// one new failure mode the repository split introduced (docs/ROADMAP.md 阶段 κ).
+// ⚠️ The minor is the MINIMUM, not "the contract version at build time". The
+// first cut used the latter (2.3) and that is a different, worse claim: it locks
+// out a 2.2 backend that would in fact run this fine. A version is a promise
+// about compatibility, not a timestamp.
 //
-// ⚠️ Three places have to agree and none of them can see the other two:
-// package.json's version, paths.ts's SPEAKS, and this backend. That is exactly
-// the shape this file already exists for.
+// ⚠️ Which makes the comparison below an INEQUALITY, deliberately. Requiring
+// equality would fail every time the backend moved ahead — the normal case, and
+// the one where nothing is wrong.
+//
+// ⚠️ What this does NOT verify: that core actually runs against the minimum it
+// claims. That needs a backend that old, and none exists here. The claim is
+// computed by scripts/core-min-api.py (every path core calls, back to the commit
+// that introduced it) — recompute it with `make core-min-api` rather than
+// trusting the number. What IS verified against a real backend is that every
+// path core calls exists in THIS one; that is the test below.
+//
+// ⚠️ Two places have to agree and neither can see the other: package.json's
+// version and paths.ts's SPEAKS. That is exactly the shape this file exists for.
 func TestCoreClientVersionMatchesTheContractItSpeaks(t *testing.T) {
 	pkg, err := os.ReadFile("../../packages/core/package.json")
 	if err != nil {
@@ -123,11 +134,16 @@ func TestCoreClientVersionMatchesTheContractItSpeaks(t *testing.T) {
 	if err1 != nil || err2 != nil {
 		t.Fatalf("packages/core version %q is not numeric", meta.Version)
 	}
-	if major != version.APIVersion || minor != version.APIMinor {
-		t.Errorf("packages/core is version %s, so it claims to speak API %d.%d — "+
+	if major != version.APIVersion {
+		t.Errorf("packages/core is version %s, so it speaks API v%d — this backend serves v%d.\n"+
+			"Every request carries the prefix, so this is not a partial mismatch: it is all of them.",
+			meta.Version, major, version.APIVersion)
+	}
+	if minor > version.APIMinor {
+		t.Errorf("packages/core is version %s, so it requires a backend at API %d.%d or newer — "+
 			"this backend serves %d.%d.\n"+
-			"The version IS the claim: bump packages/core/package.json (and its tag, which\n"+
-			"the four frontends pin) whenever the contract moves.",
+			"Either this backend is behind, or core's declared minimum is wrong; "+
+			"`make core-min-api` recomputes the latter from what core actually calls.",
 			meta.Version, major, minor, version.APIVersion, version.APIMinor)
 	}
 
@@ -144,8 +160,8 @@ func TestCoreClientVersionMatchesTheContractItSpeaks(t *testing.T) {
 	sMajor, _ := strconv.Atoi(m[1])
 	sMinor, _ := strconv.Atoi(m[2])
 	if sMajor != major || sMinor != minor {
-		t.Errorf("paths.ts says it speaks %d.%d; package.json says %d.%d. "+
-			"One of them is what a consumer pins and the other is what the code does.",
+		t.Errorf("paths.ts declares a minimum of %d.%d; package.json says %d.%d. "+
+			"One of them is what a consumer pins and the other is what the code branches on.",
 			sMajor, sMinor, major, minor)
 	}
 }

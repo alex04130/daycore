@@ -37,6 +37,7 @@ api/                        openapi.yaml（生成物）+ spec/（按 tag 分片�
 package.json                ⚠️ 不是一个包，是 workspace 根（core + 四端；
                             web/frontend 与 web/console 有意不在里面）
 scripts/split-repos.sh      阶段 κ：切成兄弟仓 + 挂回 submodule（默认空跑）
+scripts/core-min-api.py     算 @daycore/core 的最低兼容 API 版本（它的版本号就是这个数）
 packages/core/              @daycore/core：四端共享层（HTTP / 握手 / 多语言 / 后端地址）
 web/frontend/               现役 React 前端（Vite）。⚠️ 将来被下面四端替换，替换完成前不要动它
 web/ting/                   汀 · 此刻（单件流）        :5175
@@ -75,6 +76,7 @@ for a in ting zhiyu liuli liuli-classic; do (cd web/$a && npm run build); done
 make check-core-pack                                # 证明 core 是个真包（切仓的前提）
 make submodules                                     # 切仓之后：别人 clone 的第一步
 make core-dev / core-pinned                         # 测未发布的 core / 回到钉住的 tag
+make core-min-api                                   # 重算 core 的最低兼容 API 版本
 ```
 
 ### 切仓之后，改 `@daycore/core` 的完整流程
@@ -92,7 +94,8 @@ rm -rf node_modules package-lock.json && npm install # 让 npm 重新解析 tag�
 git add packages/core web/* && git commit            # 超级仓 bump 五个 gitlink
 ```
 
-⚠️ **版本号不是随便挑的**：`@daycore/core` 的版本 = `<APIVersion>.<APIMinor>.<patch>`，
+⚠️ **版本号不是随便挑的**：`@daycore/core` 的版本 = **兼容的最低 API 版本**（`make
+core-min-api` 重算，不要手填），
 见 [ROADMAP](ROADMAP.md)。`internal/server/core_client_test.go` 会拦住对不上的。
 
 ⚠️ **切仓之后**（阶段 κ），`packages/core` 与 `web/ting|zhiyu|liuli|liuli-classic`

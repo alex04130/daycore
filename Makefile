@@ -1,4 +1,4 @@
-.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n check-core-pack core-dev core-pinned submodules submodules-present api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n check-core-pack core-dev core-pinned core-min-api submodules submodules-present api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
@@ -172,3 +172,8 @@ core-pinned: ## 回到「建钉住的那个 tag」
 	rm -rf web/ting/node_modules/@daycore web/zhiyu/node_modules/@daycore \
 		web/liuli/node_modules/@daycore web/liuli-classic/node_modules/@daycore
 	npm install
+
+core-min-api: ## 重算 @daycore/core 的最低兼容 API 版本（它的版本号就是这个数）
+	@# ⚠️ 存在的理由：一个没人能重算的数字，下次就只能靠抄——而抄一个会随端点增加
+	@# 而变化的数字，就是让它慢慢变成谎话。方法与已知局限写在脚本抬头。
+	python3 scripts/core-min-api.py
