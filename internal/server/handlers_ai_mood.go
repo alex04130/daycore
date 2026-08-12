@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"daycore/internal/ai"
+	"daycore/internal/i18n"
 	"daycore/internal/mood"
 )
 
@@ -56,7 +57,15 @@ func (s *Server) handleAIMood(w http.ResponseWriter, r *http.Request) {
 	s.logAICall(ctx, sessionIDFrom(r.Context()), epMoodReply, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai mood", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "response": "遇到了点问题，稍后再试一下吧。"})
+		// ⚠️ NOT writeErrL, and the difference is the key. This endpoint's reply
+		// field is `response`, not `message` — a client reads the companion's
+		// words from there, so the failure has to arrive in the same place the
+		// success would. Swapping in the standard envelope would leave the
+		// screen with an empty reply and an error field it does not read.
+		s.writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"error":    "server_error",
+			"response": i18n.T("err.aIMood.server_error", s.requestLocale(r)),
+		})
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"response": resp.Content})

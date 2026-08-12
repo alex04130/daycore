@@ -30,6 +30,21 @@ func (s *Server) runCompanionAgent(ctx, sink /*阶段2起为 agentSink 接口*/,
 - `propose_decision` 工具 → `runProposeDecision`：发 decision_card 帧 → 阻塞 select（答案 / 超时→`{"choice":"timeout"}` 让模型收尾 / 15s ping / ctx.Done→cancelled）。等待时长：decisionTimeoutSSE=45s，sink 实现 decisionWaiter 时用其值（异步 90s）。仅 interactive sink 拿得到这个工具。
 - 响应端点 `POST /api/decisions/{id}/respond` `{choice, text}` → registry.resolve；未命中 404 decision_not_found。
 
+### 前端可以假设什么、不能假设什么（2026-08-12 补）
+
+**可以**：同一 session 同时最多一张待答卡。所以卡片可以设计成「屏幕上唯一的那一张」，
+不需要一个卡片栈。
+
+**不能**：假设旧卡会一直等着。新消息进来时 `cancelForSession(sid)` 会**作废**未决卡
+（`handlers_ai_companion_async.go`：`// a new message supersedes any pending card`）。
+
+⚠️ 「有待答卡就锁住输入框」是**前端自己加的更严约束**，不是后端强制的 —— 后端允许你
+直接发下一条，代价是那张卡没了。两种产品答案都成立，但选锁输入框就必须同时给出路
+（一句说明 + 一个「先不选」），否则它就是一条死路。
+
+⚠️ 超时由**服务端**计时（SSE 45s / 异步 90s）。前端不要自己倒计时 —— 两个时钟一定
+会漂，而漂的那一侧看起来像是卡片提前消失了。
+
 ## sink 体系（agentSink 接口，agent.go）
 
 `runCompanionAgent(ctx, sink agentSink, r, provider, sid, locale, tz, messages, interactive)`：

@@ -7,20 +7,27 @@ import { apiPath } from './paths';
 
 // ── session ────────────────────────────────────────────────────────────────
 //
-// ⚠️ 汀 uses the TOKEN, not the cookie, and that is a deployment decision rather
-// than a preference. A separately-deployed frontend is cross-origin from the
-// API, so the dc_sid cookie needs SameSite=None plus a correct ALLOWED_ORIGINS,
-// and gets dropped entirely by browsers with third-party cookies off. The
-// signed token in a header works the same everywhere and, per
-// internal/server/server.go, a custom header forces a CORS preflight — which is
-// what makes it CSRF-immune.
+// ⚠️ These frontends use the TOKEN, not the cookie, and that is a deployment
+// decision rather than a preference. A separately-deployed frontend is
+// cross-origin from the API, so the dc_sid cookie needs SameSite=None plus a
+// correct ALLOWED_ORIGINS, and gets dropped entirely by browsers with
+// third-party cookies off. The signed token in a header works the same
+// everywhere and, per internal/server/server.go, a custom header forces a CORS
+// preflight — which is what makes it CSRF-immune.
 //
-// The cost, stated: the token lives in localStorage, so an XSS in 汀 hands it
-// over. A cookie would not have. That trade is accepted because 汀's whole
-// premise is being deployed somewhere else, and a session that silently fails
-// to persist is worse than one with a known exposure.
+// The cost, stated: the token lives in localStorage, so an XSS in any of these
+// hands it over. A cookie would not have. That trade is accepted because their
+// whole premise is being deployed somewhere else, and a session that silently
+// fails to persist is worse than one with a known exposure.
+//
+// ⚠️ `daycore.` rather than one frontend's name, and here the sharing is not
+// merely acceptable but REQUIRED. Two frontends on one origin are one person
+// talking to one install; giving them separate tokens would give them separate
+// anonymous sessions, so the day you planned in 长卷 would be missing when you
+// opened 汀 — with nothing on either screen explaining why. See backend.ts for
+// why origin scope makes this safe.
 
-const TOKEN_KEY = 'ting.sessionToken';
+const TOKEN_KEY = 'daycore.sessionToken';
 
 function token(): string | null {
   try {
@@ -101,6 +108,11 @@ export const post = <T,>(p: string, body?: unknown) =>
   request<T>(p, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 export const patch = <T,>(p: string, body: unknown) =>
   request<T>(p, { method: 'PATCH', body: JSON.stringify(body) });
+// ⚠️ Some DELETEs answer 204 with no body, and `request` returns null for those
+// rather than throwing — a caller that awaits one and reads a field gets a
+// TypeError instead of a network error, which is the confusing direction. The
+// endpoints below therefore type their DELETEs as `unknown`.
+export const del = <T,>(p: string) => request<T>(p, { method: 'DELETE' });
 
 /** Stash the session token — boot() calls this after /api/session/init. */
 export function rememberSession(t: string): void {

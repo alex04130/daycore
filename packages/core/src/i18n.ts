@@ -24,8 +24,8 @@ const loaded = new Map<Locale, Pack>();
 async function loadPack(locale: Locale): Promise<Pack | null> {
   if (loaded.has(locale)) return loaded.get(locale)!;
   try {
-    // Relative to the document, so it follows vite's base:'./' wherever 汀 is
-    // deployed — a root, a subpath, a CDN, a file:// bundle.
+    // Relative to the document, so it follows vite's base:'./' wherever the app
+    // is deployed — a root, a subpath, a CDN, a file:// bundle.
     const res = await fetch(new URL(packURL(locale), document.baseURI).toString());
     if (!res.ok) return null;
     const pack = (await res.json()) as Pack;
@@ -128,7 +128,9 @@ export function browserLocales(): Locale[] {
 }
 
 /** The reader's own choice, if they made one on the setting screen. */
-const CHOICE_KEY = 'ting.locale';
+// Shared across whichever of the four are served from this origin — see
+// backend.ts for why that is the intent rather than a collision.
+const CHOICE_KEY = 'daycore.locale';
 
 // ⚠️ An in-memory copy, because localStorage is not always there — private
 // browsing, storage disabled, an embedded webview.
@@ -165,7 +167,7 @@ export function chooseLocale(locale: Locale | null): void {
  * browser asks for, else the deployment's default.
  *
  * ⚠️ The browser's preference is consulted against what the DEPLOYMENT has, not
- * against a list 汀 believes in — that is rule ② again, at the one place it is
+ * against a list the app believes in — that is rule ② again, at the one place it is
  * easy to get wrong.
  */
 export function preferredLocale(available: Locale[], fallback: Locale): Locale {
@@ -185,7 +187,7 @@ export function preferredLocale(available: Locale[], fallback: Locale): Locale {
  * the first-run setting screen, and the "could not connect" screen.
  *
  * ⚠️ This does not break rule ②. That rule forbids hardcoding what the
- * DEPLOYMENT offers — and before 汀 has talked to a deployment there is no
+ * DEPLOYMENT offers — and before the app has talked to a deployment there is no
  * deployment list to read. What it can honestly use is the set of packs it
  * SHIPS WITH, discovered the same way as any other: by asking for them and
  * seeing which arrive. An operator's extra language appears the moment the real

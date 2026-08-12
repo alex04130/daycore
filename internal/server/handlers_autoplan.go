@@ -224,15 +224,20 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	s.logAICall(ctx, sid, epAutoPlan, planner.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai auto-plan", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "自主规划出了点问题，请稍后再试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aIAutoPlan.server_error")
 		return
 	}
 	result, ok := extractJSONObject(resp.Content)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "规划解析出了点问题，请重试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aIAutoPlan.parse_error")
 		return
 	}
 	if result["error"] != nil {
+		// ⚠️ The MODEL's refusal, passed through verbatim — `no_material` is the
+		// one the frontends branch on (api/FRONTEND_HANDOFF.md). Its message
+		// comes from the prompt template, which is already per-locale, so it
+		// does not belong in the catalog; the catalog covers text this package
+		// writes, and this is text it forwards.
 		s.writeJSON(w, http.StatusOK, result)
 		return
 	}

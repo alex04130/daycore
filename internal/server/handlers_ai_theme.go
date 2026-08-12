@@ -101,12 +101,12 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 	s.logAICall(ctx, sid, epThemeGen, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai theme", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "主题生成出了点问题，请稍后再试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aITheme.server_error")
 		return
 	}
 	result, ok := extractJSONObject(resp.Content)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "主题解析出了点问题，请重试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aITheme.parse_error")
 		return
 	}
 	if result["error"] != nil {
@@ -123,7 +123,15 @@ func (s *Server) handleAITheme(w http.ResponseWriter, r *http.Request) {
 	}
 	clean, dropped := s.sanitizeThemeVariables(fam, vars)
 	if len(clean) == 0 {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "主题解析出了点问题，请重试"})
+		// ⚠️ Same key as the parse failure above, and that is a choice rather
+		// than a copy-paste. The CAUSE differs — there the JSON never parsed,
+		// here every variable it did contain was refused by the token
+		// sanitiser — but what the reader can DO is identical, so one message
+		// says it once. Split the key when the two want different words, not
+		// before: two keys with the same text is a translator being asked to
+		// write the same sentence twice and getting no say in whether they
+		// diverge.
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aITheme.parse_error")
 		return
 	}
 	warnings := []string{}

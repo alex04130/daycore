@@ -10,10 +10,33 @@
 // means the artifact is useless to almost everybody who wants it.
 //
 // Default is the current origin, so the two easy cases need no configuration at
-// all: the dev server (which proxies /api) and a deployment that serves 汀 from
-// the same host as the API.
+// all: the dev server (which proxies /api) and a deployment that serves the app
+// from the same host as the API.
+//
+// # ⚠️ The keys are `daycore.*`, and the SHARING is the point
+//
+// They were `ting.*` until the fourth frontend, which is one frontend's name
+// baked into the package the other three import — the exact thing this file's
+// own comments object to elsewhere. But renaming is the small half. The real
+// question a shared key raises is what happens when two of the four are served
+// from ONE origin (example.com/ting/ and example.com/liuli-classic/): they see
+// the same localStorage, so they share the address, the language, and the
+// first-run flag.
+//
+// That is deliberate, and the argument is the scope itself: localStorage is
+// keyed by ORIGIN, and an origin is exactly the granularity of "one
+// deployment". Two deployments are two origins and two key spaces. So the
+// sharing only ever happens between frontends that are, by construction,
+// talking to the same install — where one address and one language is the right
+// answer, and where making the reader configure the same backend twice would be
+// the bug.
+//
+// The cost, stated: one origin serving two frontends against two DIFFERENT
+// backends is not expressible. That configuration has no reason to exist, and
+// dev servers are separate ports — separate origins — so it does not come up
+// there either.
 
-const BACKEND_KEY = 'ting.backend';
+const BACKEND_KEY = 'daycore.backend';
 
 /** The configured backend base URL, or "" meaning "same origin". */
 export function backendBase(): string {
@@ -21,8 +44,8 @@ export function backendBase(): string {
     return localStorage.getItem(BACKEND_KEY) ?? '';
   } catch {
     // Private mode, or storage disabled. Same-origin is the honest fallback:
-    // it works where 汀 is co-served and fails visibly where it is not, rather
-    // than half-working.
+    // it works where the app is co-served and fails visibly where it is not,
+    // rather than half-working.
     return '';
   }
 }
@@ -46,7 +69,7 @@ export function isFirstRun(): boolean {
   }
 }
 
-const SETUP_DONE_KEY = 'ting.setupDone';
+const SETUP_DONE_KEY = 'daycore.setupDone';
 
 export function markSetupDone(): void {
   try {

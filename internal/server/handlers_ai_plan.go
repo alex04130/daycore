@@ -49,7 +49,13 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(body.Description) == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "no_schedule_info", "message": "请描述一下你今天有什么安排"})
+		// ⚠️ 200, not 400, and the status is load-bearing: this is not a
+		// malformed request, it is a request the model was asked to answer and
+		// could not. The frontends branch on the `error` field of a 200 body —
+		// see api/FRONTEND_HANDOFF.md. writeErrL emits byte-identical JSON to
+		// the writeJSON literal that used to be here; the only thing that
+		// changed is that the text can now be translated.
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "no_schedule_info", "err.aIPlanText.no_schedule_info")
 		return
 	}
 
@@ -79,13 +85,13 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 	s.logAICall(ctx, sessionIDFrom(r.Context()), epAIPlan, provider.Model(), start, usageOf(resp), err)
 	if err != nil {
 		s.log.Error("ai plan-text", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "日程生成出了点问题，请稍后再试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aIPlanText.server_error")
 		return
 	}
 
 	result, ok := extractJSONObject(resp.Content)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "日程解析出了点问题，请重试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aIPlanText.parse_error")
 		return
 	}
 	if result["error"] != nil {
@@ -127,11 +133,11 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.ImageBase64 == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "no_image", "message": "请上传图片"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "no_image", "err.aIPlanImage.no_image")
 		return
 	}
 	if int64(len(body.ImageBase64))*3/4 > s.runtime().MaxImageBytes {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "image_too_large", "message": "图片太大了，换一张小一点的截图试试？"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "image_too_large", "err.aIPlanImage.image_too_large")
 		return
 	}
 
@@ -153,18 +159,18 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 	}
 	content, err := s.vision.PlanFromImage(ctx, s.catalog.DefaultChat(), sys, body.ImageBase64, mime)
 	if errors.Is(err, ai.ErrNoVisionModel) {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "vision_unavailable", "message": "当前没有配置可读图的视觉模型，先用文字描述安排吧"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "vision_unavailable", "err.aIPlanImage.vision_unavailable")
 		return
 	}
 	if err != nil {
 		s.log.Error("ai plan-image", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "图片读取出了点问题，请稍后再试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aIPlanImage.server_error")
 		return
 	}
 
 	result, ok := extractJSONObject(content)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "图片解析出了点问题，请重试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aIPlanImage.parse_error")
 		return
 	}
 	if result["error"] != nil {
@@ -207,11 +213,11 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if body.ImageBase64 == "" {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "no_image", "message": "请上传图片"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "no_image", "err.aIExtractScheduleImage.no_image")
 		return
 	}
 	if int64(len(body.ImageBase64))*3/4 > s.runtime().MaxImageBytes {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "image_too_large", "message": "图片太大了，换一张小一点的截图试试？"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "image_too_large", "err.aIExtractScheduleImage.image_too_large")
 		return
 	}
 
@@ -233,18 +239,18 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 	}
 	content, err := s.vision.PlanFromImage(ctx, s.catalog.DefaultChat(), sys, body.ImageBase64, mime)
 	if errors.Is(err, ai.ErrNoVisionModel) {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "vision_unavailable", "message": "当前没有配置可读图的视觉模型"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "vision_unavailable", "err.aIExtractScheduleImage.vision_unavailable")
 		return
 	}
 	if err != nil {
 		s.log.Error("ai extract-schedule-image", "err", err)
-		s.writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "server_error", "message": "图片读取出了点问题，请稍后再试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "server_error", "err.aIExtractScheduleImage.server_error")
 		return
 	}
 
 	result, ok := extractJSONObject(content)
 	if !ok {
-		s.writeJSON(w, http.StatusOK, map[string]any{"error": "parse_error", "message": "图片解析出了点问题，请重试"})
+		s.writeErrL(w, s.requestLocale(r), http.StatusOK, "parse_error", "err.aIExtractScheduleImage.parse_error")
 		return
 	}
 	s.writeJSON(w, http.StatusOK, result)

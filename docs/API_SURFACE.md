@@ -294,6 +294,14 @@
 | `POST /api/v2/plan/lock` | handlers_plan.go |
 | `GET /api/v2/plan/range` | handlers_plan.go |
 
+⚠️ **`/plan/range` 返回的是完整的 `DayPlan[]`，没有摘要接口。** 一个月历翻页 = 31 天
+的全部块过一趟网络。这是有意的取舍（一个接口而不是两个），写在这里是因为看到日历的
+第一反应是去找一个 `/api/plan/summary` —— 它从来不存在。
+
+⚠️ **没有记录的那些天不在数组里**，不是以空计划的形式返回。照着响应画格子的日历会
+少几格；要固定宽度的网格，缺的天得自己补（`web/liuli-classic/src/days.ts` 的
+`foldRange` 就是干这个的）。
+
 ## proposals（3 条）
 
 | 路由 | Handler 文件 |

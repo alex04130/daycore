@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+	"daycore/internal/i18n"
 )
 
 func init() {
@@ -77,7 +78,7 @@ func (s *Server) handleChannelBind(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"token":   token,
 		"channel": channel,
-		"note":    "请在对应平台把这段 token 发给机器人以完成绑定，有效 10 分钟",
+		"note":    i18n.T("note.channelBind", s.requestLocale(r)),
 	})
 }
 

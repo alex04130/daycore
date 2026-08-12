@@ -34,7 +34,13 @@ internal/
   storage/storagetest/      行为一致性套件（43 例，四个后端跑同一份）
   server/                   路由（分散注册，见 routes.go）+ 中间件 + handlers + agent loop + cron Worker
 api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
-web/frontend/               React 前端（Vite；npm run dev / build）
+packages/core/              @daycore/core：四端共享层（HTTP / 握手 / 多语言 / 后端地址）
+web/frontend/               现役 React 前端（Vite）。⚠️ 将来被下面四端替换，替换完成前不要动它
+web/ting/                   汀 · 此刻（单件流）        :5175
+web/zhiyu/                  纸屿 · 顺流（叙事流）      :5176
+web/liuli/                  琉璃 · 长卷（时间画布）    :5177
+web/liuli-classic/          琉璃初版 · 页面制（对照组）:5178
+web/console/                运维控制台（⚠️ 唯一编进 Go 二进制的前端）
 deploy/                     Dockerfile / docker-compose / nginx
 testdata/                   canvas-export.sample.json / sample.ics
 docs/                       实时项目文档（架构/认证/Agent/数据/AI/路由总表）
@@ -58,7 +64,15 @@ make run / test / vet / build / docker
 make test-mongo                                     # 行为套件对真机 MongoDB 跑（需本机 mongod）
 cd web/frontend && npm run dev / build
 node web/frontend/scripts/check-i18n.mjs            # zh-CN / en-US key 对齐校验
+
+# 四端各自：npm install && npm run build（= tsc --noEmit && vitest run && vite build）
+for a in ting zhiyu liuli liuli-classic; do (cd web/$a && npm run build); done
 ```
+
+⚠️ **四端的多语言校验不是那个 `check-i18n.mjs`**，是各自 `src/locales.test.ts`，跑在
+`npm run build` 里 —— 一个没人记得跑的检查等于不存在。它比脚本那份严：双向对齐、
+占位符跨语言一致、源码里不许有漏网的中文字面量，还要求每个 key 都带点（那是提取器
+用来区分 key 与三元比较值的判据，所以它被断言而不是被假设）。
 
 ### 端到端冒烟（curl）
 

@@ -81,9 +81,13 @@ func (s *Server) handleInboxProcess(w http.ResponseWriter, r *http.Request) {
 			case !strings.HasPrefix(meta.ContentType, "text/"):
 				// Non-text, non-image (or an oversized image whose bytes weren't
 				// kept): route to the vision endpoint rather than guessing here.
+				locale := s.requestLocale(r)
 				s.writeJSON(w, http.StatusOK, map[string]any{
-					"understanding": fmt.Sprintf("收到一个 %s 文件（%s）；图片请用 extract-schedule-image 识别。", meta.ContentType, meta.Filename),
-					"suggestions":   []inboxSuggestion{{Action: "extract_image", Entity: "image", Summary: "用图片识别课表/日程"}},
+					"understanding": i18n.Tf("msg.inboxProcess.nonTextFile", locale, meta.ContentType, meta.Filename),
+					"suggestions": []inboxSuggestion{{
+						Action: "extract_image", Entity: "image",
+						Summary: i18n.T("msg.inboxProcess.extractImage", locale),
+					}},
 				})
 				return
 			}
@@ -207,9 +211,18 @@ func (s *Server) classifyInbox(ctx context.Context, sid, locale, text string) (*
 // timetable-extraction suggestion.
 func (s *Server) processInboxImage(w http.ResponseWriter, r *http.Request, sid, imageB64, contentType, filename string) {
 	fallback := func() {
+		// ⚠️ One key for what used to be two literals. They were the same
+		// sentence with a different semicolon — one full-width, one ASCII —
+		// which is exactly the kind of drift a catalog exists to make
+		// impossible: a translator sees one string, not two that look identical
+		// in a diff and are not.
+		locale := s.requestLocale(r)
 		s.writeJSON(w, http.StatusOK, map[string]any{
-			"understanding": fmt.Sprintf("收到一个 %s 文件（%s）;图片请用 extract-schedule-image 识别。", contentType, filename),
-			"suggestions":   []inboxSuggestion{{Action: "extract_image", Entity: "image", Summary: "用图片识别课表/日程"}},
+			"understanding": i18n.Tf("msg.inboxProcess.nonTextFile", locale, contentType, filename),
+			"suggestions": []inboxSuggestion{{
+				Action: "extract_image", Entity: "image",
+				Summary: i18n.T("msg.inboxProcess.extractImage", locale),
+			}},
 		})
 	}
 	if !s.enabledMaterialCategories(r.Context(), sid)["diet"] {
@@ -267,7 +280,7 @@ func (s *Server) processInboxImage(w http.ResponseWriter, r *http.Request, sid, 
 		// The photo might still be a timetable — keep that path one tap away.
 		"suggestions": []inboxSuggestion{
 			{Action: "save_material", Entity: "diet", Summary: title},
-			{Action: "extract_image", Entity: "image", Summary: "这其实是课表/日程截图"},
+			{Action: "extract_image", Entity: "image", Summary: i18n.T("msg.inboxProcess.actuallyTimetable", s.requestLocale(r))},
 		},
 		"classification": cls,
 		"draftId":        draftID,

@@ -1,0 +1,588 @@
+/* 琉璃初版 · 页面制
+ *
+ * ⚠️ The token names are the backend's built-in whitelist, name for name (see
+ * src/manifest.ts for why). Every value a theme may change is read from a custom
+ * property here; anything hard-coded below is structure, not style.
+ *
+ * ⚠️ Media queries LAST. This project has already lost an afternoon to desktop
+ * rules only partly applying because a later block overrode them.
+ */
+
+:root {
+  --primary: #3b82f6;
+  --accent: #60a5fa;
+  --bg-start: #e0f2fe;
+  --bg-end: #f0f9ff;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-hover: rgba(255, 255, 255, 0.92);
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+
+  --rail: rgba(255, 255, 255, 0.86);
+  --line: rgba(15, 23, 42, 0.08);
+  --radius-card: 14px;
+  --t-page: 160ms;
+}
+
+/* The four shipped themes. ⚠️ These are attribute selectors, not stored
+ * variables: GET /api/themes returns the built-in ids and nothing else, so a
+ * frontend that expected values for them would render an unthemed page. A
+ * CUSTOM theme is the other way round — the backend stores its variables and
+ * the app sets them inline. */
+[data-theme='sunset'] {
+  --primary: #f97316;
+  --accent: #fb923c;
+  --bg-start: #fff7ed;
+  --bg-end: #fef3c7;
+}
+
+[data-theme='nature'] {
+  --primary: #16a34a;
+  --accent: #4ade80;
+  --bg-start: #f0fdf4;
+  --bg-end: #ecfdf5;
+}
+
+[data-theme='night'] {
+  --primary: #a78bfa;
+  --accent: #c4b5fd;
+  --bg-start: #1e1b4b;
+  --bg-end: #312e81;
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --surface: rgba(30, 27, 75, 0.72);
+  --surface-hover: rgba(49, 46, 129, 0.86);
+  --rail: rgba(30, 27, 75, 0.9);
+  --line: rgba(248, 250, 252, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 15px/1.6 system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text-primary);
+  background: linear-gradient(180deg, var(--bg-start), var(--bg-end)) fixed;
+  min-height: 100vh;
+}
+
+.lc-app {
+  min-height: 100vh;
+  padding-bottom: 76px;
+}
+
+.lc-main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 18px 16px 40px;
+}
+
+.lc-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── navigation ── */
+
+.lc-tabs {
+  position: fixed;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: space-around;
+  background: var(--rail);
+  border-top: 1px solid var(--line);
+  padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+  backdrop-filter: blur(12px);
+  z-index: 20;
+}
+
+.lc-rail {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 12px;
+  background: var(--rail);
+  border-right: 1px solid var(--line);
+  z-index: 20;
+}
+
+.lc-navitem {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color var(--t-page), background var(--t-page);
+}
+
+.lc-rail .lc-navitem {
+  flex: 0 0 auto;
+}
+
+.lc-tabs .lc-navitem {
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.lc-navitem.on {
+  color: var(--primary);
+  background: var(--surface);
+}
+
+.lc-navitem:hover {
+  color: var(--text-primary);
+}
+
+.lc-navdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.lc-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  line-height: 17px;
+  text-align: center;
+}
+
+.lc-tabs .lc-badge {
+  position: absolute;
+  top: 2px;
+  right: 12px;
+}
+
+/* ── the week strip ── */
+
+.lc-strip {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.lc-day,
+.lc-step {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  padding: 6px 2px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.lc-step {
+  flex: 0 0 28px;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--text-muted);
+}
+
+.lc-day.on {
+  background: var(--surface);
+  color: var(--text-primary);
+}
+
+.lc-day.today .lc-daynum {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.lc-dayname {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.lc-daydot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.lc-daydot.some {
+  background: var(--accent);
+}
+
+.lc-daydot.full {
+  background: var(--success);
+}
+
+/* ── cards ── */
+
+.lc-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lc-card.ghost {
+  border-style: dashed;
+  background: transparent;
+}
+
+.lc-card.done .lc-cardtitle {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.lc-cardmain {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lc-cardtitle {
+  font-weight: 600;
+}
+
+.lc-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.lc-tag {
+  font-size: 11px;
+  color: var(--warning);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 0 5px;
+}
+
+.lc-title {
+  font-size: 22px;
+  margin: 0;
+}
+
+.lc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lc-sub {
+  color: var(--text-secondary);
+  margin: 0;
+  font-size: 13px;
+}
+
+.lc-empty {
+  color: var(--text-muted);
+  margin: 24px 0;
+  text-align: center;
+}
+
+.lc-err {
+  color: var(--error);
+  margin: 0;
+  font-size: 13px;
+}
+
+.lc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lc-groupsep {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding-top: 8px;
+}
+
+/* ⚠️ An even solid line. NOT linear-gradient(90deg, accent, transparent) —
+ * that reads as thick-on-the-left and fading out, which puts the visual weight
+ * of "now" off to one side. Written down in design-ui/CLAUDE.md as a mistake
+ * already made once. */
+.lc-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--primary);
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.lc-now::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--primary);
+  opacity: 0.75;
+}
+
+/* ── controls ── */
+
+.lc-btn {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--t-page), border-color var(--t-page);
+}
+
+.lc-btn.pri {
+  background: var(--primary);
+  color: #fff;
+}
+
+.lc-btn.sec {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--text-secondary);
+}
+
+.lc-btn.sec:hover {
+  background: var(--surface-hover);
+}
+
+.lc-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.lc-actrow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.lc-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lc-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text-primary);
+}
+
+.lc-input.time {
+  flex: 0 0 120px;
+}
+
+.lc-seg {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lc-segitem {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lc-segitem.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+/* ── month grid ── */
+
+.lc-monthhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lc-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.lc-cell {
+  aspect-ratio: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.lc-cell.pad {
+  cursor: default;
+}
+
+.lc-cell.on {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* ── mood ── */
+
+.lc-moods {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+}
+
+.lc-mood {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lc-mood:hover {
+  background: var(--surface-hover);
+}
+
+.lc-moodemoji {
+  font-size: 22px;
+}
+
+/* ── companion ── */
+
+.lc-bubble {
+  max-width: 82%;
+  padding: 9px 12px;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+}
+
+.lc-bubble.me {
+  margin-left: auto;
+  background: var(--primary);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* ── the undo bar ──
+ *
+ * ⚠️ pointer-events:none on the wrapper and auto on the bar. A full-width fixed
+ * overlay without that is an invisible sheet of glass across the bottom of every
+ * page — this project has made that mistake once already and written it down.
+ */
+
+.lc-undowrap {
+  position: fixed;
+  inset: auto 0 84px 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.lc-undo {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--rail);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 10px 8px 16px;
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+}
+
+/* ── media queries, last ── */
+
+@media (min-width: 900px) {
+  .lc-app.wide {
+    padding-bottom: 0;
+  }
+
+  .lc-app.wide .lc-main {
+    margin-left: 176px;
+    max-width: 780px;
+  }
+
+  .lc-app.wide .lc-undowrap {
+    bottom: 24px;
+    left: 176px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+.lc-part + .lc-part::before {
+  content: " ";
+}
+
+.lc-part {
+  display: inline;
+}

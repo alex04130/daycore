@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"encoding/json"
 	"os"
 	"regexp"
 	"sort"
@@ -90,9 +91,17 @@ func extractTSPatterns(t *testing.T, src string) map[string]string {
 		}
 		out[m[1]] = unquoted
 	}
-	if len(out) == 0 {
-		t.Fatal("no proposed kinds found — has the manifest changed shape?")
-	}
+	// ⚠️ An empty result is NOT an error here, and it used to be.
+	//
+	// While every frontend proposed something, `t.Fatal("no proposed kinds
+	// found")` was a fair guard against the regex silently ceasing to match. Then
+	// 琉璃初版 arrived proposing none — on purpose, because it needs none — and
+	// the guard turned into a helper asserting a fact about the world that had
+	// stopped being true.
+	//
+	// The guard is right, it just belongs to the CALLERS that require kinds:
+	// each of them names the kinds it expects and fails on a missing one, which
+	// is a stricter check than "at least one of something".
 	return out
 }
 
@@ -271,6 +280,7 @@ func TestEveryDeclaredTokenKindCanBeResolved(t *testing.T) {
 		{"汀", "ting"},
 		{"纸屿", "zhiyu"},
 		{"长卷", "liuli"},
+		{"琉璃初版", "liuli-classic"},
 	} {
 		src, err := os.ReadFile("../../web/" + app.dir + "/src/manifest.ts")
 		if err != nil {
@@ -297,6 +307,90 @@ func TestEveryDeclaredTokenKindCanBeResolved(t *testing.T) {
 				t.Errorf("%s declares %s as kind %q, which nothing can resolve — "+
 					"the handshake refuses it and the frontend finds out from a 400 at runtime",
 					app.name, token, kind)
+			}
+		}
+	}
+}
+
+// 琉璃初版 proposes NOTHING, and that is pinned rather than left to drift.
+//
+// The other three each needed a third-tier kind on day one — which is what made
+// the tier worth building. 初版 needs none: every value it lets a theme touch is
+// a colour, a length or a duration. The tier stays cheap only while a proposal
+// is rare, so "we did not need one" is a fact worth a test: adding one here
+// should be a decision somebody takes on purpose, not something that slips in
+// while copying another frontend's manifest.
+func TestLiuliClassicProposesNoKinds(t *testing.T) {
+	src, err := os.ReadFile("../../web/liuli-classic/src/manifest.ts")
+	if err != nil {
+		t.Skipf("琉璃初版 is not checked out here (%v)", err)
+	}
+	if got := extractTSPatterns(t, string(src)); len(got) != 0 {
+		t.Errorf("琉璃初版 now proposes %v. That is allowed, but it puts a decision on an "+
+			"operator's desk — say why in the manifest and update this test deliberately.", got)
+	}
+}
+
+// Every built-in theme must have a NAME in every frontend that shows a theme
+// picker.
+//
+// ⚠️ The one cross-language gap the frontends' own i18n gate cannot close.
+// web/*/src/locales.test.ts checks each `t()` family against a list in its own
+// source — but the built-in theme ids come from HERE, so from the frontend's
+// side the family has no knowable domain and the check has to wave it through.
+// Add a fifth theme to domain.BuiltinThemes and the picker renders a bare
+// `theme.whatever` with every frontend suite green.
+//
+// Written as "a frontend that has any theme.* key must have all of them", so it
+// costs nothing to the three that do not show a picker, and starts applying to
+// any that later does.
+func TestEveryBuiltinThemeHasAName(t *testing.T) {
+	// The ids, read from the source rather than restated — same rule as the
+	// patterns above. domain is not imported here on purpose: internal/theme is
+	// below internal/domain and must stay there.
+	src, err := os.ReadFile("../domain/theme.go")
+	if err != nil {
+		t.Fatalf("cannot read the built-in theme list: %v", err)
+	}
+	m := regexp.MustCompile(`BuiltinThemes\s*=\s*\[\]string\{([^}]*)\}`).FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("domain.BuiltinThemes no longer looks like a string slice literal — has it moved?")
+	}
+	var ids []string
+	for _, q := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(m[1], -1) {
+		ids = append(ids, q[1])
+	}
+	if len(ids) == 0 {
+		t.Fatal("read zero built-in themes; this check is not reading what it thinks it is")
+	}
+
+	for _, dir := range []string{"ting", "zhiyu", "liuli", "liuli-classic"} {
+		for _, locale := range []string{"zh-CN", "en-US"} {
+			path := "../../web/" + dir + "/public/locales/" + locale + ".json"
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				continue // not checked out, or ships a different set of packs
+			}
+			var pack map[string]string
+			if err := json.Unmarshal(raw, &pack); err != nil {
+				t.Errorf("%s: %v", path, err)
+				continue
+			}
+			shows := false
+			for k := range pack {
+				if strings.HasPrefix(k, "theme.") {
+					shows = true
+					break
+				}
+			}
+			if !shows {
+				continue // no theme picker; nothing to keep in step
+			}
+			for _, id := range ids {
+				if _, ok := pack["theme."+id]; !ok {
+					t.Errorf("%s has a theme picker but no name for the built-in theme %q — "+
+						"it renders the bare key `theme.%s`", path, id, id)
+				}
 			}
 		}
 	}

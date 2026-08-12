@@ -27,6 +27,8 @@ func init() {
 	i18n.Register("err.aIAutoPlan.bad_request3", i18n.Text{"zh-CN": "from/to 格式应为 YYYY-MM-DD 且 from <= to"})
 	i18n.Register("err.aIAutoPlan.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
 	i18n.Register("err.aIAutoPlan.internal2", i18n.Text{"zh-CN": "日程保存失败"})
+	i18n.Register("err.aIAutoPlan.parse_error", i18n.Text{"zh-CN": "规划解析出了点问题，请重试"})
+	i18n.Register("err.aIAutoPlan.server_error", i18n.Text{"zh-CN": "自主规划出了点问题，请稍后再试"})
 	i18n.Register("err.aICompanion.bad_request", i18n.Text{"zh-CN": "缺少 message"})
 	i18n.Register("err.aICompanion.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
 	i18n.Register("err.aICompanionAsync.bad_request", i18n.Text{"zh-CN": "缺少 message"})
@@ -34,16 +36,35 @@ func init() {
 	i18n.Register("err.aICompanionAsync.internal", i18n.Text{"zh-CN": "消息保存失败"})
 	i18n.Register("err.aICompanionAsync.thread_not_found", i18n.Text{"zh-CN": "会话不存在"})
 	i18n.Register("err.aIExtractScheduleImage.bad_request", i18n.Text{"zh-CN": "请求格式错误"})
+	i18n.Register("err.aIExtractScheduleImage.image_too_large", i18n.Text{"zh-CN": "图片太大了，换一张小一点的截图试试？"})
 	i18n.Register("err.aIExtractScheduleImage.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
+	i18n.Register("err.aIExtractScheduleImage.no_image", i18n.Text{"zh-CN": "请上传图片"})
+	i18n.Register("err.aIExtractScheduleImage.parse_error", i18n.Text{"zh-CN": "图片解析出了点问题，请重试"})
+	i18n.Register("err.aIExtractScheduleImage.server_error", i18n.Text{"zh-CN": "图片读取出了点问题，请稍后再试"})
+	i18n.Register("err.aIExtractScheduleImage.vision_unavailable", i18n.Text{"zh-CN": "当前没有配置可读图的视觉模型"})
 	i18n.Register("err.aIMood.bad_request", i18n.Text{"zh-CN": "缺少 mood"})
 	i18n.Register("err.aIMood.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
+	// ⚠️ Arrives under `response`, not `message` — see handlers_ai_mood.go. It is
+	// registered here anyway because the catalog is about the TEXT being
+	// translatable, not about which envelope carries it.
+	i18n.Register("err.aIMood.server_error", i18n.Text{"zh-CN": "遇到了点问题，稍后再试一下吧。"})
 	i18n.Register("err.aIPlanImage.bad_request", i18n.Text{"zh-CN": "请求格式错误"})
+	i18n.Register("err.aIPlanImage.image_too_large", i18n.Text{"zh-CN": "图片太大了，换一张小一点的截图试试？"})
 	i18n.Register("err.aIPlanImage.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
+	i18n.Register("err.aIPlanImage.no_image", i18n.Text{"zh-CN": "请上传图片"})
+	i18n.Register("err.aIPlanImage.parse_error", i18n.Text{"zh-CN": "图片解析出了点问题，请重试"})
+	i18n.Register("err.aIPlanImage.server_error", i18n.Text{"zh-CN": "图片读取出了点问题，请稍后再试"})
+	i18n.Register("err.aIPlanImage.vision_unavailable", i18n.Text{"zh-CN": "当前没有配置可读图的视觉模型，先用文字描述安排吧"})
 	i18n.Register("err.aIPlanText.bad_request", i18n.Text{"zh-CN": "请求格式错误"})
 	i18n.Register("err.aIPlanText.internal", i18n.Text{"zh-CN": "提示词渲染失败"})
+	i18n.Register("err.aIPlanText.no_schedule_info", i18n.Text{"zh-CN": "请描述一下你今天有什么安排"})
+	i18n.Register("err.aIPlanText.parse_error", i18n.Text{"zh-CN": "日程解析出了点问题，请重试"})
+	i18n.Register("err.aIPlanText.server_error", i18n.Text{"zh-CN": "日程生成出了点问题，请稍后再试"})
 	i18n.Register("err.aITheme.bad_request", i18n.Text{"zh-CN": "缺少 description"})
 	i18n.Register("err.aITheme.internal", i18n.Text{"zh-CN": "读取主题失败"})
 	i18n.Register("err.aITheme.internal2", i18n.Text{"zh-CN": "提示词渲染失败"})
+	i18n.Register("err.aITheme.parse_error", i18n.Text{"zh-CN": "主题解析出了点问题，请重试"})
+	i18n.Register("err.aITheme.server_error", i18n.Text{"zh-CN": "主题生成出了点问题，请稍后再试"})
 	i18n.Register("err.aITheme.theme_not_found", i18n.Text{"zh-CN": "没有这个主题"})
 	i18n.Register("err.aITravel.bad_category", i18n.Text{"zh-CN": "出行类别未启用"})
 	i18n.Register("err.aITravel.bad_request", i18n.Text{"zh-CN": "缺少 destination"})
@@ -308,4 +329,16 @@ func init() {
 	i18n.Register("err.fmt.irreversible", i18n.Text{"zh-CN": "操作 %s 不可撤销"})
 	i18n.Register("err.fmt.ruleRestore", i18n.Text{"zh-CN": "规则恢复失败: %v"})
 	i18n.Register("err.fmt.ruleRebuild", i18n.Text{"zh-CN": "规则重建失败: %v"})
+
+	// ── text that is not an error ────────────────────────────────────────
+	//
+	// The `err.` prefix above is a naming convention, not a boundary: what the
+	// catalog is for is text a person reads, and a successful response carries
+	// that too. This one is the instruction handed back with a fresh binding
+	// token, which is the only thing on that screen telling the reader what to
+	// do next.
+	i18n.Register("note.channelBind", i18n.Text{"zh-CN": "请在对应平台把这段 token 发给机器人以完成绑定，有效 10 分钟"})
+	i18n.Register("msg.inboxProcess.nonTextFile", i18n.Text{"zh-CN": "收到一个 %s 文件（%s）；图片请用 extract-schedule-image 识别。"})
+	i18n.Register("msg.inboxProcess.extractImage", i18n.Text{"zh-CN": "用图片识别课表/日程"})
+	i18n.Register("msg.inboxProcess.actuallyTimetable", i18n.Text{"zh-CN": "这其实是课表/日程截图"})
 }
