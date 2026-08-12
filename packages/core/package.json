@@ -2,10 +2,21 @@
   "name": "@daycore/core",
   "version": "0.1.0",
   "private": true,
+  "license": "LGPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alex04130/daycore.git",
+    "directory": "packages/core"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

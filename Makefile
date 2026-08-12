@@ -53,6 +53,24 @@ test-sql: ## Run the storage conformance suite against real PostgreSQL and MySQL
 	MYSQL_TEST_DSN='$(MYSQL_TEST_DSN)' \
 	go test -count=1 -run 'TestConformancePostgres|TestConformanceMySQL|TestRealDialectNamespaces' -v ./internal/storage/sqlstore/
 
+check-core-pack: ## Prove @daycore/core survives being a real package, not a file: symlink
+	@echo "packs packages/core and builds a frontend against the TARBALL, not the workspace symlink."
+	@echo "This is what makes 阶段 κ (four frontends → four repos) a mechanical move rather than a"
+	@echo "restructure: whatever channel is later chosen — npm, a git dependency, a vendored copy —"
+	@echo "every one of them installs a COPY, and this is the only check that a copy still builds."
+	@echo "APP=web/zhiyu make check-core-pack to try another one."
+	@set -eu; \
+	app=$${APP:-web/liuli-classic}; \
+	work=$$(mktemp -d); \
+	trap 'rm -rf "$$work"' EXIT; \
+	( cd packages/core && npm pack --silent --pack-destination "$$work" >/dev/null ); \
+	tar cf - -C "$$app" --exclude=node_modules --exclude=dist . | ( mkdir -p "$$work/app" && tar xf - -C "$$work/app" ); \
+	tgz=$$(ls "$$work"/*.tgz); \
+	node -e "const f='$$work/app/package.json',p=require(f);p.dependencies['@daycore/core']='file:$$tgz';require('fs').writeFileSync(f,JSON.stringify(p,null,2))"; \
+	rm -f "$$work/app/package-lock.json"; \
+	( cd "$$work/app" && npm install --silent && npm run build ); \
+	echo "core-pack ok ($$app builds against a packed tarball)"
+
 test-models: ## Live tool-calling check against real models (costs money; never in CI)
 	@echo "needs LIVE_MODEL_BASE_URL / LIVE_MODEL_API_KEY / LIVE_MODELS"
 	@echo "  LIVE_MODELS=deepseek-v4-flash,glm-5.2,grok-4.5 make test-models"
