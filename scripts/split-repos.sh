@@ -25,11 +25,27 @@
 # 用法：
 #   scripts/split-repos.sh              # 只打印计划，什么都不做
 #   scripts/split-repos.sh --go         # 真做
+#   scripts/split-repos.sh --go --resume  # 上次中断了，接着做
 #
 set -euo pipefail
 
 DRY=1
-[ "${1:-}" = "--go" ] && DRY=0
+RESUME=0
+for arg in "$@"; do
+  case "$arg" in
+    --go) DRY=0 ;;
+    # ⚠️ --resume 跳过「目标仓必须为空」那条前置。
+    #
+    # 它存在是因为真出过一次：五个仓推完之后，第三步在临时 clone 里 commit 时倒了
+    # （那台机器只在仓局部配了 git 身份，临时 clone 继承不到）。于是仓不空了，重跑
+    # 被自己的前置挡住 —— 而这时候你正需要重跑。
+    #
+    # 前两步是幂等的（split 是确定性的，推同样的 commit 就是 up-to-date），tag 已存在
+    # 会跳过，第三步没东西可提交也会跳过。所以 --resume 是安全的，前提是那些仓里除了
+    # 这个脚本推的东西没有别的。
+    --resume) RESUME=1 ;;
+  esac
+done
 
 # 目录 → 仓名后缀。改这张表就是改这次切分。
 #
@@ -102,15 +118,31 @@ fi
 # 真的中途断了（网断、某个仓被别人写了）怎么办：把那几个仓删了重建成空的，再跑。
 # split 分支是纯派生物，超级仓这边在最后一步之前没有任何改动。
 missing=0
+
+# ⚠️ git 身份，检在这里而不是等到第三步。
+#
+# 这一条是买来的：第一次真跑时五个仓全推完了，才在第三步的临时 clone 里倒下 ——
+# 那台机器只在仓局部配了身份（git config user.name），全局是空的，而 `git clone`
+# 出来的临时目录继承不到局部配置。
+#
+# 教训不是「加一条身份检查」，是**前置清单要覆盖后面每一步需要的东西，不只覆盖显眼
+# 的那些**。一条在副作用之后才触发的前置，等于没有前置。
+AUTHOR_NAME=$(git config user.name || true)
+AUTHOR_EMAIL=$(git config user.email || true)
+if [ -z "$AUTHOR_NAME" ] || [ -z "$AUTHOR_EMAIL" ]; then
+  say "✗ 没有 git 身份（user.name / user.email）—— 第三步要在临时 clone 里提交"
+  missing=1
+fi
+
 for pair in "${PAIRS[@]}"; do
   name="${pair##*:}"
   repo="$base/${prefix}-${name}.git"
   if ! refs=$(git ls-remote "$repo" 2>/dev/null); then
     say "✗ 连不上 $repo —— 先在远端建这个空仓"
     missing=1
-  elif [ -n "$refs" ]; then
+  elif [ -n "$refs" ] && [ "$RESUME" = 0 ]; then
     say "✗ $repo 不是空的（已有 $(printf '%s\n' "$refs" | wc -l) 个 ref）"
-    say "  这个脚本只往空仓里切。要重来的话，把它删掉重建。"
+    say "  这个脚本只往空仓里切。上次中断了的话用 --resume；要重来就把它删掉重建。"
     missing=1
   fi
 done
@@ -132,8 +164,13 @@ for pair in "${PAIRS[@]}"; do
 done
 
 say ""
-say "── ${prefix}-${CORE_NAME} 打 tag $CORE_TAG"
-run "git push '$base/${prefix}-${CORE_NAME}.git' 'split/${CORE_NAME}:refs/tags/$CORE_TAG'"
+core_repo="$base/${prefix}-${CORE_NAME}.git"
+if [ "$DRY" = 0 ] && git ls-remote --tags "$core_repo" 2>/dev/null | grep -q "refs/tags/$CORE_TAG\$"; then
+  say "── tag $CORE_TAG 已经在 ${prefix}-${CORE_NAME} 上了，跳过"
+else
+  say "── ${prefix}-${CORE_NAME} 打 tag $CORE_TAG"
+  run "git push '$core_repo' 'split/${CORE_NAME}:refs/tags/$CORE_TAG'"
+fi
 
 # ── 3. 前端仓改依赖 ─────────────────────────────────────────────────────────
 #
@@ -151,10 +188,15 @@ for pair in "${PAIRS[@]}"; do
     git@*) core_dep="git+ssh://${base/://}/${prefix}-${CORE_NAME}.git#${CORE_TAG}" ;;
     *)     core_dep="git+${base}/${prefix}-${CORE_NAME}.git#${CORE_TAG}" ;;
   esac
+  # ⚠️ 身份显式传给临时 clone。它继承不到超级仓的局部 config，而这台机器就只有
+  # 局部的 —— 这一行是一次五个仓推完之后才炸的失败换来的。
+  # ⚠️ 没东西可提交时跳过，这样中断之后 --resume 不会在这里死掉。
   run "tmp=\$(mktemp -d) && git clone -q '$repo' \"\$tmp\" && \
     node -e \"const f=process.argv[1]+'/package.json',p=require(f);p.dependencies['@daycore/core']='$core_dep';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')\" \"\$tmp\" && \
     ( cd \"\$tmp\" && npm install --silent && git add -A && \
-      git commit -qm '依赖 @daycore/core 改成 git 依赖：独立 clone 也能构建' && git push -q origin main ) && \
+      if git diff --cached --quiet; then echo '  （已经是 git 依赖了，跳过）'; else \
+        git -c user.name='$AUTHOR_NAME' -c user.email='$AUTHOR_EMAIL' \
+          commit -qm '依赖 @daycore/core 改成 git 依赖：独立 clone 也能构建' && git push -q origin main; fi ) && \
     rm -rf \"\$tmp\""
 done
 
