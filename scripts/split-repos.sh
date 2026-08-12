@@ -82,6 +82,32 @@ if [ -f .gitmodules ]; then
   exit 1
 fi
 
+# ⚠️ 五个目标仓必须存在且为空 —— 在第一个副作用之前全部检完。
+#
+# 这条不是礼貌，是这个脚本能不能被救回来的关键。它推完 core、又往前端仓补了一个
+# commit 之后才失败的话，重跑会在 push 那一步撞非快进 —— 于是你既没切完，也回不去。
+# 一次性迁移脚本的正确形状是：**所有前置在动手之前检完**，把「中途卡死」变成
+# 「它不肯开工」。
+#
+# 真的中途断了（网断、某个仓被别人写了）怎么办：把那几个仓删了重建成空的，再跑。
+# split 分支是纯派生物，超级仓这边在最后一步之前没有任何改动。
+missing=0
+for pair in "${PAIRS[@]}"; do
+  name="${pair##*:}"
+  repo="$base/${prefix}-${name}.git"
+  if ! refs=$(git ls-remote "$repo" 2>/dev/null); then
+    say "✗ 连不上 $repo —— 先在远端建这个空仓"
+    missing=1
+  elif [ -n "$refs" ]; then
+    say "✗ $repo 不是空的（已有 $(printf '%s\n' "$refs" | wc -l) 个 ref）"
+    say "  这个脚本只往空仓里切。要重来的话，把它删掉重建。"
+    missing=1
+  fi
+done
+if [ "$missing" = 1 ]; then
+  [ "$DRY" = 1 ] && say "" && say "（空跑：上面这些在 --go 时会直接拒绝）" || exit 1
+fi
+
 # ── 1+2. 切分支并推出去 ─────────────────────────────────────────────────────
 for pair in "${PAIRS[@]}"; do
   path="${pair%%:*}"; name="${pair##*:}"
