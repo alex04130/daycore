@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as api from './api';
+import * as api from '@daycore/core';
 import { flowAt, nowMin, type Flow } from './flow';
-import type { Boot } from './session';
+import type { Boot } from '@daycore/core';
 
 // 汀's state: the day, the pending proposals, and the thing you can still undo.
 //

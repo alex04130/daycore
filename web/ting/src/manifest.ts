@@ -4,19 +4,10 @@
 // — the backend adjudicates and answers with which family it assigned us, which
 // tokens were new, and which of our proposed kinds are still waiting on a human.
 
-/** One themeable CSS custom property this build understands. */
-export interface TokenSpec {
-  name: string;
-  kind: string;
-  description?: string;
-}
-
-/** A validation rule 汀 needs and the deployment may not have. */
-export interface KindSpec {
-  name: string;
-  pattern: string;
-  description?: string;
-}
+// ⚠️ The SHAPES come from @daycore/core; the CONTENT below is 汀's own. Its
+// token space and family id are its identity — four products do not share those,
+// and a shared constant would make adding a frontend an edit to everybody.
+import type { KindSpec, Manifest, TokenSpec } from '@daycore/core';
 
 // ⚠️ FAMILY_ID is the theme-compatibility group, not the build.
 //
@@ -110,7 +101,7 @@ export const THEME_RULES = [
 ].join('\n');
 
 /** The whole manifest, as POST /api/version wants it. */
-export function manifest(buildHash: string) {
+export function manifest(buildHash: string): Manifest {
   return {
     familyId: FAMILY_ID,
     buildHash,

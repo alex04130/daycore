@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { flowAt, progressPct, toHM, toMin } from './flow';
-import type { DayPlan, TimeBlock } from './api';
+import type { DayPlan, TimeBlock } from '@daycore/core';
 
 const b = (o: Partial<TimeBlock> & { id: string; time: string | null }): TimeBlock => ({
   title: o.id,

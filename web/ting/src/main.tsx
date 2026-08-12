@@ -3,10 +3,17 @@ import { createRoot } from 'react-dom/client';
 import './theme.css';
 import { App } from './App';
 import { Setting } from './Setting';
-import { boot as bootUp, type Boot } from './session';
-import { isFirstRun } from './backend';
-import { bootstrapCatalog, type Catalog } from './i18n';
-import * as api from './api';
+import { boot as bootUp, type Boot } from '@daycore/core';
+import { isFirstRun } from '@daycore/core';
+import { bootstrapCatalog, type Catalog } from '@daycore/core';
+import { manifest } from './manifest';
+
+// ⚠️ The packs 汀 SHIPS, in public/locales/. Passed in rather than read from
+// @daycore/core, because each of the four frontends ships a different set — a
+// constant in the shared package would be one frontend's answer imposed on the
+// other three.
+const SHIPPED = ['zh-CN', 'en-US'];
+import * as api from '@daycore/core';
 
 // ⚠️ The setting screen comes BEFORE the boot attempt on a fresh install, and
 // after a failed one otherwise. Both directions matter: a first-run install has
@@ -28,13 +35,13 @@ function Root() {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    void bootstrapCatalog().then(setBootCat);
+    void bootstrapCatalog(SHIPPED).then(setBootCat);
   }, []);
 
   useEffect(() => {
     if (phase !== 'booting') return;
     let live = true;
-    bootUp().then(
+    bootUp(manifest).then(
       (b) => {
         if (!live) return;
         setBoot(b);
@@ -80,7 +87,7 @@ function Root() {
       <Setting
         cat={bootCat}
         onDone={() => setPhase('booting')}
-        onLocale={() => void bootstrapCatalog().then(setBootCat)}
+        onLocale={() => void bootstrapCatalog(SHIPPED).then(setBootCat)}
       />
     );
   }

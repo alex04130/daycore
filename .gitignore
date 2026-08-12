@@ -72,3 +72,4 @@ internal/**/zz_*_test.go
 internal/**/zzz_*_test.go
 internal/**/zzprobe_test.go
 web/console/node_modules/
+packages/*/node_modules/

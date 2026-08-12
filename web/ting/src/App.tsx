@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { progressPct, toHM, toMin, nowMin } from './flow';
 import { useStore } from './store';
-import type { Boot } from './session';
+import type { Boot } from '@daycore/core';
 
 // The single-piece flow. 画面永远只回答一个问题：现在做什么。
 //

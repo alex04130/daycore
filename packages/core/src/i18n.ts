@@ -1,4 +1,4 @@
-// 汀's message catalogue.
+// The message catalogue every frontend uses.
 //
 // docs/specs/frontend-manifest.md, "前端的多语言形态", states four requirements
 // and names the thing not to copy — web/frontend/src/i18n.js, a hardcoded
@@ -191,12 +191,16 @@ export function preferredLocale(available: Locale[], fallback: Locale): Locale {
  * seeing which arrive. An operator's extra language appears the moment the real
  * catalogue replaces this one, which is as soon as the handshake answers.
  *
- * SHIPPED is the list of packs in public/locales/. It is the one place a
- * compile-time language list is correct, because it describes this artifact
- * rather than that installation.
+ * The shipped list is the one place a compile-time language list is correct,
+ * because it describes an ARTIFACT rather than an installation.
  */
-const SHIPPED: Locale[] = ['zh-CN', 'en-US'];
-
-export function bootstrapCatalog(): Promise<Catalog> {
-  return loadCatalog(preferredLocale(SHIPPED, SHIPPED[0]!), SHIPPED, SHIPPED[0]!);
+//
+// ⚠️ `shipped` is a PARAMETER, not a constant here. It is the list of packs the
+// CALLING APP ships in its own public/locales/, and each of the four frontends
+// ships a different set — a constant in this shared package would be one
+// frontend's answer imposed on the other three.
+export function bootstrapCatalog(shipped: Locale[]): Promise<Catalog> {
+  const first = shipped[0];
+  if (first === undefined) throw new Error('bootstrapCatalog needs at least one shipped locale');
+  return loadCatalog(preferredLocale(shipped, first), shipped, first);
 }

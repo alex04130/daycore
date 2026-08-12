@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import * as api from './api';
-import { backendBase, setBackendBase } from './backend';
-import { chooseLocale, type Catalog } from './i18n';
+import * as api from '@daycore/core';
+import { backendBase, setBackendBase } from '@daycore/core';
+import { chooseLocale, type Catalog } from '@daycore/core';
 
 // The first-install screen every frontend is required to ship.
 //

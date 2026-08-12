@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chainFor, loadCatalog, preferredLocale, chooseLocale } from './i18n';
+import { chainFor, chooseLocale, loadCatalog, preferredLocale } from './i18n';
 
 // The four rules from docs/specs/frontend-manifest.md「前端的多语言形态」.
 // Each test names the one it pins.

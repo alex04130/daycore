@@ -1,4 +1,4 @@
-import type { DayPlan, TimeBlock } from './api';
+import type { DayPlan, TimeBlock } from '@daycore/core';
 
 // "What is happening right now" — derived from the day's blocks, in the
 // browser's own clock.
