@@ -1,6 +1,7 @@
 import * as api from './api';
 import { buildHash, markSetupDone } from './backend';
 import { manifest, TOKENS } from './manifest';
+import { loadCatalog, preferredLocale, type Catalog } from './i18n';
 
 // Bringing 汀 up against a backend it has never met.
 //
@@ -20,6 +21,10 @@ import { manifest, TOKENS } from './manifest';
 export interface Boot {
   session: api.Session;
   handshake: api.Handshake;
+  /** The reader's catalogue, built from what THIS deployment can render. */
+  catalog: Catalog;
+  /** Every locale this deployment offers — the setting screen lists them. */
+  availableLocales: string[];
   /** Tokens this deployment will not accept yet, because their kind is pending. */
   deferred: string[];
   buildHash: string;
@@ -43,15 +48,27 @@ export async function boot(): Promise<Boot> {
   // guess at which calls still exist, and the guess would be wrong in a way the
   // user experiences as random breakage rather than as "these two do not fit".
   if (hs.apiVersion !== undefined && hs.apiVersion < 1) {
-    throw { kind: 'too-old', message: `这个后端报的 API 版本是 ${hs.apiVersion}` } satisfies BootProblem;
+    throw { kind: 'too-old', message: String(hs.apiVersion) } satisfies BootProblem;
   }
 
   const session = await api.initSession();
   markSetupDone();
 
+  // ⚠️ The language list comes from the HANDSHAKE, which is why the catalogue is
+  // built here and not at module load. A frontend that picked its language
+  // before asking the deployment what it can render would be choosing from a
+  // list it made up — rule ② of docs/specs/frontend-manifest.md, and the one
+  // place it is easy to get wrong.
+  const available = hs.locales?.available ?? ['zh-CN'];
+  const fallback = hs.locales?.defaultPrimary ?? available[0] ?? 'zh-CN';
+  const catalog = await loadCatalog(preferredLocale(available, fallback), available, fallback);
+  document.documentElement.lang = catalog.locale;
+
   return {
     session,
     handshake: hs,
+    catalog,
+    availableLocales: available,
     deferred: hs.deferredTokens ?? [],
     buildHash: BUILD_HASH,
   };

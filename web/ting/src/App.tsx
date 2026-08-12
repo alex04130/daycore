@@ -11,6 +11,28 @@ import type { Boot } from './session';
 // left out rather than faked, because a face wired to a mock is a face that
 // will be rewritten.
 
+/**
+ * Render a translated string that contains line breaks.
+ *
+ * ⚠️ The break is part of the TRANSLATION, not of the markup. 「现在空着，\n空着
+ * 不是欠着。」 breaks where Chinese wants it to; an English translation of the
+ * same idea breaks somewhere else, or not at all. A <br/> hardcoded in JSX
+ * forces every language to break where Chinese does.
+ */
+function Lines({ text }: { text: string }) {
+  const parts = text.split('\n');
+  return (
+    <>
+      {parts.map((line, i) => (
+        <span key={i}>
+          {line}
+          {i < parts.length - 1 && <br />}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function useSwipe(onUp: () => void, onLeft?: () => void) {
   const [d, setD] = useState({ x: 0, y: 0 });
   const down = (e: React.PointerEvent) => {
@@ -40,6 +62,7 @@ function useSwipe(onUp: () => void, onLeft?: () => void) {
 
 export function App({ boot }: { boot: Boot }) {
   const s = useStore(boot);
+  const t = boot.catalog.t;
   const [clock, setClock] = useState(() => nowMin());
   useEffect(() => {
     const t = setInterval(() => setClock(nowMin()), 30_000);
@@ -83,14 +106,14 @@ export function App({ boot }: { boot: Boot }) {
         {s.undo && (
           <div className="tg-undo">
             <span>{s.undo.label}</span>
-            <button onClick={() => void s.takeBack()}>撤回</button>
+            <button onClick={() => void s.takeBack()}>{t('undo.take')}</button>
           </div>
         )}
 
         <header className="tg-top">
           <span className="tg-clock">{toHM(clock)}</span>
           <span className="tg-l0">
-            今天完成 {s.flow.doneCount}/{s.flow.total}
+            {t('top.doneCount', { done: s.flow.doneCount, total: s.flow.total })}
           </span>
         </header>
 
@@ -100,7 +123,7 @@ export function App({ boot }: { boot: Boot }) {
           {prop ? (
             <div className="tg-card tg-prop" onPointerDown={propDown} style={propStyle}>
               <div className="tg-eyebrow">
-                <span>{prop.level === 'L3' ? '要紧的' : '一个提案'}</span>
+                <span>{t(prop.level === 'L3' ? 'prop.eyebrow.urgent' : 'prop.eyebrow')}</span>
                 <i className="ln" />
               </div>
               <h1 className="tg-title md">{prop.title}</h1>
@@ -116,10 +139,10 @@ export function App({ boot }: { boot: Boot }) {
               )}
               <div className="tg-actrow">
                 <button className="tg-btn pri" disabled={s.busy} onClick={() => void s.answer(prop, true)}>
-                  好
+                  {t('prop.accept')}
                 </button>
                 <button className="tg-btn sec" disabled={s.busy} onClick={() => void s.answer(prop, false)}>
-                  不了
+                  {t('prop.reject')}
                 </button>
               </div>
             </div>
@@ -127,8 +150,11 @@ export function App({ boot }: { boot: Boot }) {
             <div className="tg-card" onPointerDown={curDown} style={curStyle}>
               <div className="tg-eyebrow">
                 <span>
-                  此刻 · {cur.time}
-                  {cur.duration_min ? '–' + toHM(toMin(cur.time!) + cur.duration_min) : ''}
+                  {t('now.eyebrow', {
+                    span:
+                      cur.time +
+                      (cur.duration_min ? '–' + toHM(toMin(cur.time!) + cur.duration_min) : ''),
+                  })}
                 </span>
                 <i className="ln" />
               </div>
@@ -136,10 +162,14 @@ export function App({ boot }: { boot: Boot }) {
               {cur.note && <p className="tg-note">“{cur.note}”</p>}
               <div className="tg-metarow">
                 <span className={'tg-origin ' + (cur.origin ?? 'manual')}>
-                  {cur.origin === 'manual' ? '我放的' : '排的'}
+                  {t(cur.origin === 'manual' ? 'now.origin.manual' : 'now.origin.auto')}
                 </span>
                 {cur.duration_min ? (
-                  <span>还剩 {Math.max(0, toMin(cur.time!) + cur.duration_min - clock)} 分钟</span>
+                  <span>
+                    {t('now.remaining', {
+                      n: Math.max(0, toMin(cur.time!) + cur.duration_min - clock),
+                    })}
+                  </span>
                 ) : null}
               </div>
               {cur.duration_min ? (
@@ -149,42 +179,38 @@ export function App({ boot }: { boot: Boot }) {
               ) : null}
               <div className="tg-actrow">
                 <button className="tg-btn pri" disabled={s.busy} onClick={() => void s.complete(cur)}>
-                  完成了
+                  {t('now.complete')}
                 </button>
               </div>
             </div>
           ) : s.flow.next ? (
             <div className="tg-card">
               <div className="tg-eyebrow mute">
-                <span>空档</span>
+                <span>{t('gap.eyebrow')}</span>
                 <i className="ln" />
               </div>
               <h1 className="tg-title md">
-                现在空着，
-                <br />
-                空着不是欠着。
+                <Lines text={t('gap.title')} />
               </h1>
-              <p className="tg-sub">{s.flow.gapMin} 分钟后才有下一件。</p>
+              <p className="tg-sub">{t('gap.body', { n: s.flow.gapMin })}</p>
             </div>
           ) : (
             <div className="tg-card">
               <div className="tg-eyebrow mute">
-                <span>此刻</span>
+                <span>{t('done.eyebrow')}</span>
                 <i className="ln" />
               </div>
               <h1 className="tg-title md">
-                没有下一件了。
-                <br />
-                没做完的不积债。
+                <Lines text={t('done.title')} />
               </h1>
-              <p className="tg-sub">要紧的明天会自己浮上来。</p>
+              <p className="tg-sub">{t('done.body')}</p>
             </div>
           )}
 
           {(prop || cur) && (
             <div className="tg-swipehint">
               <span className="up">↑</span>
-              <span>上滑{prop ? '接受' : '送走'}</span>
+              <span>{t(prop ? 'swipe.accept' : 'swipe.complete')}</span>
             </div>
           )}
         </div>
@@ -192,7 +218,7 @@ export function App({ boot }: { boot: Boot }) {
         <footer className="tg-foot">
           {s.flow.next && (
             <div className="tg-next">
-              接下来 · {s.flow.next.time} {s.flow.next.title}
+              {t('foot.next', { time: s.flow.next.time ?? '', title: s.flow.next.title })}
             </div>
           )}
         </footer>

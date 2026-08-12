@@ -46,7 +46,11 @@ export function useStore(boot: Boot): Store {
   const [error, setError] = useState('');
   const [tick, setTick] = useState(() => nowMin());
   const date = api.todayIso();
-  void boot;
+  // ⚠️ The undo bar's label is user-visible copy and goes through the
+  // catalogue like everything else. It was the last hardcoded string in 汀, and
+  // it hid here rather than in a component — which is exactly where this kind
+  // of thing survives a copy pass.
+  const t = boot.catalog.t;
 
   // A minute hand. 30s so the "还剩 N 分钟" line is never more than half a
   // minute stale — 汀 shows one number and it is the one people check.
@@ -130,15 +134,18 @@ export function useStore(boot: Boot): Store {
           api
             .patchPlan(date, { action: 'update', match: { id: b.id }, changes: { completed: true } })
             .then(() => undefined),
-        '完成：' + b.title,
+        t('undo.completed', { title: b.title }),
       ),
-    [act, date],
+    [act, date, t],
   );
 
   const answer = useCallback(
     (p: api.Proposal, accept: boolean) =>
-      act(() => api.respondToProposal(p.id, accept).then(() => undefined), (accept ? '接受：' : '推开：') + p.title),
-    [act],
+      act(
+        () => api.respondToProposal(p.id, accept).then(() => undefined),
+        t(accept ? 'undo.accepted' : 'undo.rejected', { title: p.title }),
+      ),
+    [act, t],
   );
 
   const takeBack = useCallback(async () => {

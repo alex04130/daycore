@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import * as api from './api';
 import { backendBase, setBackendBase } from './backend';
+import { chooseLocale, type Catalog } from './i18n';
 
 // The first-install screen every frontend is required to ship.
 //
@@ -13,10 +14,24 @@ import { backendBase, setBackendBase } from './backend';
 // person cannot tell a typo from an outage from a backend that is fine but not
 // a daycore. One request answers all three, and the answer is on the same
 // screen as the field they would fix.
-export function Setting({ onDone }: { onDone: () => void }) {
+//
+// ⚠️ Its copy comes from the BOOTSTRAP catalogue — 汀's own shipped packs. This
+// screen runs before any backend has been reached, so there is no deployment
+// language list to read yet; the real one replaces it the moment the handshake
+// answers. See i18n.ts bootstrapCatalog.
+export function Setting({
+  cat,
+  onDone,
+  onLocale,
+}: {
+  cat: Catalog;
+  onDone: () => void;
+  onLocale: (l: string) => void;
+}) {
   const [value, setValue] = useState(backendBase());
   const [state, setState] = useState<'idle' | 'checking' | 'ok'>('idle');
   const [err, setErr] = useState('');
+  const t = cat.t;
 
   async function check() {
     setState('checking');
@@ -24,10 +39,9 @@ export function Setting({ onDone }: { onDone: () => void }) {
     const previous = backendBase();
     setBackendBase(value);
     try {
-      const v = await api.probe();
+      await api.probe();
       setState('ok');
       setErr('');
-      void v;
     } catch (e) {
       // Put the old address back. A field that has silently changed what the
       // app talks to, while showing an error about the new one, is how somebody
@@ -36,8 +50,8 @@ export function Setting({ onDone }: { onDone: () => void }) {
       setState('idle');
       setErr(
         api.isUnreachable(e)
-          ? '连不上。检查地址、端口，以及那台机器是不是允许这个网页来源（ALLOWED_ORIGINS）。'
-          : '连上了，但它不像一个 Daycore 后端：' + (e instanceof Error ? e.message : String(e)),
+          ? t('setting.unreachable')
+          : t('setting.notDaycore') + (e instanceof Error ? e.message : String(e)),
       );
     }
   }
@@ -47,14 +61,11 @@ export function Setting({ onDone }: { onDone: () => void }) {
       <div className="tg-frame">
         <div className="tg-main">
           <div className="tg-eyebrow">
-            <span>初次设置</span>
+            <span>{t('setting.eyebrow')}</span>
             <i className="ln" />
           </div>
-          <h1 className="tg-title md">连哪个后端？</h1>
-          <p className="tg-sub">
-            汀 只是一个界面，你的数据在你自己的 Daycore 服务器上。
-            留空就是「和这个网页同一个地址」—— 如果你是把汀和后端放在一起的，那就不用填。
-          </p>
+          <h1 className="tg-title md">{t('setting.title')}</h1>
+          <p className="tg-sub">{t('setting.body')}</p>
           <div className="tg-rows" style={{ marginTop: 22 }}>
             <input
               className="tg-input"
@@ -63,14 +74,15 @@ export function Setting({ onDone }: { onDone: () => void }) {
                 setValue(e.target.value);
                 setState('idle');
               }}
-              placeholder="https://daycore.example.com  或者留空"
+              placeholder={t('setting.placeholder')}
               autoFocus
               spellCheck={false}
               autoCapitalize="off"
+              aria-label={t('setting.title')}
             />
           </div>
           {err && <p className="tg-note">{err}</p>}
-          {state === 'ok' && <p className="tg-note">连上了。</p>}
+          {state === 'ok' && <p className="tg-note">{t('setting.ok')}</p>}
           <div className="tg-actrow">
             {state === 'ok' ? (
               <button
@@ -80,14 +92,33 @@ export function Setting({ onDone }: { onDone: () => void }) {
                   onDone();
                 }}
               >
-                就用它
+                {t('setting.use')}
               </button>
             ) : (
               <button className="tg-btn pri" disabled={state === 'checking'} onClick={check}>
-                {state === 'checking' ? '连着…' : '试一下'}
+                {state === 'checking' ? t('setting.trying') : t('setting.try')}
               </button>
             )}
           </div>
+
+          <div className="tg-metarow" style={{ marginTop: 26 }}>
+            <span>{t('setting.language')}</span>
+            <select
+              className="tg-select"
+              value={cat.locale}
+              aria-label={t('setting.language')}
+              onChange={(e) => {
+                chooseLocale(e.target.value);
+                onLocale(e.target.value);
+              }}
+            >
+              {/* ⚠️ 汀's OWN packs only, on this screen. The deployment's list is
+                  not knowable yet — see the note above. */}
+              <option value="zh-CN">简体中文</option>
+              <option value="en-US">English</option>
+            </select>
+          </div>
+          <p className="tg-note">{t('setting.langHint')}</p>
         </div>
       </div>
     </div>

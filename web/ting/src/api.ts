@@ -173,6 +173,9 @@ export interface Handshake {
   deferredTokens?: string[];
   pendingThemeBackfill?: number;
   note?: string;
+  /** Every language this INSTALLATION can render — not a compile-time list.
+   *  An operator dropping a file into LOCALES_DIR extends it. */
+  locales?: { available: string[]; defaultPrimary: string; defaultSecondary?: string };
 }
 
 // ── calls ──────────────────────────────────────────────────────────────────

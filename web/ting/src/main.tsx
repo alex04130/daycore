@@ -5,18 +5,31 @@ import { App } from './App';
 import { Setting } from './Setting';
 import { boot as bootUp, type Boot } from './session';
 import { isFirstRun } from './backend';
+import { bootstrapCatalog, type Catalog } from './i18n';
 import * as api from './api';
 
 // ⚠️ The setting screen comes BEFORE the boot attempt on a fresh install, and
 // after a failed one otherwise. Both directions matter: a first-run install has
 // no address to try, and a broken address must lead back to the field that
 // fixes it rather than to a dead screen with a reload button.
+//
+// ⚠️ Two catalogues, and the split is not incidental. `bootCat` is built from
+// 汀's own shipped packs and covers the screens that run before any backend has
+// been reached; `boot.catalog` is built from what the DEPLOYMENT reports it can
+// render and covers everything after. A single catalogue would have to be one
+// or the other — either the setting screen is untranslatable, or the language
+// list is hardcoded, and the second is the rule this whole module exists for.
 function Root() {
   const [phase, setPhase] = useState<'setting' | 'booting' | 'up' | 'failed'>(
     isFirstRun() ? 'setting' : 'booting',
   );
   const [boot, setBoot] = useState<Boot | null>(null);
+  const [bootCat, setBootCat] = useState<Catalog | null>(null);
   const [err, setErr] = useState('');
+
+  useEffect(() => {
+    void bootstrapCatalog().then(setBootCat);
+  }, []);
 
   useEffect(() => {
     if (phase !== 'booting') return;
@@ -33,35 +46,58 @@ function Root() {
           // Not an error and not silent. An operator has to approve 汀's shadow
           // kind before that one token can be themed; until then the
           // stylesheet's own value applies and everything else works.
-          console.info('等运维批准后才能主题化的变量：', b.deferred.join(', '));
+          console.info('waiting on operator approval before these can be themed:', b.deferred.join(', '));
         }
       },
       (e) => {
         if (!live) return;
-        setErr(api.isUnreachable(e) ? '连不上后端。' : e instanceof Error ? e.message : String(e));
+        const t = bootCat?.t ?? ((k: string) => k);
+        setErr(
+          api.isUnreachable(e)
+            ? t('boot.unreachable')
+            : e && typeof e === 'object' && 'kind' in e && (e as { kind: string }).kind === 'too-old'
+              ? t('boot.tooOld', { version: String((e as { message: string }).message) })
+              : e instanceof Error
+                ? e.message
+                : String(e),
+        );
         setPhase('failed');
       },
     );
     return () => {
       live = false;
     };
-  }, [phase]);
+  }, [phase, bootCat]);
 
-  if (phase === 'setting') return <Setting onDone={() => setPhase('booting')} />;
+  // Nothing renders before the bootstrap pack lands. It is a same-origin fetch
+  // of a small file, and a flash of untranslated keys is worse than a beat of
+  // nothing.
+  if (!bootCat) return <div className="tg-app" />;
+  const t = bootCat.t;
+
+  if (phase === 'setting') {
+    return (
+      <Setting
+        cat={bootCat}
+        onDone={() => setPhase('booting')}
+        onLocale={() => void bootstrapCatalog().then(setBootCat)}
+      />
+    );
+  }
   if (phase === 'up' && boot) return <App boot={boot} />;
   if (phase === 'failed') {
     return (
       <div className="tg-app">
         <div className="tg-frame">
           <div className="tg-main">
-            <h1 className="tg-title md">连不上。</h1>
+            <h1 className="tg-title md">{t('boot.failed.title')}</h1>
             <p className="tg-sub">{err}</p>
             <div className="tg-actrow">
               <button className="tg-btn pri" onClick={() => setPhase('setting')}>
-                改一下地址
+                {t('boot.failed.editAddress')}
               </button>
               <button className="tg-btn sec" onClick={() => setPhase('booting')}>
-                再试一次
+                {t('boot.failed.retry')}
               </button>
             </div>
           </div>
@@ -73,7 +109,7 @@ function Root() {
     <div className="tg-app">
       <div className="tg-frame">
         <div className="tg-main">
-          <p className="tg-sub">连着…</p>
+          <p className="tg-sub">{t('boot.connecting')}</p>
         </div>
       </div>
     </div>

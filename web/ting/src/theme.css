@@ -212,3 +212,4 @@ input{font:inherit;color:inherit}
 .tg-input{width:100%;height:46px;border-radius:14px;background:var(--tg-card2);border:1px solid var(--tg-line);padding:0 14px;font-size:14px;color:var(--tg-ink)}
 .tg-input:focus{outline:none;border-color:color-mix(in srgb,var(--tg-accent) 55%,transparent)}
 .tg-btn:disabled{opacity:.5;cursor:default}
+.tg-select{height:32px;border-radius:10px;background:var(--tg-card2);border:1px solid var(--tg-line);color:var(--tg-ink);padding:0 8px;font-size:12.5px}
