@@ -11,13 +11,16 @@
 #   3. 每个前端仓里把 @daycore/core 从 file: 改成 git 依赖，装一次生成 lock
 #   4. 超级仓里把那五个目录换成 submodule（相对 URL）
 #
-# ⚠️ 相对 URL（../daycore-core.git）是有意的：它跟着 origin 走，所以同一份
+# ⚠️ 相对 URL（../daycore-frontendcore.git）是有意的：它跟着 origin 走，所以同一份
 # .gitmodules 在 SSH clone 和 HTTPS clone 下都对，换 host 也不用改。写死
 # github.com 的话，任何镜像或迁移都会让每个人的 clone 断掉。
 #
 # 前置：五个空仓已经在远端建好（脚本不建仓 —— 建仓是账号层面的动作，应该由人做）。
 #
-#   daycore-core  daycore-ting  daycore-zhiyu  daycore-liuli  daycore-liuli-classic
+#   daycore-frontendcore  daycore-ting  daycore-zhiyu  daycore-liuli
+#   daycore-liuli-classic
+#
+# 仓名从 origin 推导（$base/$prefix-<后缀>.git），所以换 org 只要改 origin。
 #
 # 用法：
 #   scripts/split-repos.sh              # 只打印计划，什么都不做
@@ -28,14 +31,21 @@ set -euo pipefail
 DRY=1
 [ "${1:-}" = "--go" ] && DRY=0
 
-# 目录 → 仓名。改这张表就是改这次切分。
+# 目录 → 仓名后缀。改这张表就是改这次切分。
+#
+# ⚠️ 后缀不必等于目录名。core 的仓叫 daycore-frontendcore 而不是 daycore-core ——
+# 「core」在一个既有后端又有前端的项目里指代不清，而仓名是那种一旦有人 clone 过就
+# 很难改的东西。第一版脚本把仓名硬推成「目录名」，那是把一个巧合当成了规则。
 PAIRS=(
-  "packages/core:core"
+  "packages/core:frontendcore"
   "web/ting:ting"
   "web/zhiyu:zhiyu"
   "web/liuli:liuli"
   "web/liuli-classic:liuli-classic"
 )
+
+# 哪一个是 core（四个前端要钉它，自己不钉自己）。必须是上表里的一个后缀。
+CORE_NAME="${CORE_NAME:-frontendcore}"
 
 # core 的第一个 tag。四个前端会钉它。
 CORE_TAG="${CORE_TAG:-v0.1.0}"
@@ -122,8 +132,8 @@ for pair in "${PAIRS[@]}"; do
 done
 
 say ""
-say "── core 打 tag $CORE_TAG"
-run "git push '$base/${prefix}-core.git' 'split/core:refs/tags/$CORE_TAG'"
+say "── ${prefix}-${CORE_NAME} 打 tag $CORE_TAG"
+run "git push '$base/${prefix}-${CORE_NAME}.git' 'split/${CORE_NAME}:refs/tags/$CORE_TAG'"
 
 # ── 3. 前端仓改依赖 ─────────────────────────────────────────────────────────
 #
@@ -134,12 +144,12 @@ say ""
 say "── 四个前端仓：@daycore/core → git 依赖 + 生成 lockfile"
 for pair in "${PAIRS[@]}"; do
   path="${pair%%:*}"; name="${pair##*:}"
-  [ "$name" = "core" ] && continue
+  [ "$name" = "$CORE_NAME" ] && continue
   repo="$base/${prefix}-${name}.git"
   # SSH 形式的 origin（git@host:owner/repo.git）转成 npm 认识的 URL。
   case "$origin" in
-    git@*) core_dep="git+ssh://${base/://}/${prefix}-core.git#${CORE_TAG}" ;;
-    *)     core_dep="git+${base}/${prefix}-core.git#${CORE_TAG}" ;;
+    git@*) core_dep="git+ssh://${base/://}/${prefix}-${CORE_NAME}.git#${CORE_TAG}" ;;
+    *)     core_dep="git+${base}/${prefix}-${CORE_NAME}.git#${CORE_TAG}" ;;
   esac
   run "tmp=\$(mktemp -d) && git clone -q '$repo' \"\$tmp\" && \
     node -e \"const f=process.argv[1]+'/package.json',p=require(f);p.dependencies['@daycore/core']='$core_dep';require('fs').writeFileSync(f,JSON.stringify(p,null,2)+'\\n')\" \"\$tmp\" && \
