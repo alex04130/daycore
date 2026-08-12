@@ -74,7 +74,26 @@ for a in ting zhiyu liuli liuli-classic; do (cd web/$a && npm run build); done
 
 make check-core-pack                                # 证明 core 是个真包（切仓的前提）
 make submodules                                     # 切仓之后：别人 clone 的第一步
+make core-dev / core-pinned                         # 测未发布的 core / 回到钉住的 tag
 ```
+
+### 切仓之后，改 `@daycore/core` 的完整流程
+
+四端各自钉一个 core 的 tag，**建的就是钉的那个**（workspace 根**不会**覆盖 git tag
+依赖 —— npm 会给每个包塞一份嵌套拷贝，嵌套的赢；`overrides` 与直接依赖冲突被 npm
+拒绝。两条都实测过）。
+
+```bash
+make core-dev                                       # 四端先指向工作区的 packages/core
+# 改 packages/core，四端 npm run build 验它
+cd packages/core && git commit && git push && git tag vX.Y.Z && git push origin vX.Y.Z
+# 四端各自把 package.json 的 pin 改成 vX.Y.Z，commit + push
+rm -rf node_modules package-lock.json && npm install # 让 npm 重新解析 tag（旧 lock 会赖着不动）
+git add packages/core web/* && git commit            # 超级仓 bump 五个 gitlink
+```
+
+⚠️ **版本号不是随便挑的**：`@daycore/core` 的版本 = `<APIVersion>.<APIMinor>.<patch>`，
+见 [ROADMAP](ROADMAP.md)。`internal/server/core_client_test.go` 会拦住对不上的。
 
 ⚠️ **切仓之后**（阶段 κ），`packages/core` 与 `web/ting|zhiyu|liuli|liuli-classic`
 都是 submodule。读它们的那些契约闸门在目录缺席时**跳过** —— 那个跳过是对的（可选

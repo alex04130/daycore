@@ -1,7 +1,7 @@
 {
   "name": "daycore-workspace",
   "private": true,
-  "description": "Not a package — the superproject's workspace root. See docs/ROADMAP.md 阶段 κ.",
+  "description": "Not a package \u2014 the superproject's workspace root. See docs/ROADMAP.md \u9636\u6bb5 \u03ba.",
   "workspaces": [
     "packages/core",
     "web/ting",

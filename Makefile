@@ -1,4 +1,4 @@
-.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n check-core-pack submodules submodules-present api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
+.PHONY: help run build build-lite cross test test-mongo test-sql test-models wirelog check-i18n check-core-pack core-dev core-pinned submodules submodules-present api-bundle api-check api-lock api-surface config-doc tidy vet fmt clean docker docker-up db-postgres db-mysql db-mongo
 
 BIN := bin/daycore
 VERSION := $(shell sed -n 's/.*Version = "\(.*\)".*/\1/p' internal/version/version.go)
@@ -151,3 +151,24 @@ db-mysql: ## Start a local MySQL for development
 
 db-mongo: ## Start a local MongoDB for development
 	docker compose -f deploy/docker-compose.yml --profile mongo up -d mongo
+
+core-dev: ## 让四端指向工作区的 packages/core（测还没发布的 core 改动）
+	@# ⚠️ 默认行为是「建你钉住的那个 tag」，那是对的：可复现。
+	@#
+	@# 但它有一个安静的失败面。core 改了**导出面**时，前端立刻编不过（TypeScript
+	@# 报 has no exported member），响亮又准确；core 只改**行为**时，前端照样编过，
+	@# 而你以为自己测的是新 core。这个 target 就是为了后一种情况存在的。
+	@#
+	@# ⚠️ npm 不给别的办法：workspace 根不会覆盖 git tag 依赖（各包下面会被塞一份
+	@# 嵌套拷贝，嵌套的赢），而 overrides 与直接依赖冲突、npm 直接拒绝。两条都实测过。
+	@for a in ting zhiyu liuli liuli-classic; do \
+		rm -rf web/$$a/node_modules/@daycore/core; \
+		mkdir -p web/$$a/node_modules/@daycore; \
+		ln -s ../../../../packages/core web/$$a/node_modules/@daycore/core; \
+	done
+	@echo "四端现在指向工作区的 packages/core。npm install 会把它冲掉——那正是回到钉住状态的办法。"
+
+core-pinned: ## 回到「建钉住的那个 tag」
+	rm -rf web/ting/node_modules/@daycore web/zhiyu/node_modules/@daycore \
+		web/liuli/node_modules/@daycore web/liuli-classic/node_modules/@daycore
+	npm install
