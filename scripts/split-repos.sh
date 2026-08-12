@@ -87,6 +87,10 @@ for pair in "${PAIRS[@]}"; do
   path="${pair%%:*}"; name="${pair##*:}"
   repo="$base/${prefix}-${name}.git"
   say "── $path → ${prefix}-${name}"
+  # ⚠️ 先删同名分支。`subtree split -b` 遇到已存在的分支直接报错，于是任何一次
+  # 中途失败（网络断了、某个仓还没建）都会让重跑在第一步就死掉 —— 而那时候你
+  # 正需要重跑。split 分支是纯派生物，重算它没有代价。
+  run "git branch -qD 'split/$name' 2>/dev/null || true"
   run "git subtree split -P '$path' -b 'split/$name'"
   run "git push '$repo' 'split/$name:refs/heads/main'"
 done
