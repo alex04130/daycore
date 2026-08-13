@@ -195,6 +195,32 @@ func (s *Server) revertAssignmentUpsert(ctx context.Context, w http.ResponseWrit
 		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.assignmentUpsert.internal")
 		return
 	}
+	// ⚠️ Status and the reminder switch have to be put back SEPARATELY, because
+	// UpsertByCanvasID deliberately does not touch them — its comment says why:
+	// "Status is deliberately NOT refreshed: it tracks the local planner
+	// workflow, which a re-import must not reset."
+	//
+	// That is right for the caller it was written for and wrong for this one.
+	// Re-importing from Canvas must not clobber the workflow; restoring a
+	// snapshot must restore all of it. One method, two callers, opposite
+	// requirements — so the difference is handled HERE rather than by loosening
+	// the upsert, which would silently reset everybody's statuses on the next
+	// import.
+	//
+	// It went unnoticed because the only writer of an `assignment_upsert` with a
+	// before-snapshot was the agent's tool, and that tool never changes status.
+	// The moment PATCH /api/assignments/{id} started logging — its whole job IS
+	// the status — undo began reporting success while changing nothing.
+	if before.Status != "" {
+		if err := s.store.Assignments().SetStatus(ctx, sid, orig.TargetID, before.Status); err != nil {
+			s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.assignmentUpsert.internal")
+			return
+		}
+	}
+	if err := s.store.Assignments().SetReminders(ctx, sid, orig.TargetID, !before.RemindersOff); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.assignmentUpsert.internal")
+		return
+	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 
@@ -210,6 +236,57 @@ func (s *Server) revertMoodRecord_delete(ctx context.Context, w http.ResponseWri
 
 func (s *Server) revertMaterialCreate_delete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, _ revertDetail) {
 	_ = s.store.Materials().Delete(ctx, sid, orig.TargetID)
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+// revertMaterialDelete puts a deleted note back.
+//
+// ⚠️ It comes back with a NEW id, which is the same bargain revertMemoryAdd
+// makes: the repositories mint ids on create and none of them takes one, so
+// "restore" means "write this content again" rather than "resurrect that row".
+// Anything holding the old id — nothing does today — would not find it.
+//
+// ⚠️ An empty Before is REFUSED rather than treated as "nothing to restore".
+// The op is only ever written with one (handlers_materials_full.go), so a
+// missing snapshot means the ledger entry is damaged, and silently reporting
+// success for an undo that restored nothing is the worst of the three
+// available outcomes.
+func (s *Server) revertMaterialDelete(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
+	var m domain.Material
+	b, _ := json.Marshal(detail.Before)
+	_ = json.Unmarshal(b, &m)
+	if m.Title == "" && m.Body == "" {
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.materialDelete.irreversible")
+		return
+	}
+	if _, err := s.store.Materials().Create(ctx, &domain.Material{
+		SessionID: sid, Category: m.Category, Title: m.Title, Summary: m.Summary,
+		Body: m.Body, Source: m.Source, MimeType: m.MimeType, StorageRef: m.StorageRef,
+		Tags: m.Tags,
+	}); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.materialDelete.internal")
+		return
+	}
+	s.finishRevert(ctx, w, sid, orig)
+}
+
+// revertMaterialUpdate puts the note's previous content back.
+//
+// ⚠️ Unlike the delete above, this one keeps the SAME id — the row is still
+// there, only its fields moved. So the restore is an Update, not a Create, and
+// anything referring to this material keeps referring to it.
+func (s *Server) revertMaterialUpdate(ctx context.Context, w http.ResponseWriter, sid, locale string, orig *domain.OperationLog, detail revertDetail) {
+	var before domain.Material
+	b, _ := json.Marshal(detail.Before)
+	_ = json.Unmarshal(b, &before)
+	if before.Title == "" && before.Body == "" {
+		s.writeErrL(w, locale, http.StatusBadRequest, "irreversible", "err.materialDelete.irreversible")
+		return
+	}
+	if _, err := s.store.Materials().Update(ctx, sid, orig.TargetID, &before); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.materialUpdate.internal2")
+		return
+	}
 	s.finishRevert(ctx, w, sid, orig)
 }
 

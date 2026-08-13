@@ -93,6 +93,15 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.Sessions().IncrementInteraction(ctx, sid)
+	// Same op the agent's mood_record tool writes, so the same revert handler
+	// takes it back. ⚠️ Actor is left to default (user) rather than copied from
+	// the tool path — the ledger's whole job is to say WHO did it, and this door
+	// is the person pressing a button.
+	s.logOp(ctx, &domain.OperationLog{
+		SessionID: sid, Action: "mood_record", TargetID: checkin.ID,
+		Summary: checkin.Mood,
+		Detail:  marshalCompact(map[string]any{"before": nil, "after": checkin}),
+	})
 	s.writeJSON(w, http.StatusOK, checkin)
 }
 

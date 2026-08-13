@@ -116,6 +116,20 @@ func (s *Server) handleAssignmentCreate(w http.ResponseWriter, r *http.Request) 
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentCreate.internal")
 		return
 	}
+	// ⚠️ Same op the AGENT writes for the same act (tool_capture.go), byte for
+	// byte — same action, same Detail shape — because revertAssignmentUpsert
+	// reads Detail and does not care which door the write came in through.
+	//
+	// It was missing here, and the asymmetry was invisible until a frontend used
+	// this endpoint: an assignment the companion created could be taken back, and
+	// the identical one you typed yourself could not. The repo's rule is that
+	// EVERY write path logs — "副作用永远服务端执行 … 保证了每个操作可审计、
+	// 可撤销"，and an unlogged write is simply not undoable.
+	s.logOp(r.Context(), &domain.OperationLog{
+		SessionID: sid, Action: "assignment_upsert", TargetID: a.ID,
+		Summary: a.Title,
+		Detail:  marshalCompact(map[string]any{"before": nil, "after": a}),
+	})
 	s.writeJSON(w, http.StatusOK, a)
 }
 
@@ -189,6 +203,17 @@ func (s *Server) handleAssignmentPatch(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "bad_request", "err.assignmentPatch.bad_request")
 		return
 	}
+	// ⚠️ Read the BEFORE snapshot first, and treat a failure to read it as fatal
+	// rather than logging `before: null`. The revert handler reads that field to
+	// decide between "restore this" and "delete it" — so a null on an update
+	// makes undo DELETE an assignment the reader only edited. A write that
+	// cannot be described is better refused than described wrongly.
+	before, err := s.store.Assignments().Get(r.Context(), sid, id)
+	if err != nil {
+		s.writeAssignmentPatchErr(w, r, err)
+		return
+	}
+
 	if body.Status != "" {
 		if err := s.store.Assignments().SetStatus(r.Context(), sid, id, body.Status); err != nil {
 			s.writeAssignmentPatchErr(w, r, err)
@@ -206,5 +231,10 @@ func (s *Server) handleAssignmentPatch(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.assignmentPatch.internal2")
 		return
 	}
+	s.logOp(r.Context(), &domain.OperationLog{
+		SessionID: sid, Action: "assignment_upsert", TargetID: a.ID,
+		Summary: a.Title,
+		Detail:  marshalCompact(map[string]any{"before": before, "after": a}),
+	})
 	s.writeJSON(w, http.StatusOK, a)
 }

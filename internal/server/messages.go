@@ -338,6 +338,7 @@ func init() {
 	// token, which is the only thing on that screen telling the reader what to
 	// do next.
 	i18n.Register("note.channelBind", i18n.Text{"zh-CN": "请在对应平台把这段 token 发给机器人以完成绑定，有效 10 分钟"})
+	i18n.Register("err.materialDelete.irreversible", i18n.Text{"zh-CN": "这条记录的账本快照不完整，恢复不了"})
 	i18n.Register("msg.inboxProcess.nonTextFile", i18n.Text{"zh-CN": "收到一个 %s 文件（%s）；图片请用 extract-schedule-image 识别。"})
 	i18n.Register("msg.inboxProcess.extractImage", i18n.Text{"zh-CN": "用图片识别课表/日程"})
 	i18n.Register("msg.inboxProcess.actuallyTimetable", i18n.Text{"zh-CN": "这其实是课表/日程截图"})

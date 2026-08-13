@@ -13,6 +13,8 @@ import (
 func init() {
 	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
 	registerRevert("material_create", (*Server).revertMaterialCreate_delete)
+	registerRevert("material_delete", (*Server).revertMaterialDelete)
+	registerRevert("material_update", (*Server).revertMaterialUpdate)
 
 	registerRoutes("materials", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/materials", s.handleMaterialList)
@@ -101,6 +103,11 @@ func (s *Server) handleMaterialCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialCreate.internal")
 		return
 	}
+	s.logOp(r.Context(), &domain.OperationLog{
+		SessionID: sid, Action: "material_create", TargetID: created.ID,
+		Summary: created.Title,
+		Detail:  marshalCompact(map[string]any{"before": nil, "after": created}),
+	})
 	s.writeJSON(w, http.StatusOK, created)
 }
 
@@ -140,6 +147,12 @@ func (s *Server) handleMaterialUpdate(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialUpdate.internal")
 		return
 	}
+	// ⚠️ A COPY, taken before the patch loop below mutates `existing` in place.
+	// Logging `existing` as the before-snapshot would record the after-state
+	// twice, and an undo built from that restores nothing while reporting
+	// success — the worst of the available outcomes.
+	before := *existing
+
 	var in struct {
 		Category   *string   `json:"category"`
 		Title      *string   `json:"title"`
@@ -188,6 +201,11 @@ func (s *Server) handleMaterialUpdate(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialUpdate.internal2")
 		return
 	}
+	s.logOp(ctx, &domain.OperationLog{
+		SessionID: sid, Action: "material_update", TargetID: id,
+		Summary: updated.Title,
+		Detail:  marshalCompact(map[string]any{"before": before, "after": updated}),
+	})
 	s.writeJSON(w, http.StatusOK, updated)
 }
 
@@ -198,6 +216,10 @@ func (s *Server) handleMaterialDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
+	// ⚠️ Read it before deleting it. This is the only op in the group whose undo
+	// needs the row itself — everything else can be reconstructed from an id —
+	// and after the DELETE there is nowhere left to read it from.
+	before, _ := s.store.Materials().Get(r.Context(), sid, id)
 	err := s.store.Materials().Delete(r.Context(), sid, id)
 	if errors.Is(err, domain.ErrNotFound) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusNotFound, "material_not_found", "err.materialDelete.material_not_found")
@@ -206,6 +228,13 @@ func (s *Server) handleMaterialDelete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.materialDelete.internal")
 		return
+	}
+	if before != nil {
+		s.logOp(r.Context(), &domain.OperationLog{
+			SessionID: sid, Action: "material_delete", TargetID: id,
+			Summary: before.Title,
+			Detail:  marshalCompact(map[string]any{"before": before, "after": nil}),
+		})
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

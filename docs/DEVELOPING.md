@@ -154,7 +154,7 @@ checkout 不该变成必需的），但它意味着一次普通 `git clone` 拿�
 
 ### 操作日志
 
-所有写路径（plan add/update/remove/upsert/auto-plan、rule create/update/delete/batch、memory add/delete/clear，以及所有 agent 工具执行）必须调 `s.logOp`：
+所有写路径（plan add/update/remove/upsert/auto-plan、rule create/update/delete/batch、memory add/delete/clear、assignment create/patch、mood create、material create/update/delete，以及所有 agent 工具执行）必须调 `s.logOp`：
 
 ```go
 func (s *Server) logOp(ctx context.Context, l *domain.OperationLog) string {
@@ -168,6 +168,20 @@ func (s *Server) logOp(ctx context.Context, l *domain.OperationLog) string {
 ```
 
 best-effort（`_ =` 丢错），`detail` 存 before/after 快照 —— **撤销是从 before 快照逐键重建的**，所以快照不全等于那条操作撤不回来。
+
+⚠️ **快照写错比不写更糟**，这三条是 2026-08-12 补六条 HTTP 写路径时买来的：
+
+- **更新类的 before 必须是拷贝。** 就地改的对象（`existing.Field = …` 那种）到记账
+  时已经是 after 了，记它等于把 after 记两遍 —— 撤销把改动还原到它自己身上、报成功
+  而什么也没变。
+- **读不到 before 就拒绝写**，不要退化成 `before: null`。逆操作靠这个字段区分
+  「恢复」与「删掉」，null 会让撤销**删掉**一条读者只是编辑过的东西。
+- **删除类要在删之前读**。删完就没地方读了。
+
+⚠️ **HTTP 与 agent 两条门要写出同一形状的 op**（同 action、同 Detail 结构），因为
+逆操作读的是 `Detail`，不关心是哪扇门进来的。此前六条 HTTP 路径干脆不入账，而 agent
+的同名动作是对的 —— 于是账本从任何人看过的角度都健康，只有前端真的调那些端点时才
+显形。见 `internal/server/http_writes_undoable_test.go`。
 
 ### 错误处理，四类各有约定
 

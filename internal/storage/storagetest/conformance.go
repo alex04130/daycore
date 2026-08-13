@@ -1369,7 +1369,18 @@ func proposalFilterDimensions(t *testing.T, h Harness) {
 	}
 
 	// Push one of them and check all three answers about the stamp.
-	pushed := now.Add(-time.Hour)
+	//
+	// ⚠️ Derived from the WINDOW, not from `now`. It used to be
+	// `now.Add(-time.Hour)`, and that is only inside today's window when local
+	// time is at least an hour past UTC midnight — so in any zone west of
+	// Greenwich this case failed for one hour every day and passed the other
+	// twenty-three. It was caught at 19:06 CDT, which is 00:06 UTC.
+	//
+	// The window is computed in UTC (PushBudgetWindow's second argument) while
+	// `now` is local; anchoring the stamp to `start` removes the mismatch
+	// entirely rather than making it rarer.
+	start0, _ := domain.PushBudgetWindow(now, time.UTC)
+	pushed := start0.Add(time.Minute)
 	l3a.PushedAt = &pushed
 	if err := s.Proposals().Update(bg(), l3a); err != nil {
 		t.Fatal(err)

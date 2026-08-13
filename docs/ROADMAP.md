@@ -943,6 +943,56 @@ core。`make core-dev` 就是为这种情况存在的（把四端指向工作区
 ⬜ 切完之后第一件该想的：**core 的版本号语义**（见上）。四端现在会钉 `v0.1.0`，
 而那个数字今天不表示任何承诺 —— 发第二个 tag 之前要先决定它表示什么。
 
+### HTTP 直写路径补上账本：六条写路径现在可撤销了（2026-08-12）
+
+`POST /api/assignments`、`PATCH /api/assignments/{id}`、`POST /api/mood`、
+`POST·PATCH·DELETE /api/materials` 六条都**不调 logOp**。铁律是「所有写路径必须
+logOp」，而没入账的写**在定义上就撤不回来**。
+
+⚠️ **它为什么能一直没被发现**：agent 的同名动作入账是对的（`tool_capture.go`），
+所以从任何人看过的角度看账本都是健康的。这个不对称只有在**前端真的调这些端点**
+时才显形 —— 陪伴帮你建的作业能撤，你自己手打的一模一样那条不能，静默地，而旁边
+计划那几条还挂着撤销条。**琉璃初版是第一个调它们的前端**（资料页与心情页）。
+
+补法不是「每处一行」，因为撤销读的是 `Detail`：
+
+- `material_delete` / `material_update` 此前**没有逆操作**，新写了两个。删除按内容
+  恢复（新 id —— 仓储都是自己发 id 的，与 `revertMemoryAdd` 同一笔交易），更新按
+  字段恢复（**同一个 id**，行还在，只是字段挪了）。
+- `PATCH /api/materials` 的 before 快照必须是**拷贝**：`existing` 会被 patch 循环
+  原地改成 after，直接记它等于把 after 记两遍，撤销把改动还原到它自己身上、报成功
+  而什么也没变。
+- `PATCH /api/assignments` 读不到 before 就**拒绝写**，不写 `before: null` ——
+  逆操作靠这个字段区分「恢复」与「删掉」，null 会让撤销**删掉**一条读者只是编辑过
+  的作业。
+
+#### ⚠️ 顺带挖出一个一直坏着的撤销
+
+`revertAssignmentUpsert` 走 `UpsertByCanvasID` 恢复快照，而那个方法**有意不刷
+status**，注释写着理由：「它跟踪本地的 planner 工作流，重新导入不该重置它」。
+
+那条理由对它原本的调用方是对的，对撤销是错的 —— **一个方法，两个要求相反的调用
+方**。重新导入必须不碰 status，恢复快照必须恢复全部。所以差异在**撤销这一侧**处理
+（额外 `SetStatus` + `SetReminders`），而不是放松 upsert —— 放松它会让下一次导入
+静默重置所有人的状态。
+
+它一直没咬人，是因为唯一写「带 before 快照的 `assignment_upsert`」的是 agent 的
+工具，而那个工具从不改 status。PATCH 开始入账的那一刻 —— 它的**全部工作就是改
+status** —— 撤销开始报成功而什么也没做。
+
+七条测试（六条各走一条路径的完整 写→撤销→验状态，一条断言这组动作**都**注册了
+逆操作），五种破坏全红验过。
+
+#### ⚠️ 顺带修掉一条每天红一小时的测试
+
+`storagetest` 的 `Proposal/FilterDimensionsAndCount` 里，窗口按 **UTC** 日界算，而
+`pushed` 从**本地** `now` 往回推一小时。于是格林尼治以西的机器上，每天 UTC 午夜后的
+那一小时它必红、其余二十三小时必绿。是在 19:06 CDT（= 00:06 UTC）撞上的。
+
+改成从窗口本身推导（`start.Add(time.Minute)`），把不匹配**消掉**而不是让它更罕见。
+与今天早些时候给 `days.ts` 钉住测试时区是同一类问题：**只在某些时刻才成立的断言，
+其余时刻是摆设**。
+
 ### 集群管理：口子已留（2026-08-10）
 
 ✅ **配对**（`X-Pairing-Key: dcp_<id>_<secret>`，见 [AUTH.md](AUTH.md)「第四种凭据」）—— 后端发钥匙、人自己搬过去；配对持有的是**和人同一套「组」**，不是另一档权限；钥匙只显示一次、存 SHA-256；撤销就是删除；`last_seen_at` 按五分钟粒度写（节流条件在语句里，不在外面 —— 外面就是鉴权路径上的读-改-写）。
@@ -997,7 +1047,7 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 
 ## 已知缺口（不在批次里，但要记着）
 
-- ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。**但同类的另一半还在**：`POST /api/assignments`、`PATCH /api/assignments/{id}`、`POST /api/mood`、`POST /api/materials` 这几条 HTTP 直写路径**不调 logOp**（工具路径已入账，HTTP 路径没有）——前端手建作业/打卡/归档不可撤销，与「所有写路径必须 logOp」铁律相悖，补法是每处一行 + 复用 β0+ 注册的四个 revert。
+- ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。~~HTTP 直写路径不调 logOp~~ —— **已补（2026-08-12）**，见下。
 - ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
