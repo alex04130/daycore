@@ -1062,7 +1062,17 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 - ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
-- anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
+- ~~anthropic format 给每条 system 打 `cache_control` 且无上限~~ —— **已修（2026-08-12）**，同时修掉一个**比它更要紧的洞**。
+  ⚠️ 「今天最多 2 条」这句是错的：客户端能把 `role: "system"` 塞进
+  `POST /api/companion-history` → `GET /api/chat/threads` 原样导入 `chat_messages`
+  → threadId 流 `ai.Role(dbMsgs[i].Role)` 原样读回。**断点数由请求方决定**，五十条就是
+  每个请求 400；而且那本身就是一个 **system turn 注入**。匿名流从写下来的那天就防着它
+  且注释写明了理由，**threaded 流（每个前端真正走的那条）没防**。两半都补了：`safeRole`
+  白名单（非 assistant 一律降成 user），断点只打首尾两块。
+  ⚠️ 断点方向很容易搞反：它缓存的是**它之前的整个前缀**，所以「保留前四个」会丢掉唯一
+  覆盖 tools+全部 system 的读点 —— 上限加上了、缓存反而更差，且只在
+  `cache_read_input_tokens` 上悄悄掉下去。四种变异红验，另记一条**活下来的**：上限常量
+  今天够不到（mark 最多两项），它是护栏不是当前行为。
 - ~~早晚简报的天气地点写死北京~~ —— **已实现于 `df8d93c`（2026-08-08）**，见 `internal/server/session_location.go`：三级阶梯（会话设置 → 记忆事实 → **空**），三个写入口（设置页 / `set_home_location` 工具 / 客户端提示），user 永远压过 detected。这条在 ROADMAP 里留了四天，是文档没跟上。
   ⚠️ **别「补」那个第三档**：查不到就不查天气、简报少一行 —— `session_location.go` / `worker.go` / `openapi.yaml` 三处都写着同一句「一个错的城市比没有城市更糟」。给它加一个「退回部署默认城市」的兜底正是这条设计明确拒绝的东西。
 - 一致性套件 58 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。

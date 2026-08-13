@@ -120,15 +120,7 @@ func (p *provider) buildReq(req ai.ChatRequest, stream bool) msgReq {
 		}
 	}
 	if len(systems) > 0 {
-		blocks := make([]map[string]any, 0, len(systems))
-		for _, s := range systems {
-			blocks = append(blocks, map[string]any{
-				"type":          "text",
-				"text":          s,
-				"cache_control": map[string]any{"type": "ephemeral"},
-			})
-		}
-		out.System = blocks
+		out.System = systemBlocks(systems)
 	}
 	return out
 }
@@ -328,4 +320,55 @@ func truncate(b []byte) string {
 		return string(b[:max]) + "…"
 	}
 	return string(b)
+}
+
+// maxCacheBreakpoints is Anthropic's hard limit per request. Exceeding it is a
+// 400, not a degradation.
+const maxCacheBreakpoints = 4
+
+// systemBlocks renders the system turns, marking at most two of them cacheable.
+//
+// # ⚠️ Which ones, and why the obvious answer is backwards
+//
+// A breakpoint caches THE WHOLE PREFIX UP TO ITSELF, not the block it sits on.
+// So the instinct — "keep the first N" — throws away the only breakpoint that
+// covers everything: the LAST system block's prefix includes the tools and every
+// system turn before it. Keeping the first four and dropping the rest would raise
+// the cap and make caching WORSE, silently, visible only as
+// `usage.cache_read_input_tokens` drifting down.
+//
+// So: first and last, nothing in between.
+//
+//   - last  — the big one. Its prefix is tools + all system turns.
+//   - first — the fallback read point. The rolling summary is injected as its own
+//     system turn and changes every time the window compresses, so a single
+//     breakpoint at the end misses on every compression; the first block still
+//     covers the L1 boundaries and the persona, which never move.
+//
+// Middle blocks earn nothing: a shorter prefix, and each breakpoint costs a
+// 1.25× write of its own.
+//
+// # ⚠️ It used to mark EVERY block, and the ceiling was not two
+//
+// The old code put a breakpoint on each system turn. That reads as "at most two"
+// from the call sites this repository controls, and it was not: a client could
+// push `role: "system"` rows into a thread (see the note on safeRole in
+// internal/server/handlers_ai_companion.go), and they arrived here as system
+// turns. Fifty of them was a 400 on every request in that thread — with the
+// number of breakpoints chosen by the caller.
+//
+// Both halves are fixed; this is the half that holds even if the other regresses.
+func systemBlocks(systems []string) []map[string]any {
+	mark := map[int]bool{0: true, len(systems) - 1: true}
+	blocks := make([]map[string]any, 0, len(systems))
+	used := 0
+	for i, s := range systems {
+		b := map[string]any{"type": "text", "text": s}
+		if mark[i] && used < maxCacheBreakpoints {
+			b["cache_control"] = map[string]any{"type": "ephemeral"}
+			used++
+		}
+		blocks = append(blocks, b)
+	}
+	return blocks
 }

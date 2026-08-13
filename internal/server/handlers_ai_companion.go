@@ -95,14 +95,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 			hist = hist[len(hist)-20:]
 		}
 		for _, m := range hist {
-			// Whitelist roles: a client must not be able to inject a `system`
-			// (or `tool`) turn into its own LLM context. Anything not explicitly
-			// assistant is treated as a user message.
-			role := ai.RoleUser
-			if m.Role == string(ai.RoleAssistant) {
-				role = ai.RoleAssistant
-			}
-			messages = append(messages, ai.Message{Role: role, Content: m.Content})
+			messages = append(messages, ai.Message{Role: safeRole(m.Role), Content: m.Content})
 		}
 		messages = append(messages, ai.Message{Role: ai.RoleUser, Content: body.Message})
 		messages = s.maybeCompress(ctx, sid, "", locale, body.Timezone, name, messages)
@@ -175,7 +168,14 @@ func (s *Server) buildCompanionMessages(ctx context.Context, sid, threadID, loca
 			if exclude[dbMsgs[i].ID] || dbMsgs[i].Status == domain.MsgStatusPending {
 				continue
 			}
-			messages = append(messages, ai.Message{Role: ai.Role(dbMsgs[i].Role), Content: dbMsgs[i].Content})
+			// ⚠️ safeRole here too, and its absence was a hole rather than an
+			// oversight in a corner: a client could put `role: "system"` into
+			// POST /api/companion-history, GET /api/chat/threads imports that
+			// verbatim into chat_messages, and this line turned it back into a
+			// real system turn in its own LLM context. The anonymous path above
+			// has defended against exactly this since it was written; the
+			// threaded path — the one every frontend actually uses — did not.
+			messages = append(messages, ai.Message{Role: safeRole(dbMsgs[i].Role), Content: dbMsgs[i].Content})
 		}
 	}
 	messages = append(messages, ai.Message{Role: ai.RoleUser, Content: userMsg})
@@ -268,4 +268,27 @@ func (s *Server) planBlocksJSON(ctx context.Context, sid, date string) string {
 		return "[]"
 	}
 	return marshalCompact(blocks)
+}
+
+// safeRole maps a stored role onto one this process is willing to send.
+//
+// ⚠️ A whitelist, and it must stay one. Everything that reaches it has been
+// through a client: POST /api/companion-history takes `[]domain.Message` with a
+// free-form Role and stores it verbatim, and GET /api/chat/threads imports that
+// into chat_messages the same way. So "the role in the database" is client
+// input wearing a database's clothes.
+//
+// Anything that is not explicitly assistant becomes a user turn. That is
+// deliberately blunt: `system` is the one that matters (it is the instruction
+// channel), but `tool` would also let a client fabricate a tool result the model
+// treats as ground truth, and there is no third role worth preserving from a
+// source we do not trust.
+//
+// One function rather than the same four lines twice, because the second copy is
+// the one that gets forgotten — which is what happened.
+func safeRole(raw string) ai.Role {
+	if raw == string(ai.RoleAssistant) {
+		return ai.RoleAssistant
+	}
+	return ai.RoleUser
 }
