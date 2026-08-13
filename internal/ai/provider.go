@@ -83,6 +83,10 @@ type ToolDef struct {
 	Description string
 	Parameters  map[string]any
 	ServerSide  string // provider-executed tool type (e.g. "web_search_20250305"); empty = client-side
+	// MaxUses caps how many times the provider may run a ServerSide tool in one
+	// request. Zero means the provider's own default. Ignored for client tools —
+	// those are bounded by the agent loop's round limit instead.
+	MaxUses int
 }
 
 // ToolCall is a model's request to invoke a tool.
@@ -261,4 +265,32 @@ type AIProvider interface {
 	ChatStream(ctx context.Context, req ChatRequest) (<-chan Chunk, error)
 	Capabilities() Capabilities
 	Model() string // upstream model id, for logging
+}
+
+// ServerToolRunner marks a provider whose wire format can carry a
+// provider-executed tool of a given type.
+//
+// ⚠️ An optional interface rather than a Capabilities field, for exactly the
+// reason ToolStreamer is one: whether `web_search_20250305` works depends on
+// whether OUR anthropic implementation serialises that tool shape and drops its
+// result frames instead of mistaking them for client tool calls. An operator
+// writing providers.yaml cannot know that, and a bool they could set would be a
+// claim rather than a fact — which is the mistake DeepseekSearch was.
+//
+// So providers.yaml declares INTENT (`format: native`, `tool_type: …`) and this
+// decides CAPABILITY.
+type ServerToolRunner interface {
+	RunsServerTool(toolType string) bool
+}
+
+// RunsServerTool reports whether p can carry this provider-executed tool. A
+// provider that does not say is assumed not to: emitting a tool the format
+// cannot serialise is a 400 on every request, while not emitting one costs a
+// fallback to the client-side search that already works.
+func RunsServerTool(p AIProvider, toolType string) bool {
+	if toolType == "" {
+		return false
+	}
+	r, ok := p.(ServerToolRunner)
+	return ok && r.RunsServerTool(toolType)
 }

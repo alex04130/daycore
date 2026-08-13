@@ -124,6 +124,11 @@ type Sources struct {
 	mu    sync.RWMutex
 	order []string
 	byID  map[string]*entry
+	// native are the sources the MODEL runs. They are held apart from byID
+	// because they are not Engines and never will be: there is nothing here to
+	// call. Keeping them in the same map would mean every caller of Search had
+	// to remember that some entries answer and some cannot.
+	native []adapters.Entry
 }
 
 type entry struct {
@@ -137,6 +142,17 @@ func NewSources(resolved []*adapters.Source, o Options) (*Sources, []error) {
 	s := &Sources{byID: map[string]*entry{}}
 	var problems []error
 	for _, src := range resolved {
+		if src.Entry.Format == adapters.FormatNative {
+			// ⚠️ Validated here rather than trusted: an entry with no tool_type
+			// declares nothing, and dropping it silently would leave a
+			// deployment believing its vendor search is on.
+			if src.Entry.ToolType == "" {
+				problems = append(problems, fmt.Errorf("search/%s: format: native needs a tool_type", src.Entry.ID))
+				continue
+			}
+			s.native = append(s.native, src.Entry)
+			continue
+		}
 		e, err := buildEngine(src, o)
 		if err != nil {
 			problems = append(problems, fmt.Errorf("search/%s: %w", src.Entry.ID, err))
@@ -146,7 +162,22 @@ func NewSources(resolved []*adapters.Source, o Options) (*Sources, []error) {
 		s.order = append(s.order, src.Entry.ID)
 	}
 	sort.Strings(s.order)
+	sort.Slice(s.native, func(i, j int) bool { return s.native[i].ID < s.native[j].ID })
 	return s, problems
+}
+
+// NativeTools are the provider-executed search tools this deployment declares.
+//
+// ⚠️ Declared, not necessarily usable: whether the chat provider's format can
+// carry one is decided by ai.RunsServerTool at the moment the tool band is
+// assembled. This returns intent.
+func (s *Sources) NativeTools() []adapters.Entry {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]adapters.Entry(nil), s.native...)
 }
 
 func buildEngine(src *adapters.Source, o Options) (Engine, error) {

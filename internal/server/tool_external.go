@@ -164,3 +164,29 @@ func (s *Server) sourceLines(locale string) []ai.SourceLine {
 	}
 	return out
 }
+
+// nativeSearchTool resolves the provider-executed search tool for one round, or
+// a zero ToolDef when there is none.
+//
+// ⚠️ Two halves, deliberately resolved in different places. providers.yaml says
+// WHETHER the deployment wants one and which type; the provider says whether
+// this wire format can actually carry it (ai.RunsServerTool). Both must hold.
+//
+// Declaring one the format cannot serialise would be a 400 on every request in
+// that deployment — so the fallback direction is "leave it out", and the
+// client-side web_search that already works keeps working.
+func (s *Server) nativeSearchTool(p ai.AIProvider) ai.ToolDef {
+	if s.search == nil || p == nil {
+		return ai.ToolDef{}
+	}
+	for _, e := range s.search.NativeTools() {
+		if !ai.RunsServerTool(p, e.ToolType) {
+			continue
+		}
+		// ⚠️ Name is the provider's, not the operator's id: Anthropic matches
+		// `web_search` by name and rejects anything else for that type. The id
+		// names the CONFIG ENTRY; it is not a wire value.
+		return ai.ToolDef{Name: "web_search", ServerSide: e.ToolType, MaxUses: e.MaxUses}
+	}
+	return ai.ToolDef{}
+}

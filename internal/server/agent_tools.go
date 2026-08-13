@@ -148,7 +148,11 @@ func (s *Server) runCompanionTool(ctx context.Context, sid, locale, tz string, c
 //     rather than offered and failing. The precedent is the interactive gate
 //     below: a tool that cannot succeed costs a round trip and leaves its error
 //     in the conversation.
-func companionToolDefs(caps ai.Capabilities, interactive bool, weatherIDs, searchIDs []string) []ai.ToolDef {
+//
+// nativeSearch is the provider-executed search tool this deployment declares AND
+// this provider can actually carry — the caller resolves both halves, because
+// only it holds the provider. Empty ToolType means there is none.
+func companionToolDefs(caps ai.Capabilities, interactive bool, weatherIDs, searchIDs []string, nativeSearch ai.ToolDef) []ai.ToolDef {
 	blockType := map[string]any{"type": "string", "enum": []string{"task", "appointment", "break", "relax", "meal"}, "description": "块类型，默认 task"}
 	// The mood enum is derived from the domain registry, not copied: the
 	// twelve ids are a product decision with one owner (mood_kind.go), and a
@@ -311,6 +315,19 @@ func companionToolDefs(caps ai.Capabilities, interactive bool, weatherIDs, searc
 			Description: "联网搜索实时信息（新闻、地点、时效性事实）。常识问题不要用。",
 			Parameters:  schemaObj(params, "query"),
 		})
+	}
+	// ⚠️ The provider-executed search sits BESIDE the client-side one rather than
+	// replacing it, when both exist. That follows the same rule as two weather
+	// sources: 「多个搜索源各自注册成工具，模型按当前问题自己选」
+	// (docs/specs/provider-protocol.md) — no backend routing by keyword.
+	//
+	// ⚠️ It is appended last so the band's byte order stays stable: the client
+	// tools are assembled from sorted ids, and inserting a conditional tool in
+	// the middle would move every tool after it whenever the deployment's search
+	// configuration changed. The band renders before the system prompt, so that
+	// is a prompt-cache miss on the whole four-layer prefix.
+	if nativeSearch.ServerSide != "" {
+		tools = append(tools, nativeSearch)
 	}
 	if interactive {
 		tools = append(tools, ai.ToolDef{

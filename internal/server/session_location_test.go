@@ -263,7 +263,7 @@ func TestToolBandTracksUsableSources(t *testing.T) {
 	// to use. A tool that cannot succeed costs a round trip and leaves its error
 	// in the conversation; a tool that records something nothing reads is a
 	// promise the product does not keep.
-	none := names(companionToolDefs(ai.Capabilities{}, true, nil, nil))
+	none := names(companionToolDefs(ai.Capabilities{}, true, nil, nil, ai.ToolDef{}))
 	for _, name := range []string{"get_weather", "set_home_location"} {
 		if _, ok := none[name]; ok {
 			t.Errorf("%s is offered with no weather source behind it", name)
@@ -277,7 +277,7 @@ func TestToolBandTracksUsableSources(t *testing.T) {
 	// single-element enum is a parameter that can only be filled one way — it
 	// spends tokens and invites the model to think about a choice it does not
 	// have.
-	one := names(companionToolDefs(ai.Capabilities{}, true, []string{"open-meteo"}, []string{"duckduckgo"}))
+	one := names(companionToolDefs(ai.Capabilities{}, true, []string{"open-meteo"}, []string{"duckduckgo"}, ai.ToolDef{}))
 	if _, ok := one["get_weather"]; !ok {
 		t.Fatal("get_weather is missing with a source available")
 	}
@@ -289,7 +289,7 @@ func TestToolBandTracksUsableSources(t *testing.T) {
 	}
 
 	// Several: the enum appears, sorted, and holds exactly the usable ids.
-	many := names(companionToolDefs(ai.Capabilities{}, true, []string{"open-meteo", "qweather", "wttr"}, nil))
+	many := names(companionToolDefs(ai.Capabilities{}, true, []string{"open-meteo", "qweather", "wttr"}, nil, ai.ToolDef{}))
 	enum, _ := paramProps(t, many["get_weather"])["source"].(map[string]any)
 	if enum == nil {
 		t.Fatal("no source enum with three sources available")

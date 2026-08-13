@@ -55,10 +55,18 @@ type msgReq struct {
 	Stream      bool       `json:"stream,omitempty"`
 }
 
+// wireTool is either a client-side tool (name + input_schema) or a
+// provider-executed one (type + max_uses, no schema).
+//
+// ⚠️ The two are the same array on the wire and different shapes inside it.
+// A server tool with an input_schema is rejected; a client tool without one is
+// useless. Hence the omitempty on both halves and the branch in buildReq.
 type wireTool struct {
+	Type        string         `json:"type,omitempty"`
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
+	MaxUses     int            `json:"max_uses,omitempty"`
 }
 
 type wireMsg struct {
@@ -103,6 +111,12 @@ func (p *provider) buildReq(req ai.ChatRequest, stream bool) msgReq {
 		out.MaxTokens = 1024 // Anthropic requires max_tokens
 	}
 	for _, t := range req.Tools {
+		if t.ServerSide != "" {
+			// ⚠️ No input_schema and no description: the provider owns both. Sending
+			// a schema for a tool we do not implement is a 400.
+			out.Tools = append(out.Tools, wireTool{Type: t.ServerSide, Name: t.Name, MaxUses: t.MaxUses})
+			continue
+		}
 		out.Tools = append(out.Tools, wireTool{Name: t.Name, Description: t.Description, InputSchema: t.Parameters})
 	}
 
@@ -216,17 +230,39 @@ func (p *provider) Chat(ctx context.Context, req ai.ChatRequest) (*ai.ChatRespon
 			CachedTokens:     mr.Usage.CacheRead,
 		}
 	}
+	out.Content, out.ToolCalls = foldContent(mr)
+	return out, nil
+}
+
+// foldContent turns the response blocks into text plus CLIENT tool calls.
+//
+// ⚠️ A named function rather than a loop inside Chat, so a test can drive the
+// real thing. The first version of the test for this reimplemented the switch
+// inline and therefore proved nothing about the code — a mutation that turned
+// server_tool_use into a client tool call passed it.
+//
+// ⚠️ server_tool_use and its result are deliberately DROPPED. The provider
+// already ran the tool and already used the answer — the text blocks in this
+// same response cite it. Surfacing them as ToolCalls would send the agent loop
+// off to execute a tool it does not implement, fail, and report that failure
+// back to the model as if the search had gone wrong.
+//
+// They are NAMED here rather than left to the default, because a silent drop and
+// an unhandled block look identical until the day a new block type needs
+// handling.
+func foldContent(mr msgResp) (string, []ai.ToolCall) {
 	var sb strings.Builder
+	var calls []ai.ToolCall
 	for _, b := range mr.Content {
 		switch b.Type {
 		case "text":
 			sb.WriteString(b.Text)
 		case "tool_use":
-			out.ToolCalls = append(out.ToolCalls, ai.ToolCall{ID: b.ID, Name: b.Name, Arguments: string(b.Input)})
+			calls = append(calls, ai.ToolCall{ID: b.ID, Name: b.Name, Arguments: string(b.Input)})
+		case "server_tool_use", "web_search_tool_result":
 		}
 	}
-	out.Content = sb.String()
-	return out, nil
+	return sb.String(), calls
 }
 
 func (p *provider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-chan ai.Chunk, error) {
@@ -371,4 +407,20 @@ func systemBlocks(systems []string) []map[string]any {
 		blocks = append(blocks, b)
 	}
 	return blocks
+}
+
+// RunsServerTool reports the provider-executed tools this format handles.
+//
+// ⚠️ A whitelist of tool TYPES, not a blanket yes. Each one needs two things
+// here — a serialisation shape in buildReq and its result frames dropped in the
+// response parser — and "we handle web search" does not imply "we handle code
+// execution". A blanket true would turn the next unsupported tool type into a
+// 400 on every request in that deployment.
+//
+// ⚠️ Streaming is the reason there is only one entry today: ChatStream handles
+// content_block_delta / message_stop and would surface nothing for a server
+// tool's frames. That is fine for web search — the text deltas carry the answer
+// — and would not be for a tool whose output the reader needs to see.
+func (p *provider) RunsServerTool(toolType string) bool {
+	return toolType == "web_search_20250305"
 }

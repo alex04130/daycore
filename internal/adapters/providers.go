@@ -54,6 +54,24 @@ const (
 	// FormatHTTP is an external adapter speaking docs/specs/provider-protocol.md
 	// over HTTP.
 	FormatHTTP Format = "http"
+	// FormatNative is a source the MODEL PROVIDER runs, not one this process
+	// calls — Anthropic's `web_search_20250305` server tool and its kin.
+	//
+	// ⚠️ It is declared here rather than in models.yaml because
+	// docs/specs/provider-protocol.md「搜索的第三层来源」already decided the
+	// split: a vendor search that RETURNS INDEPENDENT RESULTS is search
+	// configuration, and one that merely folds into the answer is model
+	// configuration. This is the first kind.
+	//
+	// ⚠️ There is no client to build for it and no base_url. Whether it can
+	// actually be used is NOT knowable from this file — it depends on whether
+	// the chat provider's wire format serialises that tool type and parses its
+	// result frames, which is a property of our implementation. So the config
+	// declares INTENT and the code decides CAPABILITY, exactly as ToolStreamer
+	// does for streamed tool calls (internal/ai/provider.go). An operator
+	// editing YAML cannot know whether our anthropic parser handles the frames
+	// yet, and a capability bool here would be a claim rather than a fact.
+	FormatNative Format = "native"
 )
 
 // Entry is one source as declared in config/providers.yaml.
@@ -94,6 +112,13 @@ type Entry struct {
 	// absent here means true, because a source somebody bothered to declare is
 	// one they want.
 	Enabled *bool `yaml:"enabled"`
+
+	// ToolType is the provider-executed tool identifier for format: native,
+	// e.g. "web_search_20250305". Empty for every other format.
+	ToolType string `yaml:"tool_type"`
+	// MaxUses caps how many times the model may run a native tool in one
+	// request. Zero means "the provider's own default".
+	MaxUses int `yaml:"max_uses"`
 
 	// Description is the operator's own words, per locale, and the ONLY text
 	// from here that may reach a prompt.

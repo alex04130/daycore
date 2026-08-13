@@ -1060,7 +1060,12 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 
 - ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。~~HTTP 直写路径不调 logOp~~ —— **已补（2026-08-12）**，见下。
 - ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
-- `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
+- ~~`ToolDef.ServerSide` 零实现~~ —— **已接通（2026-08-12，作者拍板「这一批把 ServerSide 也接通」）**。
+  **声明放在搜索配置**，按 `provider-protocol.md`「搜索的第三层来源」那张表：返回独立结果的走搜索配置。`providers.yaml` 的 `search:` 加 `format: native` + `tool_type` + `max_uses`。
+  ⚠️ **配置声明意图，代码决定能力** —— 同 `ToolStreamer` 的成例：运维在 YAML 里无从知道我们的 anthropic 解析器认不认那些帧，所以能不能用由 `ai.RunsServerTool`（可选接口）判，配置里放一个布尔就又是一个「宣称了没实现的能力」。
+  ⚠️ **`server_tool_use` 与 `web_search_tool_result` 被有意丢弃**，不转成 ToolCall：provider 已经跑完并用过结果了（同一响应里的 text 块就在引用它）。把它们当客户端工具调用会让 agent 循环去执行一个它没实现的工具、失败、然后把失败当成「搜索出错了」报回给模型。
+  ⬜ **还差一半**：结果没有映射成 `SearchResult`（要展示来源时才需要），流式路径也还不解那些帧。
+  ⚠️ **本机验不了**：默认配置里没有任何 anthropic 条目走得到 companion 路径（vision 走另一条管线，chat-search 指向 DeepSeek 兼容层）。`buildReq`/`foldContent` 是纯函数，这是它能被测的唯一原因。
 - ~~`Capabilities.Stream` / `Thinking` 零读者~~ —— **已删（2026-08-12）**，与 `DeepseekSearch` 同一个理由、同一个办法。
   两个都**放错了层**：能不能流式带**工具调用**是我们这个 format 实现的属性，不是模型的（所以它是 `ToolStreamer` 可选接口 —— 运维在 models.yaml 里无从知道我们的 anthropic 解析器认不认 tool_use）；推理由 `extra_body` 打开、`Usage.ReasoningTokens` 读回，旁边立一个布尔两边都不改变。
   `yaml.Unmarshal` 非严格，所以既有配置里残留这两个键只会被忽略。

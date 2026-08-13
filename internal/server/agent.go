@@ -177,7 +177,7 @@ func (s *Server) runCompanionAgent(ctx context.Context, sink agentSink, r *http.
 	// fixed for the whole round. A source going down mid-conversation that
 	// changed the band would let the model reference a tool that just vanished,
 	// and would rewrite the cached prefix in the middle of a turn.
-	tools := companionToolDefs(provider.Capabilities(), interactive, s.weatherIDs(), s.searchIDs())
+	tools := companionToolDefs(provider.Capabilities(), interactive, s.weatherIDs(), s.searchIDs(), s.nativeSearchTool(provider))
 	var answer strings.Builder // accumulated assistant text, returned for persistence
 	appendAnswer := func(text string) {
 		if text == "" {

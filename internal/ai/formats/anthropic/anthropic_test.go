@@ -1,6 +1,8 @@
 package anthropic
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"daycore/internal/ai"
@@ -129,5 +131,109 @@ func TestNoSystemTurnsMeansNoSystemField(t *testing.T) {
 	out := p.buildReq(ai.ChatRequest{Messages: []ai.Message{{Role: ai.RoleUser, Content: "hi"}}}, false)
 	if out.System != nil {
 		t.Errorf("System is %#v with no system turns, want nil", out.System)
+	}
+}
+
+// Provider-executed tools go on the wire as a type, not as a schema.
+//
+// ⚠️ Untestable against the real API from here, and more so than the cache cap:
+// no anthropic-format entry in the default config is even reachable by the
+// companion path (the vision model runs a different pipeline, and chat-search
+// points at DeepSeek's compatibility endpoint). buildReq being pure is the only
+// reason this is checkable at all.
+func TestServerSideToolsSerialiseAsATypeNotASchema(t *testing.T) {
+	p := &provider{cfg: ai.ModelConfig{Model: "m"}}
+	out := p.buildReq(ai.ChatRequest{
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "hi"}},
+		Tools: []ai.ToolDef{
+			{Name: "plan_add", Description: "…", Parameters: map[string]any{"type": "object"}},
+			{Name: "web_search", ServerSide: "web_search_20250305", MaxUses: 3},
+		},
+	}, false)
+
+	if len(out.Tools) != 2 {
+		t.Fatalf("got %d tools, want both", len(out.Tools))
+	}
+	client, server := out.Tools[0], out.Tools[1]
+
+	if client.Type != "" || client.InputSchema == nil {
+		t.Errorf("client tool went out as %+v; it needs a schema and no type", client)
+	}
+	if server.Type != "web_search_20250305" {
+		t.Errorf("server tool type = %q, want the declared one", server.Type)
+	}
+	// ⚠️ A schema on a server tool is a 400: the provider owns the parameters.
+	if server.InputSchema != nil {
+		t.Errorf("server tool carries an input_schema (%v) — the provider rejects that", server.InputSchema)
+	}
+	if server.MaxUses != 3 {
+		t.Errorf("max_uses = %d, want 3", server.MaxUses)
+	}
+	if server.Name != "web_search" {
+		t.Errorf("server tool name = %q; Anthropic matches this type by name", server.Name)
+	}
+}
+
+func TestMaxUsesIsOmittedWhenUnset(t *testing.T) {
+	// Zero means "the provider's default", and `max_uses: 0` is not that.
+	p := &provider{cfg: ai.ModelConfig{Model: "m"}}
+	out := p.buildReq(ai.ChatRequest{
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "hi"}},
+		Tools:    []ai.ToolDef{{Name: "web_search", ServerSide: "web_search_20250305"}},
+	}, false)
+	blob, err := json.Marshal(out.Tools[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(blob), "max_uses") {
+		t.Errorf("unset max_uses reached the wire: %s", blob)
+	}
+}
+
+// A server tool's frames must NOT become client tool calls.
+//
+// ⚠️ THE assertion of this pair. The provider already ran the tool and the text
+// blocks already cite it; surfacing `server_tool_use` as a ToolCall would send
+// the agent loop off to execute a tool it does not implement, fail, and report
+// that failure back to the model as if the search had gone wrong.
+func TestServerToolFramesAreNotClientToolCalls(t *testing.T) {
+	body := `{"content":[
+		{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}},
+		{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[{"type":"web_search_result","url":"https://e.example","title":"E"}]},
+		{"type":"text","text":"根据搜索结果，…"},
+		{"type":"tool_use","id":"toolu_2","name":"plan_add","input":{"title":"t"}}
+	],"stop_reason":"tool_use"}`
+
+	var mr msgResp
+	if err := json.Unmarshal([]byte(body), &mr); err != nil {
+		t.Fatal(err)
+	}
+	// ⚠️ The REAL fold, not a copy of it. The first version of this test walked
+	// mr.Content with its own switch — so it asserted a duplicate of the logic
+	// and stayed green when the logic itself was mutated to surface
+	// server_tool_use as a client tool call.
+	var out ai.ChatResponse
+	out.Content, out.ToolCalls = foldContent(mr)
+
+	if len(out.ToolCalls) != 1 || out.ToolCalls[0].Name != "plan_add" {
+		t.Errorf("tool calls = %+v; only the CLIENT tool may come through", out.ToolCalls)
+	}
+	if !strings.Contains(out.Content, "根据搜索结果") {
+		t.Errorf("the text block was lost: %q", out.Content)
+	}
+}
+
+func TestRunsServerToolIsAWhitelist(t *testing.T) {
+	p := &provider{cfg: ai.ModelConfig{Model: "m"}}
+	if !p.RunsServerTool("web_search_20250305") {
+		t.Error("the one type this format handles was refused")
+	}
+	// ⚠️ Each type needs its own serialisation shape AND its own result frames
+	// dropped. "We handle web search" does not imply "we handle code execution",
+	// and a blanket yes turns the next type into a 400 on every request.
+	for _, other := range []string{"code_execution_20250522", "web_search", "", "bash"} {
+		if p.RunsServerTool(other) {
+			t.Errorf("RunsServerTool(%q) said yes; nothing here handles it", other)
+		}
 	}
 }

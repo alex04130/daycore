@@ -24,6 +24,23 @@
 #   format: builtin   `impl` names an implementation compiled into this binary
 #   format: http      `base_url` is an external adapter speaking the protocol in
 #                     docs/specs/provider-protocol.md
+#   format: native    the MODEL PROVIDER runs it; there is nothing here to call.
+#                     `tool_type` is the provider's tool identifier and
+#                     `max_uses` caps how often it may run per request.
+#
+#                     ⚠️ Declaring one does NOT mean it is used. Whether the
+#                     chat model's wire format can carry that tool type is a
+#                     property of THIS binary, not of your configuration — so
+#                     the code checks (ai.RunsServerTool) and falls back to the
+#                     ordinary search tools when it cannot. A capability flag you
+#                     could set here would be a claim rather than a fact, which
+#                     is the mistake `deepseek_search: true` was.
+#
+#                     search:
+#                       - id: vendor
+#                         format: native
+#                         tool_type: web_search_20250305   # Anthropic today
+#                         max_uses: 3
 #
 # ── Deleting this file ──────────────────────────────────────────────────────
 #
