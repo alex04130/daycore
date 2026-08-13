@@ -1,6 +1,6 @@
 # 认证与 CORS
 
-> 实时文档：改认证/中间件必须同批更新本文件。最后全面核对：2026-07-14（含双轨认证落地）。
+> 凭证双轨、token_version 撤销、CORS 四分支、公开端点名单、管理面权限与配对。改认证/中间件必须同批更新本文件。最后全面核对：2026-07-14；2026-08-13 重构结构与交叉引用（内容未逐行重核）。
 
 ## 凭证体系（双轨：cookie + header，header 优先）
 
@@ -126,6 +126,8 @@
 ## 密码
 
 argon2id，PHC 编码，per-user cost jitter，可选 `PASSWORD_PEPPER` HMAC 混入，并发上限 4（auth/password.go）。
+
+**一条硬边界（2026-08-13 补）**：`decodePHC` 拒绝退化成本参数（`m`/`t`/`p` 任一为 0、`memory < 8*threads`、或超出 hasher 自己会写的范围即 `ErrBadHashFormat`）。**它防的是哪个具体失败**：argon2 参考实现对 `m=0` 或 `t=0` 直接 **panic** —— 一个被破坏的 hash 行（备份损坏、手改数据库）就能把登录端点变成 500，而 panic 恰好是最坏的一种「登录坏了」：没有错误信息、没有日志行、只留下一句栈。上界（memory ≤ 1 GiB、time ≤ 32、threads ≤ 64）防的是手造 hash 行分配荒谬内存 —— hasher 只会写 64–128 MiB，远超它的数字是垃圾不是成本。`internal/auth/edge_test.go` 的 `TestVerifyMalformedHashNeverPanics` 盯着。
 
 
 ## 权限与管理员：作者裁决（2026-08-09）

@@ -1,6 +1,6 @@
 # 配置分层
 
-> 实时文档：改 `internal/config/` 必须同批更新本文件。**下面的表是生成的** —— 源是 `internal/config/layer.go` 的 `Settings`，跑 `make config-doc` 重生成；`go test ./internal/config/` 会因它过期而红。
+> 每个旋钮能不能在进程跑着的时候改（启动期/运行时/密钥），加字段必须分类。改 `internal/config/` 必须同批更新本文件。**下面的表是生成的** —— 源是 `internal/config/layer.go` 的 `Settings`，跑 `make config-doc` 重生成；`go test ./internal/config/` 会因它过期而红。2026-08-13 补「空白=未设」语义一节。
 
 ## 这份文档回答的唯一问题
 
@@ -9,6 +9,11 @@
 答案既不能从类型看出来也不能从名字看出来：`AGENT_MAX_ROUNDS` 每个请求都读一次、随时可以变；`DB_DSN` 决定了这个进程打开的是哪个数据库。两个都是同一个 struct 里的字符串。
 
 不写下来的后果不是「有点乱」，是**控制台把一个改不动的东西做成了可改的**：用户在网页上关掉某个开关、保存成功、而进程继续按老值跑 —— 「我明明关了它还在做」。这是配置界面最贵的一种 bug，因为它看起来像功能正常。
+
+## 一条与层无关但属于这份文档的语义（2026-08-13）
+
+「设了但为空」一律视为未设：`getEnv` 一直这样做，而 `SECURE_COOKIES`、`HOST` 两处段例外判断用的是 `os.LookupEnv`——空值算“设了”。它防的具体失败：一个 `.env` 里遗留的 `SECURE_COOKIES=` 会关掉 production 的 Secure 默认（cookie 重新走明文），`HOST=` 会关掉开发环境的 loopback fail-safe（dev 密钥 + 自动生成的 admin token 绑到全部网卡）。现在两处也走 `getEnv`，语义统一。
+另两条同批收口：`APP_ENV` 归一化为小写（“Production”被当成 dev 走 dev 密钥回退，是一个以为自己在 production 的部署）；纯空白的 `JWT_SECRET`/`COOKIE_SECRET`/`ADMIN_TOKEN` 视为未设（空格不是有人选择的秘钥）。三者都有测试：`internal/config/config_test.go`。
 
 ## 两层
 

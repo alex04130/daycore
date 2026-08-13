@@ -1,16 +1,16 @@
 # 规范目录
 
-给**写适配器与写前端的人**看的协议文档，包括不是本项目成员的人。
+> 给**写适配器与写前端的人**看的协议文档，包括不是本项目成员的人。本目录是对外契约——改动要同时想「第三方照这个写会不会踩坑」。2026-08-13 核对状态表。
 
 与 `docs/` 里其余文档的分工：`docs/*.md` 是**实时项目文档**（这个仓库现在是什么样、为什么这样），`docs/specs/*.md` 是**对外契约**（别人要照着实现什么）。
 
 | 文档 | 内容 | 状态 |
 |---|---|---|
-| [transport.md](transport.md) | **传输层，四种适配层共用**：HTTP 状态码语义与重试规则、子进程握手与生命周期、`providers.yaml` 形状 | 定案，未实现 |
+| [transport.md](transport.md) | **传输层，四种适配层共用**：HTTP 状态码语义与重试规则、子进程握手与生命周期、`providers.yaml` 形状 | 定案；HTTP 侧已按此实现（`internal/adapters`，F2-A），子进程（`exec`）未实现 |
 | [storage-protocol.md](storage-protocol.md) | 第五种存储怎么接：8 个操作、**基础集 + 具名可选扩展集**（RISC-V 那个形状）、**条件写为什么不能省**、没有条件写时的锁配方 | 定案，未实现（批次 F8b） |
-| [provider-protocol.md](provider-protocol.md) | 天气 / 搜索 / 消息通道怎么接 | 定案，未实现（批次 F2） |
-| [frontend-manifest.md](frontend-manifest.md) | 前端怎么握手、主题 token 空间怎么归自己 | 定案，未实现（批次 F7） |
-| [plan-semantics.md](plan-semantics.md) | **前端必须自己算一遍的三样**：锁三档与 409 岔路、石化线与相位（含「日始不一定是午夜」）、提案的阶梯与 TTL 不对称 | 锁与石化已实现且有夹具；提案形状已定、夹具待补（η 前） |
+| [provider-protocol.md](provider-protocol.md) | 天气 / 搜索 / 消息通道怎么接 | 定案；F2-A 落地（`providers.yaml` + 控制台面 + 批准门），子进程传输未实现 |
+| [frontend-manifest.md](frontend-manifest.md) | 前端怎么握手、主题 token 空间怎么归自己 | **已实现**（F7-A~G，2026-08：kind 三档、两层身份与握手、运维屏、补算全部落地） |
+| [plan-semantics.md](plan-semantics.md) | **前端必须自己算一遍的三样**：锁三档与 409 岔路、石化线与相位（含「日始不一定是午夜」）、提案的阶梯与 TTL 不对称 | 锁与石化已实现且有机器可读夹具（`api/lock-rules.json` / `api/testdata/petrify-vectors.json`）；提案形状已定、行为套件已覆盖语义，`api/testdata/proposal-vectors.json` 夹具待补（η 前） |
 
 ## 三份协议为什么共用一个 transport.md
 

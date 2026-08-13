@@ -1,6 +1,6 @@
 # Agent Loop 与聊天
 
-> 实时文档：改 agent/SSE/chat/channel 必须同批更新本文件。最后全面核对：2026-07-14。
+> agent loop、SSE 帧协议、工具带、决策卡、sink 体系、Chat 线程与异步端点。改 agent/SSE/chat/channel 必须同批更新本文件。最后全面核对：2026-07-14；2026-08-13 重构结构与交叉引用（内容未逐行重核）。
 
 ## 同步 SSE 端点 `POST /api/ai/companion`（handlers_ai_companion.go）
 

@@ -1,6 +1,20 @@
 # 架构总览
 
-> 实时文档：改代码必须同批更新本目录对应文件。最后全面核对：2026-07-14。
+> 这个仓库现在是什么样、为什么这样：包结构、装配与关停、多实例、两层时区、分发与降级启动。改架构必须同批更新本文件。最后全面核对：2026-07-14；2026-08-13 重构结构与交叉引用（内容未逐行重核）。
+
+## 目录
+
+| 节 | 内容 |
+|---|---|
+| 包结构 | 包职责表 |
+| 四个存储后端 | 推荐 Mongo、条件写用列、行为套件 69 例 |
+| 第五种后端 | HTTP / 子进程协议 |
+| 节律与 Protector | 学习作业、三个时刻、20h 关怀 |
+| 外部能力源控制台面 | F2-A：批准门、改地址重建 |
+| 分发 | 一个二进制 + install + lite |
+| 降级启动 | 一次性、服务什么、readiness 语义 |
+| 每会话地点 / 时区 | 两层时区、提示不覆盖用户选择 |
+| 多实例 | 选主 + 场次占有，各背一半承诺 |
 
 ## 包结构（仓库根，Go module `daycore`，go 1.23）
 
@@ -48,7 +62,7 @@
 
 ### 行为一致性套件（`internal/storage/storagetest`，已落地）
 
-一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。43 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
+一套按 `domain.Store` 写的行为套件，**四个后端都跑同一份**：sqlstore 覆盖 SQLite / PostgreSQL / MySQL（后两个靠 `PG_TEST_DSN`/`MYSQL_TEST_DSN`，`make test-sql`），mongostore 用真机 Mongo（`MONGO_TEST_DSN` 未设则跳过，`make test-mongo`）。69 个用例，全部来自审查与对抗验证抓到的真实分歧 —— 不是「能存能取」，而是：
 
 lease 只有一个持有者且 fence 只在交接时动 / `Acquire` 永不返回别人的行 / 空 holder 被拒 / 场次占有互斥 / 完成的场次不再被占 / 失败重试到上限 / 崩溃接管有界且回报真实 attempts / **接管轮换占有令牌使僵尸的 `Finish` 落空** / `Prune` 保留 running / nil 切片回来是空切片而非 nil / 指向零值时间的指针算「不存在」 / **`ProposalOp.Args` 的数字在每个后端都回来是 `float64`** / `Validate` 在 `Create` 与 `Update` 两侧都生效 / `rev` CAS 拒绝陈旧写 / TTL 不对称 / **同毫秒并列时 Supersede 恰好留一张** / 已投递的卡不被退休 / keeper 缺失是非事件 / 可投递集合排除过期与压后 / 序列化失败拒绝写入 / rapport 游标往返 / **学习作业不擦掉活的清醒标记** / `Touch` 只向前 / 分钟 0 是有意义的值 / 并发首写不丢信号 / 语言包往返与整语言卸载 / `RevertedBy` 精确且不跨会话 / `Scan` 最旧优先且游标续读无重无漏 / **空 canvas id 的 upsert 被拒而不是覆盖上一条无键行** / **每个 List 的默认页大小与天花板四后端一致** / **`Delete` 限定在本会话内、删不存在的行报 `ErrNotFound`** / 提案的 level 谓词与三态戳谓词 / **`Count` 忽略 `Limit`**（否则预算数到一页就饱和）/ **「堆叠里几张卡」是合取不是问戳**（`delivered_at` 永不清除）/ **`Prune` 放过 pending**（老的 pending 是 `Expire` 还没扫到，删它是抹掉用户还欠着的卡）/ `OwnerInstance` 可查。
 

@@ -1,6 +1,6 @@
 # AI 子系统
 
-> 实时文档：改 provider/prompts/vision 必须同批更新本文件。最后全面核对：2026-08-02。
+> provider、提示词三层、L1 硬边界、vision、wire-format、KV 缓存。改 provider/prompts/vision 必须同批更新本文件。最后全面核对：2026-08-02；2026-08-13 重构结构与交叉引用（内容未逐行重核）。
 
 ## Provider 与 Catalog（internal/ai/）
 
@@ -156,6 +156,18 @@ obj, ok := extractJSONObject(resp)   // handlers_ai_helpers.go：取首 { 到末
 ## 上下文压缩（server/context.go）
 
 `maybeCompress`：估算 token 超 60% 阈值 → flash 模型压缩滑窗 → 开环提取为 memory，可回写 ChatThread.Summary。
+
+## 流式解析器的「静默容错」语义（2026-08-13 钉死）
+
+三个 format 的流式解析对无法识别的帧的共同策略是**静默跳过、继续流**，现在每一条都有测试钉住（`formats/*/*_edge_test.go`），不要把它们当成疏漏顺手“修掉”：
+
+| 行为 | 钉它的测试 | 理由
+|---|---|---
+| 截断/非法 JSON 帧静默跳过 | `TestChatStreamTruncatedFrameSilentlySkipped` 等 | 一条噪音的代理行不值得杀掉整个回答；杀流会把一个完整回答变成一个错误
+| openai 流中的 error 帧被跳过（流到 EOF 无 Err 无 done） | `TestChatStreamErrorFrameEmitsNothing` | handler 层仍会发 done 帧；见到异常时会再评估
+| anthropic `input_json_delta` 丢弃、流式不发 FinishReason | `TestChatStreamDropsToolDeltasAndFinishReason` | 工具能力模型走 `StreamViaChat`；这里钉死的是“当前实现的承诺”，与 `TestFormatsDeclareToolStreamingHonestly` 同源
+| ollama 流中的 error 行被忽略（非流式报错） | `TestChatStreamErrorLineIgnored` | 不对称是有意的锁定：改动它就要同时改流式消费方的结束约定
+| 同 index 重复 delta 后者覆盖身份字段、负 index 产出 `call_-1` | `TestAccumulatorDuplicateIndexLastWins` / `TestAccumulatorNegativeAndHugeIndex` | 协议违规容忍不崩溃；agent loop 拒绝无名工具而不是 accumulator
 
 ## 添加一种 AI wire-format
 

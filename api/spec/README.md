@@ -4,7 +4,7 @@
 
 ```
 head.yaml            openapi / info / servers / tags / security
-paths/<tag>.yaml     路径条目，一个 tag 一个文件（18 个）
+paths/<tag>.yaml     路径条目，一个 tag 一个文件（20 个）
 components.yaml      securitySchemes / responses / schemas
 bundle/              合并器（Go，无新依赖）
 ```

@@ -1,6 +1,21 @@
 # 数据层与迁移手册
 
-> 实时文档：改 domain/存储必须同批更新本文件。最后全面核对：2026-07-14。
+> 实体、四个存储后端、加表加列、迁移事故史、行为套件钉死的语义。改 domain/存储必须同批更新本文件。最后全面核对：2026-07-14；2026-08-13 重构结构与交叉引用（内容未逐行重核）。
+
+## 目录
+
+| 节 | 内容 |
+|---|---|
+| Domain 实体 | 实体一览表 |
+| 存储后端 | 4 个：sqlite/postgres/mysql/mongo |
+| 加实体 / 加列 | 完整路径 / ColumnMigration |
+| 方言对等测试 | 静态比对与事故史 |
+| Material 搜索 | 原生 FTS + 子串兜底 |
+| 锁与重捞 / 石化 / Proposal | 读时派生的语义 |
+| rapport / 节律 | 纯函数、零存储 |
+| 附件与文件总线 | 无事务下的取舍 |
+| settings / roles / AI 账本 / 用量 / 配对 / 浏览器 | 后续批次的表 |
+| 审查批次钉死的行为 | 2026-08-13：Touch 毫秒语义、UTC 时间戳、Chat 锚等 |
 
 ## Domain 实体（internal/domain/，纯 struct + 接口）
 
@@ -896,3 +911,17 @@ func (w Window) Restrained() bool  // auto-plan 该不该排少一点
 - Assignment 手动创建（阶段 4）：`CanvasID = "manual:"+uuid` 走现有 `UpsertByCanvasID` INSERT 分支，零新 repo 方法；Canvas 再导入不碰 manual 行。**合成 id 不是可选的**：`courses` 与 `assignments` 都有 `UNIQUE (session_id, canvas_id)`，所以空 canvas id 不是「没有键」，而是所有无键行共用的**同一个键** —— upsert 会找到上一条无键行原地覆盖、连 id 都留着，第一条就此消失且无处报错（2026-08-02 实测确认）。四个后端现在一律返回 `domain.ErrMissingUpsertKey`，行为套件 `Upsert/EmptyCanvasIDIsRefused` 盯着。
 - sessions.preferences 列：SessionPrefs JSON 序列化（worker.go），合并端点 GET/PATCH /api/session/preferences——加用户级开关优先用它，零迁移。⚠️ 2026-07-15 修复：此前 sqlstore/mongostore 的 session Get/Update 都没接 preferences 列，偏好从未持久化过（含 worker 的主动性开关）；同类 bug 也出现在 users 的 data_session_id（同日修复）。**新加列后必须同时检查 SELECT/Scan/Update 三处**。
 - inbox 草稿：`inbox:draft:<id>`（TempContext，1h TTL）存 AI 归类结果，`POST /api/inbox/commit` 消费；上传文件是 `inbox:<tempID>`。
+
+## 审查批次钉死的存储行为（2026-08-13，全仓边缘审查）
+
+一次覆盖全仓的边界审查落地了 11 个新行为用例（套件 58 → **69 例**）并修掉四处真实问题。以下每一条都是「改这块代码的人不该需要先读一遍代码才知道哪些是有意为之」：
+
+| 约束 | 它防的是哪个具体失败 |
+|---|---|
+| **`Rhythm.Touch` 的「只向前」是毫秒粒度 + 严格 `<`**（SQL `toMillis` 截断、BSON datetime 本身即毫秒，四后端一致）| 同一毫秒内的第二条信号与陈旧重试**不可区分**，被静默丢弃（含 run_since）。要改就得四个后端一起改并更新 `Rhythm/TouchSameInstantAndSubMillisecondSignalsDoNotMoveMarks` —— 谁把 SQL 改成 `<=` 或把 Mongo 改成存纳秒，谁就制造了分歧 |
+| **返回的时间戳一律带 UTC location**（`fromMillis = time.UnixMilli(ms).UTC()`，sqlstore 与 mongostore 同一拼法）| 进程时区非 UTC 时，Mongo 曾返回本地 offset 时间戳、SQL 返回 UTC —— 同一时刻在 JSON 里有两种 RFC 3339 字形，且随部署地点变。`AILog/TimestampsRoundTripInUTC` 盯着 |
+| **`Rhythm.Touch` 种子 INSERT 的真实写错误必须上抛，只有「行已存在且更新过」才算陈旧** | 此前 SQL 侧把存储故障当「陈旧信号」吞掉返回 nil（Mongo 上抛），一次故障让 worker 静默跳过所有 touch，健康检查毫无异常 |
+| **Chat 批量写的锚是「线程内 max(created_at)+1 与当前时刻的较大者」**（SQL 与 Mongo 同构）| 分页游标是 `created_at < before`、**毫秒级、无 id 决胜**。批内 now+i 只防批内撞；两个批次同一毫秒落地（两个并发的 companion 请求就是这种形状）会让后一批每一行与前一批撞时间戳，游标**永久跳过**撞的那行。锚在批外，让「撞」根本造不出来；`Chat/BackwardPagingAcrossBatchesInOneMillisecond` 盯着 |
+| **`parsePrefs`：空串/空白/"null" → `DefaultPrefs()`，部分 JSON 解码进一份默认值的拷贝** | 零值 SessionPrefs 的所有开关都是 **false** —— 一条遗留 `null` 行会把简报、deadline 提醒、重排全部静默关掉；部分对象（只写了 doNotDisturb）会把没写的开关也关掉。默认值是「全开」，所以「没写 = 默认开」 |
+
+新增用例清单（追加在既有编号之后，既有编号全部不动）：`Rhythm/TouchSameInstantAndSubMillisecondSignalsDoNotMoveMarks`、`Proposal/UpdateIgnoresIdentityFields`、`Proposal/FilterKindAndDateDimensionsConjoin`、`Proposal/DeliverableAtExactBoundaryAgreesWithPredicate`、`DayPlan/BlocksRoundTripAndUpsertIsIdempotent`、`DayPlan/RangeIsInclusiveAndScoped`、`Chat/ThreadRoundTripAndDeleteCascades`、`Chat/BackwardPagingAcrossBatchesInOneMillisecond`、`AILog/TimestampsRoundTripInUTC`、`Attachment/ConcurrentBindHasExactlyOneWinner`、`Lease/RenewalRacingATakeoverNeverMovesTheFence`。

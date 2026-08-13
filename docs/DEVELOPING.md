@@ -1,5 +1,7 @@
 # 开发者手册
 
+> 开发命令、扩展点、加路由/工具/模型/语言的分步骨架、切仓流程、写路径操作日志的完整约定。2026-08-13 重构：通用代码约定收敛回 AGENTS.md，本文只留开发者特有内容。
+
 > ⚠️ **本文引用的 `/api/…` 路径实际服务在 `/api/v2/…` 下**（2026-08-11 起，规则见 `internal/apipath`）。
 > 正文按**资源**写，因为哪个 major 在服务它是另一件事、只决定一次。
 > 三条例外留在 `/api/` 外面：`/api/version`（发现）、`/api/healthz`（存活探针）、
@@ -31,7 +33,7 @@ internal/
   search/                   web 搜索（Tavily→DDG）+ MaterialSearcher（原生 FTS + 子串兜底）
   weather/                  WeatherProvider registry + 四个 provider 子包（自注册）
   storage/{sqlstore,mongostore}/  SQLite+PG+MySQL（Dialect 抽象）/ MongoDB
-  storage/storagetest/      行为一致性套件（58 例，四个后端跑同一份）
+  storage/storagetest/      行为一致性套件（69 例，四个后端跑同一份）
   server/                   路由（分散注册，见 routes.go）+ 中间件 + handlers + agent loop + cron Worker
 api/                        openapi.yaml（生成物）+ spec/（按 tag 分片的源）+ FRONTEND_HANDOFF.md
 package.json                ⚠️ 不是一个包，是 workspace 根（core + 四端；
@@ -138,19 +140,9 @@ checkout 不该变成必需的），但它意味着一次普通 `git clone` 拿�
 ---
 
 
-## 代码约定
+## 操作日志与撤销（写路径的完整约定）
 
-> 2026-07-29 从 `AGENTS.md` 搬来 —— 那份文档里只有这几节是别处没有的，其余六成与本目录重复且更旧。
-
-### 副作用归属
-
-**副作用永远服务端执行。** 前端决不能直接调 store 写操作 —— 必须经过 agent 工具或 HTTP handler。即使将来加批量操作，也走 `POST /api/...` 由服务端执行、写日志、返回结果。这条保证了每个操作可审计、可撤销 —— 撤销体系整个建立在它上面。
-
-**所有业务代码只 import `domain` 包**，绝不直接引用 `sqlstore` / `mongostore`。启动时 `main.go` 把 `Store` 传给 `Server`，之后 handler 完全不知道底层是哪个数据库。
-
-**AI 只在服务端调用**：`ai.Chat` / `ai.ChatStream` 只出现在 `internal/server/` 的 handler 或 agent 循环里。
-
-**永不信任客户端上送的上下文**：companion handler 不接收 `todayPlan` / `moodHistory` / `memoryContext` / `date` / `weekday` / `time`，全部由服务端从 store 组装。（客户端上送的对话历史会被角色白名单过滤 —— 见 `handlers_ai_companion.go` 里那段注释：客户端不能给自己注入一个 `system` 轮次。）
+> 副作用归属、错误处理四类、文件命名等通用约定见 [AGENTS.md](../AGENTS.md)「代码约定」——那是它们的家，这里只保留写路径操作日志的**细节**（AGENTS.md 只有摘要）。
 
 ### 操作日志
 
