@@ -1061,7 +1061,9 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 - ~~AICallLog 空表~~（β0+ 已接线，含流式 usage）。~~HTTP 直写路径不调 logOp~~ —— **已补（2026-08-12）**，见下。
 - ~~`POST /api/tempcontext` 的 TTL 完全由客户端给，没有服务端默认也没有上限~~ —— **这条是错的**（2026-08-06 核实）：`handlers_tempcontext.go` 的 `handleTempContextPut` 里 `ttl <= 0` 落到 24 小时默认、`> 7*24h` 截到 7 天，两条都在。写这条时大概只看了 `body.TTLSeconds` 那一行。
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
-- `Capabilities.Stream` / `Thinking` 零读者。
+- ~~`Capabilities.Stream` / `Thinking` 零读者~~ —— **已删（2026-08-12）**，与 `DeepseekSearch` 同一个理由、同一个办法。
+  两个都**放错了层**：能不能流式带**工具调用**是我们这个 format 实现的属性，不是模型的（所以它是 `ToolStreamer` 可选接口 —— 运维在 models.yaml 里无从知道我们的 anthropic 解析器认不认 tool_use）；推理由 `extra_body` 打开、`Usage.ReasoningTokens` 读回，旁边立一个布尔两边都不改变。
+  `yaml.Unmarshal` 非严格，所以既有配置里残留这两个键只会被忽略。
 - ~~anthropic format 给每条 system 打 `cache_control` 且无上限~~ —— **已修（2026-08-12）**，同时修掉一个**比它更要紧的洞**。
   ⚠️ 「今天最多 2 条」这句是错的：客户端能把 `role: "system"` 塞进
   `POST /api/companion-history` → `GET /api/chat/threads` 原样导入 `chat_messages`

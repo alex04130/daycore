@@ -6,7 +6,8 @@
 
 - `AIProvider` 接口 + `ChatRequest{Messages, Tools, Temperature, MaxTokens, JSONMode, Stop, CacheKey}` + Capabilities（provider.go）。
 - formats/：openai（最完整，流式 tool_calls + 夹具测试）、anthropic（text-only 流式）、ollama（NDJSON）。
-- Catalog（models.go，config/models.yaml）：`DefaultChat()` / `Vision()` / `Planner()`；模型条目支持 extra_body/max_tokens/thinking。
+- Catalog（models.go，config/models.yaml）：`DefaultChat()` / `Vision()` / `Planner()`；模型条目支持 extra_body/max_tokens。
+  ⚠️ **推理不是一个 caps 布尔**：它由 `extra_body`（如 `thinking: {enabled: true}`）打开、由 `Usage.ReasoningTokens` 读回。曾经有个 `Capabilities.Thinking` 立在旁边、零读者，2026-08-12 与 `Capabilities.Stream` 一并删除。
 - StreamAccumulator（stream.go）按 index 拼合流式 tool_calls。
 
 ## 模态层（modality.go / generators.go，2026-08-02 落地）

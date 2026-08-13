@@ -2,7 +2,7 @@
 # Add/remove entries here (no code changes) to support more models. Each entry
 # binds a model id to a registered wire format (openai | anthropic | ollama | …).
 #
-# caps: vision/tools/stream are declared, not auto-detected. The vision model is
+# caps: vision/tools are declared, not auto-detected. The vision model is
 # whichever entry has `vision: true` (or DEFAULT_VISION_MODEL). The default chat
 # model is DEFAULT_CHAT_MODEL (env), which must match an id below.
 #
@@ -20,7 +20,6 @@ models:
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true
-    stream: true
     context_window: 65536
     max_tokens: 4096
 
@@ -34,7 +33,6 @@ models:
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true
-    stream: true
     context_window: 65536
     max_tokens: 4096
 
@@ -46,8 +44,6 @@ models:
     api_key_env: DEEPSEEK_API_KEY
     vision: false
     tools: true
-    stream: true
-    thinking: true
     context_window: 65536
     max_tokens: 8192
     extra_body:
@@ -62,7 +58,6 @@ models:
     api_key_env: ANTHROPIC_API_KEY
     vision: true
     tools: true
-    stream: true
     context_window: 200000
 
   # ── Alternative vision / chat (OpenAI) ─────────────────────────────────────
@@ -73,7 +68,6 @@ models:
     api_key_env: OPENAI_API_KEY
     vision: true
     tools: true
-    stream: true
     context_window: 128000
 
   # ── Local Ollama — offline vision, no API key ──────────────────────────────
@@ -83,5 +77,4 @@ models:
     model: llava
     vision: true
     tools: false
-    stream: true
     context_window: 8192

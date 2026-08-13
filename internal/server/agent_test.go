@@ -42,7 +42,7 @@ func (f *fakeProvider) ChatStream(ctx context.Context, req ai.ChatRequest) (<-ch
 }
 
 func (f *fakeProvider) Capabilities() ai.Capabilities {
-	return ai.Capabilities{Tools: true, Stream: true}
+	return ai.Capabilities{Tools: true}
 }
 func (f *fakeProvider) Model() string { return "fake" }
 

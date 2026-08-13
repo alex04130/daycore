@@ -18,8 +18,6 @@ type modelEntry struct {
 	APIKey        string         `yaml:"api_key"`     // inline key (discouraged; env preferred)
 	Vision        bool           `yaml:"vision"`
 	Tools         bool           `yaml:"tools"`
-	Stream        bool           `yaml:"stream"`
-	Thinking      bool           `yaml:"thinking"`
 	ContextWindow int            `yaml:"context_window"`
 	MaxTokens     int            `yaml:"max_tokens"`
 	ExtraBody     map[string]any `yaml:"extra_body"`
@@ -116,7 +114,7 @@ func LoadCatalog(path, defaultChat, defaultVision, defaultPlanner string) (*Cata
 			Model:     m.Model,
 			MaxTokens: m.MaxTokens,
 			ExtraBody: m.ExtraBody,
-			Caps:      Capabilities{Vision: m.Vision, Tools: m.Tools, Stream: m.Stream, Thinking: m.Thinking, ContextWindow: m.ContextWindow},
+			Caps:      Capabilities{Vision: m.Vision, Tools: m.Tools, ContextWindow: m.ContextWindow},
 		})
 		if err != nil {
 			return nil, fmt.Errorf("build model %q: %w", m.ID, err)

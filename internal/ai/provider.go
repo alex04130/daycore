@@ -173,10 +173,19 @@ type Capabilities struct {
 	// call sites branch on it and because it is what an operator writes in
 	// models.yaml; In/Out below are the general form and Vision is folded into
 	// them by LoadCatalog.
-	Vision        bool
-	Tools         bool
-	Stream        bool
-	Thinking      bool
+	Vision bool
+	Tools  bool
+	// ⚠️ There used to be Stream and Thinking here. Both were declared in
+	// models.yaml and read by nothing — the same shape as DeepseekSearch below,
+	// and removed for the same reason.
+	//
+	// Neither could have worked where it sat. Whether a format's ChatStream
+	// carries TOOL CALLS is a property of our implementation, not of the model,
+	// so it is the ToolStreamer optional interface (see below) — an operator
+	// editing models.yaml has no way to know whether our anthropic parser handles
+	// tool_use yet. And reasoning is turned on by `extra_body` (openai format's
+	// mergeExtraBody) and read back through Usage.ReasoningTokens; a bool beside
+	// it changed nothing either way.
 	ContextWindow int
 
 	// In and Out are the modalities this model accepts and produces.

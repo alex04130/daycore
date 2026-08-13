@@ -29,7 +29,6 @@ models:
     model: deepseek-v4-flash     # upstream name (defaults to id if omitted)
     api_key_env: DEEPSEEK_API_KEY
     tools: true
-    stream: true
     context_window: 65536
 
   - id: planner                  # set DEFAULT_PLANNER_MODEL=planner to use
@@ -38,8 +37,6 @@ models:
     model: deepseek-v4-pro
     api_key_env: DEEPSEEK_API_KEY
     tools: true
-    stream: true
-    thinking: true
     context_window: 65536
     max_tokens: 8192
     extra_body:
@@ -53,7 +50,6 @@ models:
     api_key_env: ANTHROPIC_API_KEY
     vision: true
     tools: true
-    stream: true
     context_window: 200000
 
   # Any OpenAI-compatible gateway works with format: openai — point base_url at
@@ -64,4 +60,3 @@ models:
     base_url: http://localhost:11434
     model: llava                 # no api_key_env: Ollama needs none
     vision: true
-    stream: true
