@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"daycore/internal/domain"
@@ -121,6 +122,7 @@ func (w *Worker) checkProtector(sid, tz string) {
 	loc := resolveLocation(tz)
 	hours := int(run.Continuous.Hours())
 	movable := w.morningBlocksToPostpone(ctx, sid, now, loc)
+	date := now.In(loc).Format("2006-01-02")
 
 	body := i18n.Tf(keyProtectorBody, locale, hours)
 	switch {
@@ -159,7 +161,19 @@ func (w *Worker) checkProtector(sid, tz string) {
 		// One card per stretch, so a second nudge cannot stack on the first.
 		MergeKey: "protector:" + runKey,
 		Rows: []domain.ProposalRow{
-			{ID: "postpone", Label: i18n.T(keyProtectorOptYes, locale), State: domain.ProposalPending},
+			// ⚠️ The ops are what makes the label true. Until proposal_apply.go
+			// existed, accepting this card flipped a state and did nothing else —
+			// the button said 「帮我往后挪」 and the morning stayed exactly where
+			// it was. The comment on morningBlocksToPostpone below has always
+			// claimed that "accepting it performs the moves through the ordinary
+			// plan path"; this is that path.
+			{
+				ID: "postpone", Label: i18n.T(keyProtectorOptYes, locale), State: domain.ProposalPending,
+				Ops: postponeOps(date, movable, protectorPostponeBy),
+			},
+			// ⚠️ No ops, and that is not an omission. "Leave it" means the plan
+			// does not move — an explicit no is answered by doing nothing, and
+			// giving this row an op would make declining a write.
 			{ID: "leave", Label: i18n.T(keyProtectorOptNo, locale), State: domain.ProposalPending},
 		},
 	}
@@ -253,4 +267,70 @@ func (w *Worker) spendPushBudget(ctx context.Context, sid string, now time.Time,
 		return false
 	}
 	return n < domain.PushBudgetPerDay
+}
+
+// protectorPostponeBy is how far "help me push the morning back" pushes it.
+//
+// ⚠️ 数值即产品. Ninety minutes is roughly one sleep cycle's worth of lie-in and
+// short enough that a 09:00 thing lands at 10:30 rather than in the afternoon —
+// the offer is "start later", not "write the morning off". Changing it changes
+// what the card promises.
+const protectorPostponeBy = 90 * time.Minute
+
+// postponeOps turns "move the morning back" into the tool calls that do it.
+//
+// ⚠️ One op per block, matched BY ID. Matching on title would find a different
+// block if two share a name, and matching on time would find whatever has since
+// moved into that slot — both are wrong in the same direction: they act on
+// something the reader was not shown.
+//
+// ⚠️ The new times are computed HERE, when the card is written, not when it is
+// accepted. So the card and its effect describe the same plan: if the reader
+// edits their morning between the nudge and the tap, the op still names the
+// block it was offered for, and applyPlanPatch answers with a 409 (or a
+// no-match) rather than silently moving something else. A card that recomputes
+// on acceptance would quietly do a different thing from the one it showed.
+func postponeOps(date string, blocks []domain.TimeBlock, by time.Duration) []domain.ProposalOp {
+	ops := make([]domain.ProposalOp, 0, len(blocks))
+	for _, b := range blocks {
+		if b.Time == nil {
+			continue
+		}
+		hh, mm, ok := splitHM(*b.Time)
+		if !ok {
+			continue
+		}
+		mins := hh*60 + mm + int(by/time.Minute)
+		// ⚠️ Clamped to the same day rather than wrapped. A block pushed past
+		// midnight would land at 00:30 of a date this op does not name, which
+		// reads as "moved to the small hours" — the opposite of a protective
+		// nudge. Anything that would spill just goes as late as the day allows.
+		if mins > 23*60+30 {
+			mins = 23*60 + 30
+		}
+		ops = append(ops, domain.ProposalOp{
+			Tool: "plan_update",
+			Args: map[string]any{
+				"date":    date,
+				"match":   map[string]any{"id": b.ID},
+				"changes": map[string]any{"time": hmOf(mins)},
+			},
+		})
+	}
+	return ops
+}
+
+func splitHM(hm string) (int, int, bool) {
+	var h, m int
+	if _, err := fmt.Sscanf(hm, "%d:%d", &h, &m); err != nil {
+		return 0, 0, false
+	}
+	if h < 0 || h > 23 || m < 0 || m > 59 {
+		return 0, 0, false
+	}
+	return h, m, true
+}
+
+func hmOf(mins int) string {
+	return fmt.Sprintf("%02d:%02d", mins/60, mins%60)
 }

@@ -236,6 +236,39 @@ func (r jobRunRepo) Finish(ctx context.Context, id string, status domain.JobStat
 	return err
 }
 
+// ListRetryable finds failed occurrences that still have attempts left.
+//
+// ⚠️ Cross-session and oldest-first, unlike List above — the sweeper works from
+// the ledger of what failed, not from a list of who is awake. The
+// attempts-under-cap predicate is in the QUERY so exhausted rows stop being
+// selected at all; leaving it to the caller would have every sweep pick the same
+// dead rows for the whole retention window.
+func (r jobRunRepo) ListRetryable(ctx context.Context, since time.Time, limit int) ([]domain.JobRun, error) {
+	limit = domain.ListLimit(limit, domain.JobRunListDefault, domain.JobRunListMax)
+	cur, err := r.c("job_runs").Find(ctx, bson.M{
+		"status":     string(domain.JobFailed),
+		"attempts":   bson.M{"$lt": domain.JobMaxAttempts},
+		"started_at": bson.M{"$gte": since},
+	}, options.Find().SetSort(bson.D{{Key: "started_at", Value: 1}}).SetLimit(int64(limit)))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+	out := []domain.JobRun{}
+	for cur.Next(ctx) {
+		var d jobRunDoc
+		if err := cur.Decode(&d); err != nil {
+			return nil, err
+		}
+		out = append(out, domain.JobRun{
+			ID: d.ClaimID, SessionID: d.SessionID, Job: d.Job, RunKey: d.RunKey,
+			Status: domain.JobStatus(d.Status), Instance: d.Instance,
+			StartedAt: d.StartedAt, EndedAt: d.EndedAt, Attempts: d.Attempts, Error: d.Error,
+		})
+	}
+	return out, cur.Err()
+}
+
 func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]domain.JobRun, error) {
 	limit = domain.ListLimit(limit, domain.JobRunListDefault, domain.JobRunListMax)
 	cur, err := r.c("job_runs").Find(ctx, bson.M{"session_id": sessionID},

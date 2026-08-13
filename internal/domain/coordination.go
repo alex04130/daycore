@@ -114,6 +114,20 @@ const (
 	JobAutoPlan      = "auto_plan"
 	JobRhythmLearn   = "rhythm_learn"
 	JobProtector     = "protector"
+	// JobHabitScan notices a repetition and offers to make it a standing rule.
+	// Keyed on the HABIT, not the day: offering the same weekly thing again
+	// tomorrow because the date changed is precisely the nag it exists to
+	// remove.
+	JobHabitScan = "habit_scan"
+	// JobConflictScan notices a clash nobody pointed at. One occurrence per
+	// PAIR of blocks, not per day: two separate clashes on one day are two
+	// questions, and keying on the date would let the first one answered
+	// silence the second forever.
+	JobConflictScan = "conflict_scan"
+	// JobWishFill offers one wish for one opening in the day about to start.
+	// One occurrence per session per day — the key names the date, not the gap,
+	// so an edit that moves the opening does not buy a second card.
+	JobWishFill = "wish_fill"
 	// JobThemeBackfill fills the tokens a theme is missing after its family's
 	// token space widened. One occurrence per theme per version of that space.
 	//
@@ -184,6 +198,22 @@ type JobRunRepository interface {
 	// List returns a session's recent runs, newest first — the console's
 	// "did the morning brief actually go out" view.
 	List(ctx context.Context, sessionID string, limit int) ([]JobRun, error)
+	// ListRetryable returns failed occurrences that still have attempts left,
+	// across every session, oldest first.
+	//
+	// ⚠️ It carries `attempts < JobMaxAttempts` in the QUERY rather than leaving
+	// it to the caller. Without that, a row that has used up its attempts stays
+	// selectable for the whole retention window and gets picked on every sweep —
+	// each time only to be refused by Claim. Harmless, and exactly the shape of
+	// "a column that records something nobody reads".
+	//
+	// ⚠️ Cross-session, which no other method here is. A re-drive sweeper works
+	// from the ledger of what failed, not from a list of who is awake — the
+	// session-scoped List above answers a different question (the console's).
+	//
+	// since bounds how far back to look, so the scan does not walk the whole
+	// retention window to find the handful still eligible.
+	ListRetryable(ctx context.Context, since time.Time, limit int) ([]JobRun, error)
 	// Prune deletes finished runs older than before, and is what keeps this
 	// table from growing without bound (it takes the most rows of the six).
 	Prune(ctx context.Context, before time.Time) (int, error)

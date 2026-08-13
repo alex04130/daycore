@@ -72,9 +72,26 @@ func (s *Server) versionPayload(_ *http.Request) map[string]any {
 	return map[string]any{
 		"apiVersion": version.APIVersion,
 		"apiMinor":   version.APIMinor,
-		"build":      version.Full(),
-		"channel":    version.Channel,
-		"minClient":  version.MinClient,
+		// apiPrefix is where this deployment actually mounts the versioned
+		// surface, so a client does not have to build it from apiVersion.
+		//
+		// ⚠️ It exists because deriving it is only safe in ONE direction. A
+		// client older than the backend derives a prefix the backend still
+		// serves — that is the point of putting the version in the path. A
+		// client NEWER than what it derives, or one talking to a backend that
+		// moved on, sends every request to a path that either 404s or silently
+		// hits a compatibility surface left behind for old builds. The second is
+		// worse: nothing reports it, the app just slowly stops matching.
+		//
+		// Reporting it does not make the client follow it. packages/core keeps
+		// using its own prefix — a build's types and endpoints are a hand-written
+		// mirror of ONE contract, and pointing them at another is "shipping a
+		// shape nobody checked". What the field buys is that the mismatch becomes
+		// visible at the handshake instead of as a screenful of 404s.
+		"apiPrefix": APIPrefix,
+		"build":     version.Full(),
+		"channel":   version.Channel,
+		"minClient": version.MinClient,
 		// features is the capability discovery layer: a client (web, app,
 		// edge, channel) asks what this deployment can do instead of
 		// hardcoding assumptions. Derived live from the model catalog, so a

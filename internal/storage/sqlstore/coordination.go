@@ -256,6 +256,43 @@ func (r jobRunRepo) List(ctx context.Context, sessionID string, limit int) ([]do
 // Prune only touches finished rows. A "running" row older than the cutoff is
 // evidence of a crash, and deleting it would erase the only trace of a job that
 // never came back.
+// ListRetryable finds failed occurrences that still have attempts left.
+//
+// ⚠️ Uses the (status, started_at) index that already exists for Prune — the
+// same one, from the other direction. Adding this query needed no new index.
+func (r jobRunRepo) ListRetryable(ctx context.Context, since time.Time, limit int) ([]domain.JobRun, error) {
+	rows, err := r.query(ctx,
+		`SELECT id, session_id, job_name, run_key, status, instance, started_at, ended_at, attempts,
+			COALESCE(error_text, '')
+		 FROM job_runs
+		 WHERE status = ? AND attempts < ? AND started_at >= ?
+		 ORDER BY started_at ASC`+limitClause(limit, domain.JobRunListDefault, domain.JobRunListMax),
+		string(domain.JobFailed), domain.JobMaxAttempts, toMillis(since))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []domain.JobRun{}
+	for rows.Next() {
+		var (
+			j         domain.JobRun
+			status    string
+			startedAt int64
+			endedAt   sql.NullInt64
+		)
+		if err := rows.Scan(&j.ID, &j.SessionID, &j.Job, &j.RunKey, &status, &j.Instance,
+			&startedAt, &endedAt, &j.Attempts, &j.Error); err != nil {
+			return nil, err
+		}
+		j.Status = domain.JobStatus(status)
+		j.StartedAt = fromMillis(startedAt)
+		j.EndedAt = ptrMillis(endedAt)
+		out = append(out, j)
+	}
+	return out, rows.Err()
+}
+
 func (r jobRunRepo) Prune(ctx context.Context, before time.Time) (int, error) {
 	res, err := r.exec(ctx,
 		`DELETE FROM job_runs WHERE status <> ? AND started_at < ?`,

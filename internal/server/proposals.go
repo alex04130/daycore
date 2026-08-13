@@ -251,6 +251,35 @@ func (s *Server) handleProposalRespond(w http.ResponseWriter, r *http.Request) {
 		TargetID: p.ID, Summary: p.Title,
 		Detail: marshalCompact(map[string]any{"choice": body.Choice, "text": body.Text}),
 	})
+
+	// ⚠️ The ops run AFTER the state is durable, not before.
+	//
+	// If they ran first and the Update then lost its rev race, the moves would
+	// have happened while the card still said pending — and the next answer
+	// would run them again. In this order the worst case is a card marked
+	// accepted whose consequences partly failed, which is visible in the ledger
+	// and individually undoable; the other order is silent duplication.
+	//
+	// Rejections run nothing. That is the whole meaning of the word, and
+	// `choice: ""` is a rejection (see the client wrapper's note on why silence
+	// must never accept anything).
+	if p.State == domain.ProposalAccepted {
+		if ops := opsToApply(p, body.Choice); len(ops) > 0 {
+			ids := s.applyProposalOps(r.Context(), sid, locale, s.sessionTimezone(r.Context(), sid), ops)
+			if len(ids) > 0 {
+				// Recorded on the card so the reader can take back what accepting
+				// DID, not merely the fact that they said yes. Best-effort: the
+				// moves already happened and are already in the ledger, so a
+				// failure here costs the convenience of the card's own undo, not
+				// the ability to undo at all.
+				p.AcceptOpIDs = append(p.AcceptOpIDs, ids...)
+				if err := s.store.Proposals().Update(r.Context(), p); err != nil {
+					s.log.Warn("could not record the ops an acceptance produced",
+						"session", sid, "proposal", p.ID, "err", err)
+				}
+			}
+		}
+	}
 	s.writeJSON(w, http.StatusOK, p)
 }
 

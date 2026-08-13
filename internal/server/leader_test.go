@@ -254,3 +254,6 @@ func (brokenJobRuns) Finish(context.Context, string, domain.JobStatus, string, t
 }
 func (brokenJobRuns) List(context.Context, string, int) ([]domain.JobRun, error) { return nil, nil }
 func (brokenJobRuns) Prune(context.Context, time.Time) (int, error)              { return 0, nil }
+func (brokenJobRuns) ListRetryable(context.Context, time.Time, int) ([]domain.JobRun, error) {
+	return nil, errors.New("database is having a moment")
+}

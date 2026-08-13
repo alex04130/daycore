@@ -133,7 +133,7 @@ func (s *Server) toolWishAdd(ctx context.Context, sid, rawArgs string) toolResul
 		}
 	}
 	created, err := s.store.Wishes().Create(ctx, &domain.Wish{
-		SessionID: sid, Title: args.Text, EffortMin: args.EffortMin, Status: "active",
+		SessionID: sid, Title: args.Text, EffortMin: args.EffortMin, Status: domain.WishActive,
 	})
 	if err != nil {
 		return toolFail("wish create failed: %v", err)

@@ -146,6 +146,12 @@ func (w *Worker) scheduleUser(sid, tz string, force bool) {
 	add("evening", cronScheduleAtHM(jobs.ReviewAt, tz), func() { w.runBrief(sid, tz, "evening") })
 	// Rhythm learning: at the day cut, when yesterday's row is final.
 	add("rhythm", cronScheduleAt(rhythmConfig().DayCutHour, 0, tz), func() { w.runRhythmLearn(sid, tz) })
+	// The habit scanner, at the day cut alongside the learner — it reads the
+	// plan history the learner has just finalised.
+	add("habitscan", cronScheduleAt(rhythmConfig().DayCutHour, 20, tz), func() { w.runHabitScan(sid, tz) })
+	// The gap-filler, at the learned quiet hour. ⚠️ jobs.PlanAt had no consumer
+	// at all until this line: it was derived, stored, documented and never read.
+	add("wishfill", cronScheduleAtHM(jobs.PlanAt, tz), func() { w.runWishFill(sid, tz) })
 	// The Protector. Half-hourly because the predicate is a threshold on a
 	// continuously growing number: the interval only bounds how late the nudge
 	// can be, half an hour against a twenty-hour stretch.
@@ -154,6 +160,10 @@ func (w *Worker) scheduleUser(sid, tz string, force bool) {
 	add("deadline", "0 */2 * * *", func() { w.checkDeadlines(sid, tz) })
 	// Rolling replan: every 30 minutes.
 	add("replan", "*/30 * * * *", func() { w.checkRollingReplan(sid, tz) })
+	// The background half of the conflict producer. Hourly, and at :07 rather
+	// than :00 so it does not land on the same tick as everything else that
+	// runs on the hour.
+	add("conflictscan", conflictScanEvery, func() { w.runConflictScan(sid, tz) })
 
 	if len(ids) == 0 {
 		// Nothing was scheduled — recording the session as scheduled here would

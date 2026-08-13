@@ -310,6 +310,7 @@ func run(logger *slog.Logger) error {
 	// (a decision card's TTL is the agent's own wait budget), so they need
 	// expiring, not a special case. See proposal_sweep.go.
 	srv.StartProposalSweep()
+	srv.StartJobRetry()
 
 	rootCtx, cancelRoot := context.WithCancel(context.Background())
 	defer cancelRoot()
