@@ -129,8 +129,14 @@ func (w *Worker) runRhythmLearn(sid, tz string) {
 
 	// The learned times feed the cron specs, so the entries have to be rebuilt
 	// or the profile is a value nobody acts on.
+	//
+	// ⚠️ RescheduleUser, not ScheduleUser. The latter returns immediately when
+	// the session is already scheduled at this timezone — which it always is
+	// here, because what moved is the WAKE TIME, not the zone. The comment above
+	// described the intent and the call defeated it: a learned 06:40 did nothing
+	// until the process restarted.
 	if changed := prev.Wake != next.Wake || prev.Sleep != next.Sleep; changed && w.s.worker != nil {
-		w.ScheduleUser(sid, tz)
+		w.s.worker.RescheduleUser(sid, tz)
 	}
 
 	// Pruning is bounded by the same window the learner reads, so a row that

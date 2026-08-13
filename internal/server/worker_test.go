@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"daycore/internal/domain"
+
+	"github.com/robfig/cron/v3"
 )
 
 func discardLogger() *slog.Logger {
@@ -178,5 +180,58 @@ func TestDeadlineRungs(t *testing.T) {
 	}
 	if deadlineRunKey("a1", 0) != "due:a1:overdue" {
 		t.Errorf("the overdue key is %q; run keys are read by people too", deadlineRunKey("a1", 0))
+	}
+}
+
+// The rhythm learner must be able to rebuild a session's entries when only the
+// SPECS moved.
+//
+// ⚠️ This is the other side of TestScheduleUserIsIdempotent, and the two guards
+// pull in opposite directions — which is exactly how the second one broke while
+// the first stayed green.
+//
+// The idempotence guard exists because markAwake calls ScheduleUser on every
+// admission. The rhythm learner calls it too, after learning a new wake time —
+// and the guard sent it straight back out, because what changed was the wake
+// time, not the timezone. rhythm_job.go's own comment says the entries "have to
+// be rebuilt or the profile is a value nobody acts on"; that is precisely what
+// happened. A learned 06:40 did nothing until the process restarted.
+//
+// Invisible from outside, again, and for the same reason: the only observable
+// is the entry set.
+func TestRescheduleUserRebuildsWhenOnlyTheSpecsMoved(t *testing.T) {
+	w := NewWorker(&Server{log: discardLogger()}, nil)
+
+	w.ScheduleUser("s1", "Asia/Shanghai")
+	first := w.EntryCount()
+	if first == 0 {
+		t.Fatal("scheduling a session registered no cron entries at all")
+	}
+	ids := append([]cron.EntryID(nil), w.jobs["s1"]...)
+
+	// Same session, same zone — what the learner does after a profile changes.
+	w.RescheduleUser("s1", "Asia/Shanghai")
+
+	if got := w.EntryCount(); got != first {
+		t.Errorf("after a reschedule: %d entries, want %d — a rebuild must REPLACE, not add", got, first)
+	}
+	// ⚠️ Same count is not enough: ScheduleUser's early return also produces the
+	// same count, and that is the bug. The entries have to be NEW ones.
+	same := 0
+	for i, id := range w.jobs["s1"] {
+		if i < len(ids) && ids[i] == id {
+			same++
+		}
+	}
+	if same == len(ids) {
+		t.Error("the cron entries were not rebuilt — every id is the one from before, " +
+			"so a learned wake time would go on doing nothing")
+	}
+
+	// And the plain call must still be a no-op, or markAwake starts piling up
+	// twelve copies an hour again.
+	w.ScheduleUser("s1", "Asia/Shanghai")
+	if got := w.EntryCount(); got != first {
+		t.Errorf("plain ScheduleUser is no longer idempotent: %d entries, want %d", got, first)
 	}
 }

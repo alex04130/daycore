@@ -240,7 +240,7 @@ v2 (beta)  ──小范围内测──▶  v2 继续改  ──公测──▶  
 | 项 | 内容 |
 |---|---|
 | `config/providers.yaml` + 加载器 | ✅ `format: builtin`（绑已注册的内置实现）+ `format: http`（外部适配层） |
-| 参考适配层 `tools/adapter-example/` | ⬜ 还没写 |
+| 参考适配层 `tools/adapter-example/` | ✅ 已写（`b18942a`，238 行，`internal/adapters/e2e_test.go` 把它编出来当真子进程跑）。⚠️ **只覆盖 provider-protocol 的查询型 + `format: http`** —— exec / 通道 / 存储三份各自跟着 F2-B、F8b 走，**不提前写**：后端今天没有它们的 client，现在补出来就是三个没人跑的 main.go |
 | `provider_overrides` 表 + `GET·PUT /api/admin/providers` | ✅ 只覆盖 `enabled` / `description` / `approved` 三项，见下「配置文件怎么改」。写完**立即推给正在跑的进程**（`ReloadProviders`），并在原对象上就地更新 —— 重建会连 `Health` 一起丢掉，于是「打开一个描述」会顺手把一个已知死掉的源标成健康 |
 | 健康状态机 | ✅ 迟滞 N=3、半开探测（只在交互式 agent 路径）、退避；工具带字节是纯函数输出。**缓存命中不算一次成功调用** —— 算了的话一个死掉的源会在整个 30 分钟 TTL 里保持「健康」，而那正是有人在查什么坏了的那半小时 |
 | `internal/search` 注册表化 | ✅ 拆成 `internal/websearch`（tavily / duckduckgo 两个子包 init 自注册）+ `internal/search`（只剩站内 FTS）。`TAVILY_API_KEY` 第一次进入配置分类表 —— 此前它根本不是 `Config` 字段，而闸门走的是 `reflect.TypeOf(Config{})` 的字段，所以**结构上看不见它** |
@@ -1063,6 +1063,7 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 - `ToolDef.ServerSide` 零实现（三个 format 都不读），而 `models.yaml` 里 `chat-search` 的注释拿它当卖点。
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
-- 早晚简报的天气地点**写死北京**（`worker.go` 自己写着 "future: session setting"）。⚠️ ζ-4 只解决了时区，**地点是另一件事** —— 时区不能反推经纬度。
+- ~~早晚简报的天气地点写死北京~~ —— **已实现于 `df8d93c`（2026-08-08）**，见 `internal/server/session_location.go`：三级阶梯（会话设置 → 记忆事实 → **空**），三个写入口（设置页 / `set_home_location` 工具 / 客户端提示），user 永远压过 detected。这条在 ROADMAP 里留了四天，是文档没跟上。
+  ⚠️ **别「补」那个第三档**：查不到就不查天气、简报少一行 —— `session_location.go` / `worker.go` / `openapi.yaml` 三处都写着同一句「一个错的城市比没有城市更糟」。给它加一个「退回部署默认城市」的兜底正是这条设计明确拒绝的东西。
 - 一致性套件 58 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
 - 现役 `web/frontend` 的 `i18n.js` 是硬编码双语字典（**四个新前端不是** —— 它们运行时 fetch `public/locales/*.json`，加一门语言是丢一个文件。这条只剩在那个待替换的前端上）。

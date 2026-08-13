@@ -82,17 +82,41 @@ func (w *Worker) Stop() {
 
 // ScheduleUser runs the standard proactive jobs for a session at its timezone.
 func (w *Worker) ScheduleUser(sid, tz string) {
+	w.scheduleUser(sid, tz, false)
+}
+
+// RescheduleUser rebuilds a session's entries even though its timezone has not
+// moved.
+//
+// ⚠️ It exists because ScheduleUser's "already scheduled at this timezone" guard
+// is right for its own caller and wrong for the rhythm learner. markAwake calls
+// ScheduleUser on every request, so the guard is what keeps that from being a
+// rebuild per request; but the learner changes the CRON SPECS (wake and sleep
+// move, so the brief and review times move) without changing the timezone — and
+// the guard sent it straight back out.
+//
+// The symptom was silent and slow: rhythm_job.go says in a comment that "the
+// learned times feed the cron specs, so the entries have to be rebuilt or the
+// profile is a value nobody acts on", and that is exactly what happened — a
+// learned 06:40 wake-up did nothing until the process restarted or the user
+// crossed a timezone. The feature looked implemented from every angle except
+// the one where somebody waits for a brief at the new time.
+func (w *Worker) RescheduleUser(sid, tz string) {
+	w.scheduleUser(sid, tz, true)
+}
+
+func (w *Worker) scheduleUser(sid, tz string, force bool) {
 	if sid == "" {
 		return
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if prev, ok := w.sched[sid]; ok {
-		if prev == tz {
+		if prev == tz && !force {
 			return // already scheduled, at this timezone
 		}
-		// The timezone moved. Take the old entries out before adding new ones —
-		// leaving them would fire the same brief twice, once per zone.
+		// The timezone moved, or the specs did. Take the old entries out before
+		// adding new ones — leaving them would fire the same brief twice.
 		w.unscheduleLocked(sid)
 	}
 
