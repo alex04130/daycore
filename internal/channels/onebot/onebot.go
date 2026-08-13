@@ -55,7 +55,23 @@ func (a *Adapter) Start(ctx context.Context, inbound chan<- channels.InboundMsg)
 	return nil
 }
 
-func (a *Adapter) Stop() error { close(a.stop); return nil }
+// Stop is idempotent and safe to call before Start: a shutdown path that
+// stops a registry twice — or one that stops a registry whose adapter never
+// got started — must not panic on a double close of a nil or closed channel.
+func (a *Adapter) Stop() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.stop == nil {
+		return nil // never started; nothing to stop
+	}
+	select {
+	case <-a.stop:
+		return nil // already stopped
+	default:
+	}
+	close(a.stop)
+	return nil
+}
 
 func (a *Adapter) loop(ctx context.Context) {
 	for {

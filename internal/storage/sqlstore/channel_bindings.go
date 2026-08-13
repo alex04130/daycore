@@ -29,10 +29,10 @@ func (r channelBindingRepo) ListBySession(ctx context.Context, sessionID string)
 			return nil, err
 		}
 		if verifiedAt.Valid && verifiedAt.Int64 > 0 {
-			t := time.UnixMilli(verifiedAt.Int64)
+			t := fromMillis(verifiedAt.Int64)
 			b.VerifiedAt = &t
 		}
-		b.CreatedAt = time.UnixMilli(createdAt)
+		b.CreatedAt = fromMillis(createdAt)
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -55,10 +55,10 @@ func (r channelBindingRepo) ListAllVerified(ctx context.Context) ([]domain.Chann
 			return nil, err
 		}
 		if verifiedAt.Valid && verifiedAt.Int64 > 0 {
-			t := time.UnixMilli(verifiedAt.Int64)
+			t := fromMillis(verifiedAt.Int64)
 			b.VerifiedAt = &t
 		}
-		b.CreatedAt = time.UnixMilli(createdAt)
+		b.CreatedAt = fromMillis(createdAt)
 		out = append(out, b)
 	}
 	return out, rows.Err()
@@ -76,10 +76,10 @@ func (r channelBindingRepo) GetByChannelAndExternal(ctx context.Context, channel
 		return nil, err
 	}
 	if verifiedAt.Valid && verifiedAt.Int64 > 0 {
-		t := time.UnixMilli(verifiedAt.Int64)
+		t := fromMillis(verifiedAt.Int64)
 		b.VerifiedAt = &t
 	}
-	b.CreatedAt = time.UnixMilli(createdAt)
+	b.CreatedAt = fromMillis(createdAt)
 	return &b, nil
 }
 
@@ -98,7 +98,7 @@ func (r channelBindingRepo) Create(ctx context.Context, b *domain.ChannelBinding
 	if err != nil {
 		return nil, err
 	}
-	b.CreatedAt = time.UnixMilli(now)
+	b.CreatedAt = fromMillis(now)
 	return b, nil
 }
 
@@ -113,7 +113,7 @@ func (r channelBindingRepo) GetPendingByToken(ctx context.Context, channel, toke
 		return nil, err
 	}
 	_ = verifiedAt // always NULL for a pending row
-	b.CreatedAt = time.UnixMilli(createdAt)
+	b.CreatedAt = fromMillis(createdAt)
 	return &b, nil
 }
 

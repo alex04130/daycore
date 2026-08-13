@@ -164,7 +164,12 @@ func Load() (*Config, error) {
 	_ = godotenv.Load() // best-effort; real env always wins
 
 	c := &Config{
-		Env:                     getEnv("APP_ENV", "development"),
+		// Normalized to lower case: the value decides which security rules
+		// apply, and "Production" quietly treated as development is a
+		// deployment running dev fallback secrets while its owner believes
+		// otherwise. The documented value is "production"; accepting any
+		// casing is strictly the safe direction.
+		Env:                     strings.ToLower(strings.TrimSpace(getEnv("APP_ENV", "development"))),
 		Host:                    getEnv("HOST", ""),
 		Port:                    getEnv("PORT", "8080"),
 		StaticDir:               getEnv("STATIC_DIR", "web/frontend/dist"),
@@ -207,6 +212,12 @@ func Load() (*Config, error) {
 	}
 
 	// Dev-only fallbacks so the app boots out of the box; production must set real secrets.
+	// Whitespace-only values count as unset: JWT_SECRET=" " is not a secret
+	// somebody chose, it is a misconfigured deployment that must not silently
+	// carry on as if fine.
+	c.JWTSecret = strings.TrimSpace(c.JWTSecret)
+	c.CookieSecret = strings.TrimSpace(c.CookieSecret)
+	c.AdminToken = strings.TrimSpace(c.AdminToken)
 	if c.JWTSecret == "" {
 		if c.Env == "production" {
 			return nil, fmt.Errorf("JWT_SECRET is required in production")
@@ -252,8 +263,11 @@ func Load() (*Config, error) {
 	}
 	// In production, default the Secure cookie flag on unless the operator
 	// explicitly opted out — a forgotten SECURE_COOKIES must not silently ship
-	// session/JWT cookies over plaintext HTTP.
-	if _, ok := os.LookupEnv("SECURE_COOKIES"); !ok && c.IsProduction() {
+	// session/JWT cookies over plaintext HTTP. "Set but empty" counts as
+	// unset, matching getEnv — SECURE_COOKIES= (a leftover in an .env) must
+	// not disable the production default, which is exactly the quiet failure
+	// this default exists to prevent.
+	if getEnv("SECURE_COOKIES", "") == "" && c.IsProduction() {
 		c.SecureCookies = true
 	}
 	// SameSite=None cookies are rejected by browsers without Secure, so refuse
@@ -270,7 +284,10 @@ func Load() (*Config, error) {
 	// stock `./daycore` run carries insecure dev secrets and (with no ADMIN_TOKEN)
 	// an open admin surface — those must not be reachable from the network by
 	// default. Production binds all interfaces (typically behind a reverse proxy).
-	if _, ok := os.LookupEnv("HOST"); !ok && !c.IsProduction() {
+	// Same "set but empty counts as unset" rule as the Secure default above:
+	// HOST= in an .env must not defeat the loopback fail-safe and bind the dev
+	// server — dev secrets, generated admin token — to every interface.
+	if getEnv("HOST", "") == "" && !c.IsProduction() {
 		c.Host = "127.0.0.1"
 	}
 	// Message packs load before the pair is validated, because a pack is what

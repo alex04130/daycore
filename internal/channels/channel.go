@@ -112,11 +112,22 @@ func NewRegistry(log *slog.Logger) *Registry {
 }
 
 // Register adds a channel to the registry.
+//
+// Registering the same name twice panics, matching the storage / blob / notify
+// registries: a second adapter silently shadowing the first would leave the
+// shadowed one's goroutines running and unreachable — an instance that looks
+// up "onebot" and talks to a different process than the one consuming inbound
+// messages.
 func (r *Registry) Register(ch Channel) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, dup := r.channels[ch.Name()]; dup {
+		panic("channels: channel registered twice: " + ch.Name())
+	}
 	r.channels[ch.Name()] = ch
-	r.log.Info("channel registered", "name", ch.Name())
+	if r.log != nil {
+		r.log.Info("channel registered", "name", ch.Name())
+	}
 }
 
 // StartAll starts all registered channels.

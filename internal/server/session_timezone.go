@@ -129,6 +129,11 @@ func (s *Server) noteClientTimezone(ctx context.Context, sid, tz string) {
 	if s == nil || s.store == nil || sid == "" || !validTimezone(tz) {
 		return
 	}
+	// validTimezone trims for its screen but the caller would store the raw
+	// string — " Asia/Shanghai " passes validation and then fails every
+	// LoadLocation forever, an accepted hint that never takes effect. The
+	// stored value must be the value that was validated.
+	tz = strings.TrimSpace(tz)
 	prefs := s.sessionPrefs(ctx, sid)
 	if prefs.Timezone == tz {
 		return

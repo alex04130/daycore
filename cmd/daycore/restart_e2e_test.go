@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 	// moved" is a case this file has to be able to produce. It lives in .env,
 	// which the child re-reads.
 	writeEnvFile(t, dir, port)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(childEnv("PORT", "HOST"),
 		"HOST=127.0.0.1",
 		"DB_TYPE=sqlite",
 		"DB_DSN=file:"+filepath.Join(dir, "e2e.db"),
@@ -80,6 +81,10 @@ func TestTheProcessReallyRestartsItself(t *testing.T) {
 		// temp directory — and pointing MODELS_CONFIG somewhere real is the
 		// difference between testing the restart and testing the boot sequence.
 		"MODELS_CONFIG="+mustAbs(t, "../../config/models.yaml"),
+		// Hermetic: the child re-reads .env via godotenv, and a stale
+		// DEFAULT_CHAT_MODEL in the ambient environment would otherwise win
+		// over the catalog's "chat" id and abort the boot we are testing.
+		"DEFAULT_CHAT_MODEL=chat",
 		"OAUTH_CONFIG="+filepath.Join(dir, "no-oauth.yaml"),
 		"PROVIDERS_CONFIG="+filepath.Join(dir, "no-providers.yaml"),
 	)
@@ -232,6 +237,33 @@ var buildOnce = sync.OnceValues(func() (string, error) {
 	}
 	return bin, nil
 })
+
+// childEnv returns the inherited environment with the keys this file owns
+// in .env removed. godotenv never overrides a real environment variable, so an
+// ambient PORT (a developer's shell, a CI runner, a direnv hook) would silently
+// beat the PORT the test wrote to .env — and "the address moved" is the whole
+// thing this file exists to observe. HOST is stripped too and re-added
+// explicitly below, so an ambient HOST= cannot leak in.
+func childEnv(drop ...string) []string {
+	out := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		key := kv
+		if i := strings.IndexByte(kv, '='); i >= 0 {
+			key = kv[:i]
+		}
+		skip := false
+		for _, d := range drop {
+			if key == d {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
 
 // writeEnvFile puts PORT where a restart can change it.
 func writeEnvFile(t *testing.T, dir string, port int) {
@@ -410,7 +442,7 @@ func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
 	writeEnvFile(t, dir, oldPort)
 	cmd := exec.Command(bin)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(childEnv("PORT", "HOST"),
 		"HOST=127.0.0.1",
 		"DB_TYPE=sqlite",
 		"DB_DSN=file:"+filepath.Join(dir, "e2e.db"),
@@ -420,6 +452,10 @@ func TestChangingTheAddressRebindsInsteadOfInheriting(t *testing.T) {
 		"COOKIE_SECRET=e2e-cookie-secret-long-enough-too",
 		"STATIC_DIR="+filepath.Join(dir, "nothing"),
 		"MODELS_CONFIG="+mustAbs(t, "../../config/models.yaml"),
+		// Hermetic: the child re-reads .env via godotenv, and a stale
+		// DEFAULT_CHAT_MODEL in the ambient environment would otherwise win
+		// over the catalog's "chat" id and abort the boot we are testing.
+		"DEFAULT_CHAT_MODEL=chat",
 		"OAUTH_CONFIG="+filepath.Join(dir, "no-oauth.yaml"),
 		"PROVIDERS_CONFIG="+filepath.Join(dir, "no-providers.yaml"),
 	)

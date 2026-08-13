@@ -146,7 +146,22 @@ func (r chatRepo) ListMessages(ctx context.Context, threadID, sessionID, before 
 }
 
 func (r chatRepo) AppendMessages(ctx context.Context, msgs []domain.ChatMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
 	now := nowMillis()
+	// Same anchor logic as the SQL store: the `$lt before` cursor has no id
+	// tie-break, so each batch must start strictly past the thread's current
+	// maximum — two batches landing in one millisecond would otherwise produce
+	// colliding timestamps that the cursor permanently skips.
+	var latest chatMsgDoc
+	if err := r.c("chat_messages").FindOne(ctx,
+		bson.M{"thread_id": msgs[0].ThreadID},
+		options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})).Decode(&latest); err == nil {
+		if latest.CreatedAt+1 > now {
+			now = latest.CreatedAt + 1
+		}
+	}
 	docs := make([]interface{}, len(msgs))
 	for i, m := range msgs {
 		if m.ID == "" {

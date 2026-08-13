@@ -202,6 +202,16 @@ func TestProposalSupersedeSparesDeliveredCards(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// All three creates can land in the same millisecond on a fast machine,
+	// and Supersede's same-millisecond tie breaks on id order — a UUID coin
+	// flip. Backdate the two older cards so the keeper is unambiguously the
+	// newest and the test asserts the predicate, not the tie-break.
+	for _, id := range []string{old.ID, shown.ID} {
+		if _, err := s.exec(ctx, `UPDATE proposals SET created_at = created_at - 1000 WHERE id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	n, err := s.Proposals().Supersede(ctx, "s1", "gap", fresh.ID)
 	if err != nil {
 		t.Fatal(err)

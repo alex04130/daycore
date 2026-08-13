@@ -77,6 +77,11 @@ func TestInstalledTreeBoots(t *testing.T) {
 	for k, v := range envMap(t, dir) {
 		t.Setenv(k, v)
 	}
+	// Hermetic: a stale DEFAULT_CHAT_MODEL in the ambient environment (the
+	// developer's shell, a direnv hook) would otherwise poison config.Load —
+	// godotenv never overrides a real env var, and the catalog rejects an id
+	// that is not in models.yaml. The seeded catalog guarantees "chat".
+	t.Setenv("DEFAULT_CHAT_MODEL", "chat")
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("the generated .env does not load: %v", err)

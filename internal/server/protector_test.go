@@ -74,6 +74,12 @@ func TestMarkAwakeWritesTheLiveMarks(t *testing.T) {
 	// every interaction and never reaches twenty hours.
 	first := p.RunSince
 	s.awake.last = map[string]time.Time{} // clear the 5-minute throttle
+	// The two live marks are millisecond-granular on every backend (SQL
+	// toMillis, BSON datetime), so a second signal that lands in the same
+	// millisecond is indistinguishable from a stale retry and dropped. Sleep
+	// long enough to guarantee a distinct millisecond — the throttle map, not
+	// the clock, is what this test is about.
+	time.Sleep(2 * time.Millisecond)
 	s.markAwake(sid)
 	if err := s.WaitBackground(ctx); err != nil {
 		t.Fatal(err)
@@ -91,13 +97,21 @@ func TestProtectorFiresAfterTwentyHours(t *testing.T) {
 	s, w, sid := protectorServer(t)
 	cfg := rhythmConfig()
 
+	// The second signal must land in a DIFFERENT millisecond from the first.
+	// Touch is millisecond-granular on all four backends (SQL toMillis, BSON
+	// datetime) and compares strictly (<), so two signals whose timestamps
+	// truncate to the same millisecond read as a stale retry and the second
+	// one is dropped — run_since never advances and NeedsProtector stays
+	// false. Different lastAgo values (1min → 1s) keep the two writes
+	// distinguishable without sleeping, which would only make the test
+	// machine-speed-dependent in the other direction.
 	awakeFor(t, s, sid, cfg.ProtectAfter-time.Hour, time.Minute)
 	w.checkProtector(sid, "UTC")
 	if got := protectorCards(t, s, sid); len(got) != 0 {
 		t.Fatalf("fired at %v, before the threshold: %+v", cfg.ProtectAfter-time.Hour, got)
 	}
 
-	awakeFor(t, s, sid, cfg.ProtectAfter+time.Hour, time.Minute)
+	awakeFor(t, s, sid, cfg.ProtectAfter+time.Hour, time.Second)
 	w.checkProtector(sid, "UTC")
 	cards := protectorCards(t, s, sid)
 	if len(cards) != 1 {

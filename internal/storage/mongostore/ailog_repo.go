@@ -137,8 +137,15 @@ func (r aiLogRepo) Stats(ctx context.Context) (*domain.AdminStats, error) {
 	return &s, nil
 }
 
-func nowMillis() int64              { return time.Now().UnixMilli() }
-func fromMillis(ms int64) time.Time { return time.UnixMilli(ms) }
+func nowMillis() int64 { return time.Now().UnixMilli() }
+
+// fromMillis rebuilds a timestamp from a stored BSON datetime. BSON datetimes
+// are UTC milliseconds, so the returned value carries the UTC location —
+// without .UTC() it would carry the PROCESS's local zone, and a deployment not
+// running in UTC would serve timestamps whose RFC 3339 spelling differs from
+// the sqlstore backends (which round-trip as UTC). Four backends must answer
+// one shape.
+func fromMillis(ms int64) time.Time { return time.UnixMilli(ms).UTC() }
 
 // ── the daily rollup ────────────────────────────────────────────────────────
 

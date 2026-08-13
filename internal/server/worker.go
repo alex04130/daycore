@@ -698,8 +698,19 @@ func (w *Worker) loadSessionPrefs(ctx context.Context, sid string) SessionPrefs 
 }
 
 // parsePrefs decodes the JSON preferences string or returns defaults on any error.
+//
+// "null" and the empty/whitespace string are treated as "never configured"
+// rather than decoded: json.Unmarshal happily turns all three into the zero
+// value, and a zero SessionPrefs has every toggle OFF — one legacy row would
+// silently switch off every proactive feature the defaults turn on. Decoding
+// into a copy of the defaults (rather than the zero value) keeps the same
+// property for partial objects: a blob that only names doNotDisturb leaves the
+// toggles it does not name on their defaults instead of off.
 func parsePrefs(raw string) SessionPrefs {
-	var p SessionPrefs
+	if strings.TrimSpace(raw) == "" || strings.TrimSpace(raw) == "null" {
+		return DefaultPrefs()
+	}
+	p := DefaultPrefs()
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return DefaultPrefs()
 	}

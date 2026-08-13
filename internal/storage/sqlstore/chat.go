@@ -136,7 +136,26 @@ func (r chatRepo) DeleteThreadMessages(ctx context.Context, sessionID, threadID 
 }
 
 func (r chatRepo) AppendMessages(ctx context.Context, msgs []domain.ChatMessage) error {
+	if len(msgs) == 0 {
+		return nil
+	}
 	now := nowMillis()
+	// The backward paging cursor is `created_at < before` — millisecond only,
+	// no id tie-break. Distinct timestamps WITHIN one batch do not help when
+	// two batches land in the same millisecond (two companion requests racing
+	// is the ordinary case): every row of the later batch collides with one of
+	// the earlier, and the cursor permanently skips the colliding row.
+	// Anchoring each batch strictly past the thread's current maximum makes
+	// ties impossible to create, which is the property the cursor needs.
+	var max int64
+	if err := r.queryRow(ctx,
+		`SELECT COALESCE(MAX(created_at), 0) FROM chat_messages WHERE thread_id = ?`,
+		msgs[0].ThreadID).Scan(&max); err != nil {
+		return err
+	}
+	if max+1 > now {
+		now = max + 1
+	}
 	for i := range msgs {
 		if msgs[i].ID == "" {
 			msgs[i].ID = uuid.NewString()

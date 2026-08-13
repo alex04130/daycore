@@ -121,6 +121,18 @@ func decodePHC(encoded string) (Argon2Params, []byte, []byte, error) {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.Memory, &p.Time, &p.Threads); err != nil {
 		return p, nil, nil, ErrBadHashFormat
 	}
+	// Degenerate cost parameters must be refused BEFORE argon2 sees them: with
+	// m=0 or t=0 the reference implementation panics (it requires
+	// memory >= 8*threads and at least one pass), and a panic here is a login
+	// endpoint that any corrupted hash row can turn into a 500. The upper
+	// bounds keep a hand-crafted hash from allocating absurd memory — the
+	// hasher itself only ever writes 64–128 MiB, so anything far beyond that
+	// is garbage rather than a cost we chose.
+	if p.Memory == 0 || p.Time == 0 || p.Threads == 0 ||
+		p.Memory < 8*uint32(p.Threads) ||
+		p.Memory > 1<<20 || p.Time > 32 || p.Threads > 64 {
+		return p, nil, nil, ErrBadHashFormat
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
 		return p, nil, nil, ErrBadHashFormat

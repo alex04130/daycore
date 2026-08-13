@@ -197,15 +197,29 @@ func (r rhythmRepo) Touch(ctx context.Context, sessionID string, runSince, lastS
 	// second place where "07:30" is written down. A caller that reads this row
 	// sees Source "" and Wake "" and asks rhythm for the fallback, which is where
 	// the answer lives.
-	if _, ierr := r.exec(ctx,
+	_, ierr := r.exec(ctx,
 		`INSERT INTO rhythm_profiles (session_id, wake_hm, sleep_hm, source, learned_days, run_since, last_signal_at, updated_at)
 		 VALUES (?, '', '', '', 0, ?, ?, ?)`,
-		sessionID, toMillis(runSince), last, now); ierr == nil {
+		sessionID, toMillis(runSince), last, now)
+	if ierr == nil {
 		return nil
 	}
-	// The insert lost to a concurrent writer whose mark is newer than ours.
-	// Nothing to do — a stale signal being ignored is the correct outcome, not an
-	// error.
+	// The insert lost. Two very different causes share this one statement, and
+	// swallowing both as "a stale signal" turns a storage outage into a quiet
+	// skip — the worker keeps reporting health while every touch fails. Read
+	// the row back to tell them apart: a row that exists with a mark at least
+	// as new as ours means a concurrent writer won, which is the correct
+	// outcome for a stale signal and not an error. No such row means the
+	// failure was real (constraint, corruption, outage) and must surface —
+	// mongostore propagates it, and the four backends answer the same call
+	// the same way.
+	var one int
+	qerr := r.queryRow(ctx,
+		`SELECT 1 FROM rhythm_profiles WHERE session_id = ? AND last_signal_at >= ?`,
+		sessionID, last).Scan(&one)
+	if errors.Is(qerr, sql.ErrNoRows) {
+		return ierr
+	}
 	return nil
 }
 

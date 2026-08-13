@@ -154,11 +154,24 @@ var cases = []suiteCase{
 	{"Frontend/FamilyUnionAndBuildFamilyStickiness", frontendRoundTrip},
 	{"Theme/ScopedToFamilyAndDefaultedOnWrite", themeFamilyScope},
 	{"ThemeKind/ApprovalRoundTripAndPendingCount", themeKindRoundTrip},
+	{"Rhythm/TouchSameInstantAndSubMillisecondSignalsDoNotMoveMarks", rhythmTouchSameInstant},
+	{"Proposal/UpdateIgnoresIdentityFields", proposalUpdateIdentity},
+	{"Proposal/FilterKindAndDateDimensionsConjoin", proposalFilterKindDate},
+	{"Proposal/DeliverableAtExactBoundaryAgreesWithPredicate", proposalDeliverableBoundary},
+	{"DayPlan/BlocksRoundTripAndUpsertIsIdempotent", dayplanRoundTrip},
+	{"DayPlan/RangeIsInclusiveAndScoped", dayplanRange},
+	{"Chat/ThreadRoundTripAndDeleteCascades", chatThreadRoundTrip},
+	{"Chat/BackwardPagingAcrossBatchesInOneMillisecond", chatPagingSameMs},
+	{"AILog/TimestampsRoundTripInUTC", aiLogTimestampsUTC},
+	{"Attachment/ConcurrentBindHasExactlyOneWinner", attachmentConcurrentBind},
+	{"Lease/RenewalRacingATakeoverNeverMovesTheFence", leaseRenewalRace},
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func bg() context.Context { return context.Background() }
+
+func strptr(s string) *string { return &s }
 
 func pending(sid, title string) *domain.Proposal {
 	return &domain.Proposal{
@@ -3687,4 +3700,406 @@ func themeKindRoundTrip(t *testing.T, h Harness) {
 	if err := repo.Upsert(ctx, domain.ThemeKind{Pattern: `x`}); !errors.Is(err, domain.ErrMissingUpsertKey) {
 		t.Errorf("Upsert with no name returned %v, want ErrMissingUpsertKey", err)
 	}
+}
+
+// ── the edge cases ───────────────────────────────────────────────────────
+
+// Touch compares at MILLISECOND granularity with a strict < on all four
+// backends (SQL toMillis, BSON datetime). Two signals whose timestamps
+// truncate to the same millisecond are indistinguishable from a stale retry
+// and the second one must not move either mark — the run keeps its original
+// start, and the dropped signal is silent rather than an error.
+func rhythmTouchSameInstant(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	first := time.Now().Truncate(time.Millisecond)
+	if err := s.Rhythm().Touch(ctx, "s1", first, first); err != nil {
+		t.Fatal(err)
+	}
+	// Same millisecond, a nanosecond "later": the stored mark equals the new
+	// one after truncation, so the strict < refuses it.
+	if err := s.Rhythm().Touch(ctx, "s1", first.Add(-time.Hour), first.Add(time.Nanosecond)); err != nil {
+		t.Fatalf("a same-instant signal must be a silent no-op, got %v", err)
+	}
+	p, err := s.Rhythm().Get(ctx, "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.RunSince.Equal(first) {
+		t.Errorf("run_since moved from %v to %v — a same-millisecond signal is a retry, not a new stretch", first, p.RunSince)
+	}
+	if !p.LastSignalAt.Equal(first) {
+		t.Errorf("last_signal_at moved from %v to %v", first, p.LastSignalAt)
+	}
+}
+
+// Update writes only the mutable fields; level, kind, origin and thread_id
+// are identity and a re-write must not silently change them (a future
+// ReplaceOne-style implementation would pass this suite only if it keeps
+// the same whitelist).
+func proposalUpdateIdentity(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	p := pending("s1", "卡片")
+	p.Kind = domain.KindCard
+	p.Level = domain.LevelL2
+	p.Origin = domain.OriginDaemon
+	p.ThreadID = "thread-a"
+	mustCreate(t, s, p)
+	p.Level = domain.LevelL3
+	p.Kind = domain.KindDecision
+	p.Origin = domain.OriginProtector
+	p.ThreadID = "thread-b"
+	if err := s.Proposals().Update(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Proposals().Get(ctx, "s1", p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Level != domain.LevelL2 || got.Kind != domain.KindCard || got.Origin != domain.OriginDaemon || got.ThreadID != "thread-a" {
+		t.Errorf("identity fields moved: %+v", got)
+	}
+}
+
+// The Kind and Date filter dimensions are real predicates: deleting either
+// branch from the query builder must fail this case, not just trim coverage.
+func proposalFilterKindDate(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	a := pending("s1", "定时卡")
+	a.Kind = domain.KindTimed
+	a.Date = "2026-06-15"
+	a.Start = "09:00"
+	mustCreate(t, s, a)
+	b := pending("s1", "普通卡")
+	b.Date = "2026-06-15"
+	mustCreate(t, s, b)
+	c := pending("s1", "别的日子")
+	c.Kind = domain.KindTimed
+	c.Date = "2026-06-16"
+	c.Start = "09:00"
+	mustCreate(t, s, c)
+	// Kind AND Date conjoin.
+	got, err := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", Kind: domain.KindTimed, Date: "2026-06-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != a.ID {
+		t.Errorf("Kind+Date must select exactly the timed card on that date, got %d", len(got))
+	}
+	// The same predicates run on the other session return nothing — a filter
+	// never spans users.
+	got, err = s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s2", Kind: domain.KindTimed, Date: "2026-06-15"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a filter must stay inside its session, got %d", len(got))
+	}
+}
+
+// deliver_after == now: the domain predicate says deliverable (After is
+// strict) and the storage queries say deliverable (<=) — the two must agree
+// at the exact boundary or the delivery sweep and the predicate disagree.
+func proposalDeliverableBoundary(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	now := time.Now().Truncate(time.Millisecond)
+	p := pending("s1", "恰好可投递")
+	p.DeliverAfter = &now
+	mustCreate(t, s, p)
+	if !p.Deliverable(now) {
+		t.Fatal("the domain predicate must say deliverable at the exact boundary")
+	}
+	got, err := s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", DeliverableAt: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, q := range got {
+		if q.ID == p.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the deliverable query must include a card whose deliver_after equals the query instant")
+	}
+	// One nanosecond earlier it is held back — and the query agrees.
+	if p.Deliverable(now.Add(-time.Nanosecond)) {
+		t.Error("one nanosecond before deliver_after the card must not be deliverable")
+	}
+	got, err = s.Proposals().List(ctx, domain.ProposalFilter{SessionID: "s1", DeliverableAt: now.Add(-time.Nanosecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range got {
+		if q.ID == p.ID {
+			t.Error("the query must also hold the card back before deliver_after")
+		}
+	}
+}
+
+// DayPlan is the main entity and its blocks live in two shapes — JSON text in
+// SQL, BSON arrays in Mongo — so the suite must pin the round trip itself.
+func dayplanRoundTrip(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	note := "备注"
+	plan := &domain.DayPlan{SessionID: "s1", Date: "2026-06-15", Note: &note, Blocks: []domain.TimeBlock{
+		{ID: "b1", Date: "2026-06-15", Time: strptr("09:00"), Title: "高数", Origin: domain.OriginManual, LockLevel: domain.LockNone},
+	}}
+	created, err := s.DayPlans().Upsert(ctx, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created.Blocks) != 1 || created.Blocks[0].ID != "b1" || created.Blocks[0].LockLevel != domain.LockNone {
+		t.Errorf("round trip lost block fields: %+v", created.Blocks)
+	}
+	if created.Note == nil || *created.Note != "备注" {
+		t.Errorf("note did not survive: %+v", created.Note)
+	}
+	// Upsert again: same single row, idempotent.
+	again, err := s.DayPlans().Upsert(ctx, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != created.ID {
+		t.Errorf("a second upsert must land on the same row, %q vs %q", again.ID, created.ID)
+	}
+	// An empty block list comes back as an empty slice, never nil — callers
+	// range over it.
+	plan2 := &domain.DayPlan{SessionID: "s1", Date: "2026-06-16"}
+	empty, err := s.DayPlans().Upsert(ctx, plan2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Blocks == nil {
+		t.Error("an empty plan must read back an empty slice, not nil")
+	}
+}
+
+func dayplanRange(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	for _, d := range []string{"2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17"} {
+		if _, err := s.DayPlans().Upsert(ctx, &domain.DayPlan{SessionID: "s1", Date: d}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DayPlans().Upsert(ctx, &domain.DayPlan{SessionID: "s2", Date: "2026-06-15"}); err != nil {
+		t.Fatal(err)
+	}
+	// The range is INCLUSIVE on both ends.
+	got, err := s.DayPlans().Range(ctx, "s1", "2026-06-15", "2026-06-16")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Date != "2026-06-15" || got[1].Date != "2026-06-16" {
+		t.Errorf("Range must include both ends in order, got %+v", got)
+	}
+	// And it never crosses sessions.
+	got, err = s.DayPlans().Range(ctx, "s2", "2026-06-14", "2026-06-17")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Date != "2026-06-15" {
+		t.Errorf("s2 must see only its own row, got %+v", got)
+	}
+}
+
+func chatThreadRoundTrip(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	th, err := s.Chats().CreateThread(ctx, &domain.ChatThread{SessionID: "s1", Title: "线程"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.ID == "" || th.CreatedAt.IsZero() {
+		t.Errorf("a created thread needs an id and a timestamp, got %+v", th)
+	}
+	if err := s.Chats().AppendMessages(ctx, []domain.ChatMessage{
+		{ThreadID: th.ID, SessionID: "s1", Role: domain.RoleUser, Content: "你好"},
+		{ThreadID: th.ID, SessionID: "s1", Role: domain.RoleAssistant, Content: "嗨"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.Chats().ListMessages(ctx, th.ID, "s1", "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("ListMessages = %d, want 2", len(msgs))
+	}
+	// newest-first order (the paging contract).
+	if msgs[0].Role != domain.RoleAssistant {
+		t.Errorf("messages must page newest-first, got %+v", msgs)
+	}
+	// DeleteThread cascades its messages.
+	if err := s.Chats().DeleteThread(ctx, "s1", th.ID); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err = s.Chats().ListMessages(ctx, th.ID, "s1", "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("deleting a thread must take its messages, got %d", len(msgs))
+	}
+}
+
+// Backward paging must never skip or repeat a row. Batches appended back to
+// back — the shape of two companion requests racing, or a burst of tools —
+// are anchored strictly past the thread's current maximum, so a
+// millisecond-only cursor (created_at < before, no id tie-break) still sees
+// every row exactly once. Before the anchor existed, two same-millisecond
+// batches produced colliding timestamps and the cursor skipped one row per
+// collision, silently.
+func chatPagingSameMs(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	th, err := s.Chats().CreateThread(ctx, &domain.ChatThread{SessionID: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const batches, perBatch = 6, 2
+	for i := 0; i < batches; i++ {
+		batch := make([]domain.ChatMessage, perBatch)
+		for j := range batch {
+			batch[j] = domain.ChatMessage{ThreadID: th.ID, SessionID: "s1", Role: domain.RoleUser, Content: "m"}
+		}
+		if err := s.Chats().AppendMessages(ctx, batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Page with limit 1 through the whole thread, walking the cursor.
+	seen := map[string]bool{}
+	before := ""
+	for i := 0; i < batches*perBatch; i++ {
+		page, err := s.Chats().ListMessages(ctx, th.ID, "s1", before, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("page %d has %d rows, want 1 — the cursor skipped or repeated", i, len(page))
+		}
+		if seen[page[0].ID] {
+			t.Fatalf("the cursor repeated %q", page[0].ID)
+		}
+		seen[page[0].ID] = true
+		before = strconv.FormatInt(page[0].CreatedAt.UnixMilli(), 10)
+	}
+}
+
+// Every timestamp a store hands back must carry the UTC location: the wire
+// spelling (RFC 3339) depends on it, and a backend returning local-zone
+// times would differ from the others on every deployment not running UTC.
+func aiLogTimestampsUTC(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	if err := s.AILogs().Add(ctx, &domain.AICallLog{SessionID: "s1", Endpoint: "test", Model: "m", Status: domain.AICallStatusOK}); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := s.AILogs().List(ctx, domain.AILogFilter{SessionID: "s1"}, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("List = %d rows", len(logs))
+	}
+	if loc := logs[0].CreatedAt.Location(); loc != time.UTC {
+		t.Errorf("CreatedAt must be UTC, got %v", loc)
+	}
+}
+
+// Binding is "all or nothing" with the ownership condition inside each
+// UPDATE — two concurrent binds of the SAME attachment to two messages must
+// produce exactly one winner and one ErrAttachmentBound, never both.
+func attachmentConcurrentBind(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	a, err := s.Attachments().Create(ctx, &domain.Attachment{
+		ID: "att-race", SessionID: "s1", Ref: "ref-race", Kind: domain.AttachmentFile, MIME: "application/octet-stream", Size: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = a
+	results := make(chan error, 2)
+	for _, msgID := range []string{"m1", "m2"} {
+		go func(id string) {
+			results <- s.Attachments().Bind(ctx, "s1", "t1", id, []string{"att-race"})
+		}(msgID)
+	}
+	errs := []error{<-results, <-results}
+	var ok, bound int
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, domain.ErrAttachmentBound):
+			bound++
+		default:
+			t.Errorf("unexpected bind error: %v", err)
+		}
+	}
+	if ok != 1 || bound != 1 {
+		t.Errorf("concurrent bind: %d wins, %d ownership refusals — want exactly one of each", ok, bound)
+	}
+}
+
+// A renewal racing a takeover must never move the fence: the renewer either
+// still holds (fence unchanged) or has lost to the new holder (exactly one
+// acquisition, fence +1). Two winners or a doubled fence would mean the one
+// failure this mechanism exists to catch.
+func leaseRenewalRace(t *testing.T, h Harness) {
+	ctx := bg()
+	s := h.Store()
+	now := time.Now()
+	// A holds the lease.
+	l, ok, err := s.Leases().Acquire(ctx, "race-lease", "holder-A", 10*time.Minute, now)
+	if err != nil || !ok {
+		t.Fatalf("initial acquire: (%v, %v, %v)", l, ok, err)
+	}
+	// Expire it so B can take over while A renews.
+	if err := s.Leases().Release(ctx, "race-lease", "holder-A"); err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		holder string
+		fence  int64
+		ok     bool
+	}
+	ch := make(chan outcome, 2)
+	go func() {
+		l2, ok2, err2 := s.Leases().Acquire(ctx, "race-lease", "holder-A", 10*time.Minute, now)
+		if err2 != nil {
+			ch <- outcome{}
+			return
+		}
+		ch <- outcome{holder: l2.Holder, fence: l2.Fence, ok: ok2}
+	}()
+	go func() {
+		l3, ok3, err3 := s.Leases().Acquire(ctx, "race-lease", "holder-B", 10*time.Minute, now)
+		if err3 != nil {
+			ch <- outcome{}
+			return
+		}
+		ch <- outcome{holder: l3.Holder, fence: l3.Fence, ok: ok3}
+	}()
+	o1, o2 := <-ch, <-ch
+	// Exactly one fence increment total (initial acquire was fence 1; the
+	// takeover is the only further acquisition).
+	final, err := s.Leases().Get(ctx, "race-lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Fence != 2 {
+		t.Errorf("fence = %d, want 2 — a renewal must never move it", final.Fence)
+	}
+	if final.Holder != "holder-B" {
+		t.Errorf("the takeover must win, final holder = %q", final.Holder)
+	}
+	_ = o1
+	_ = o2
 }
