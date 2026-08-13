@@ -358,7 +358,7 @@ F8b 排最后不是因为不重要，是因为**它的成本不随时间涨** �
 积着的：
 - ⬜ 助手该在什么时机主动问一句「你在哪个城市」（`set_home_location` 有了，但主动问那句话没有）
 - ⬜ 工具描述**全是硬编码 zh-CN** —— 英文用户的模型读的也是中文工具带
-- ⬜ en-US 消息目录 241 条未翻（δ 留下的数字，`TestReportCatalogCoverage` 会打印）
+- ⬜ en-US 消息目录 **293** 条未翻（`TestReportCatalogCoverage` 打印当前数字；每补一条后端文案它就涨，所以别在文档里手抄它）
 - ✅ 源描述进提示词（2026-08-09）——**但落在 L3 不是 L1**，`provider-protocol.md` 说的 `companion_agent.tmpl` 是错的家：L1 是纯规则清单、零插值、有意为之，因为它是边界块。**会变的规则不是规则**，每轮重渲染的边界块没人能据以推理。而 L3 本来就是每轮的数据块、本来就带 `WeatherSummary`、本来就每轮不同 —— 放这里没有把任何原本稳定的东西弄不稳定。初始文案已给，精修待作者
 
 ## 作者裁决待落地（2026-08-09）
@@ -556,7 +556,19 @@ kind: "one-of[blur,
 
 ⚠️ **运行时匹配路径的地方也得改**，而且是这次最容易漏的一类：降级模式的白名单（`/api/admin/` 前缀）、admin cookie 的 `Path`、上传中间件的 `/api/import/` 判断。降级白名单漏了的症状是**降级控制台拒绝自己的登录**，503 —— 正是 F4a 整个约束要防的那件事。
 
-⬜ **一个已知限制记在汀 里**：汀 的路径前缀还是写死的常量。一个不版本锁的 build 应该从握手里读前缀、并且对一个它不会说的 major 明确拒绝 —— 汀 检查了 major，但仍然用常量拼路径，所以一个 v3 后端给它的是一串 404 而不是一句清楚的拒绝。要修得让握手报出自己的前缀，那是后端改动。
+⬜ **一个已知限制**（2026-08-12 更新：修掉了一半，另一半还在）。
+
+前缀仍是常量（现在在 `packages/core` 的 `SPEAKS`，四端共用），而一个不版本锁的
+build 应该从握手里读它。两个方向的失败**不对称**：
+
+- **后端更旧** ✅ 已拦。`MIN_API`/`MIN_API_MINOR` 从 `SPEAKS` 推导，`boot()` 两个数
+  都检并明确拒绝。（此前 `MIN_API = 1` 而前缀写死 `/api/v2`，对着 v1 后端读作
+  `1 < 1`、放行、然后每个请求 404 —— 正是这条要防的。）
+- **后端更新** ⬜ 还没拦。一个 v3 后端报 `apiVersion: 3`，`3 < 2` 为假 → 放行 →
+  请求仍然发往 `/api/v2`，于是**要么 404，要么静默命中一个后端为兼容而留着的旧面**。
+  后者更糟：它不报错，只是慢慢地对不上。
+
+要修得让握手**报出自己的前缀**（后端改动），前端照着用而不是自己拼。
 
 ### 共享层抽出来了：`packages/core`（2026-08-11）
 
@@ -577,7 +589,7 @@ kind: "one-of[blur,
 
 ⚠️ **`packages/core/src/paths.ts` 是 `internal/apipath` 的镜像，两份实现两种语言，构建里没有任何东西让它们见面。** 后端 major 一动，这个文件得跟着动，忘了的症状是所有请求同时 404。没做成运行时读取，因为客户端得知道往哪发**第一个**请求 —— 包括那个本来会告诉它前缀的请求。
 
-⬜ **阶段 κ 的未解问题**：子仓没法 `file:../../packages/core`。到时候要么发私有 registry、要么 vendor。**现在不解，因为解法取决于那时候子仓怎么托管**，提前选一个就是在给一个还没有的约束写代码。
+~~⬜ **阶段 κ 的未解问题**：子仓没法 `file:../../packages/core`~~ —— **已解并落地（2026-08-12）**：core 独立成仓，四端用 git 依赖钉 tag，超级仓加 npm workspaces。四条路都实测过，见下面「阶段 κ」。
 
 ### 纸屿 · 顺流落地（2026-08-11）
 
@@ -927,21 +939,20 @@ core。`make core-dev` 就是为这种情况存在的（把四端指向工作区
 - **公开 npm 往后放**：它**不可逆**（版本撤不回、名字被占）。git 依赖随时能换成 npm，
   反过来不行。等第一个第三方前端真的出现再发
 
-#### ⬜ 只剩人做的那一步
+#### ✅ κ 已经切完了（2026-08-12）
 
-脚本不建仓 —— **建仓是账号层面的动作，应该由人做**。在 `github.com/alex04130/` 下建
-五个**空仓**，然后：
+`github.com/anazdaycore/` 下五个仓，全部带历史：`daycore-frontendcore`
+`daycore-ting` `daycore-zhiyu` `daycore-liuli` `daycore-liuli-classic`。超级仓是五个
+submodule（相对 URL），core 钉 `v2.2.0`，四端钉同一个 tag。
 
-```bash
-./scripts/split-repos.sh          # 先看计划
-./scripts/split-repos.sh --go     # 真做
-```
+⚠️ **真跑时炸过一次**，五个仓推完才在第三步倒下（本机只在仓局部配了 git 身份，临时
+clone 继承不到）。教训不是「加一条身份检查」，是**前置清单要覆盖后面每一步需要的
+东西**；一条在副作用之后才触发的前置等于没有前置。脚本因此也能 `--resume`。
 
-需要的空仓：`daycore-core` `daycore-ting` `daycore-zhiyu` `daycore-liuli`
-`daycore-liuli-classic`。
-
-⬜ 切完之后第一件该想的：**core 的版本号语义**（见上）。四端现在会钉 `v0.1.0`，
-而那个数字今天不表示任何承诺 —— 发第二个 tag 之前要先决定它表示什么。
+⚠️ **还踩了第二个**：改完 pin 没重生成四个子仓的 `package-lock.json`。lock 记的是
+解析后的 commit，所以独立 clone 的人拿到的仍是旧 core，而**超级仓里发现不了**（那边
+跑的是根上那份 lock）。是「从 GitHub 独立 clone 出来构建」这一步验出来的 —— 那一步
+值得每次发布都跑。
 
 ### HTTP 直写路径补上账本：六条写路径现在可撤销了（2026-08-12）
 
@@ -1053,5 +1064,5 @@ Lease 选主 + 场次占有已接线，见 [ARCHITECTURE.md「多实例：选主
 - `Capabilities.Stream` / `Thinking` 零读者。
 - anthropic format 给每条 system 打 `cache_control` 且**无上限**，而 Anthropic 每请求最多 4 个断点（今天最多 2 条，未破但无防线）。
 - 早晚简报的天气地点**写死北京**（`worker.go` 自己写着 "future: session setting"）。⚠️ ζ-4 只解决了时区，**地点是另一件事** —— 时区不能反推经纬度。
-- 一致性套件 32 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
-- 前端 `i18n.js` 是硬编码双语字典。
+- 一致性套件 58 例，覆盖 27 个 repository 里的 10 组（Lease/JobRun/Proposal/Rapport/Rhythm/Locale/OpLog/Upsert/List/Delete）——面在扩，但过半 repo 仍无行为用例。
+- 现役 `web/frontend` 的 `i18n.js` 是硬编码双语字典（**四个新前端不是** —— 它们运行时 fetch `public/locales/*.json`，加一门语言是丢一个文件。这条只剩在那个待替换的前端上）。
