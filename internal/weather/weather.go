@@ -11,7 +11,6 @@ package weather
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -157,12 +156,4 @@ func DefaultEntries(o Options) []adapters.Entry {
 		out = append(out, adapters.Entry{ID: "openweathermap", Format: adapters.FormatBuiltin, Impl: "openweathermap"})
 	}
 	return out
-}
-
-// OptionsFromEnv reads the two keys a builtin provider may need.
-func OptionsFromEnv() Options {
-	return Options{
-		QWeatherKey:       os.Getenv("QWEATHER_API_KEY"),
-		OpenWeatherMapKey: os.Getenv("OPENWEATHERMAP_API_KEY"),
-	}
 }

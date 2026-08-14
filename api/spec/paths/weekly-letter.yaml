@@ -1,0 +1,14 @@
+/api/weekly-letter:
+  get:
+    operationId: getWeeklyLetter
+    tags: [weekly-letter]
+    summary: The latest Sunday-evening prose letter (周信), or null when none is written yet.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                letter: { oneOf: [ { $ref: '#/components/schemas/WeeklyLetter' }, { type: 'null' } ] }

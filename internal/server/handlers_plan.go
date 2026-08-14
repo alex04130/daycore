@@ -12,11 +12,15 @@ import (
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
 	"daycore/internal/schedule"
+
+	"github.com/google/uuid"
 )
 
 func init() {
 	// 逆操作与写入放在同一个文件 —— 改写入的人正好看得见它。
 	registerRevert("plan_upsert", (*Server).revertPlanUpsert)
+	registerIrreversible("proposal_reschedule",
+		"requesting a reschedule only creates a pending proposal. The actual write is the acceptance (plan_add, separately undoable); undoing the request would mean un-asking, which rejecting the card already does.")
 
 	registerRoutes("plans", func(s *Server, mux Mux) {
 		mux.HandleFunc("GET /api/plan", s.handlePlanGet)
@@ -24,6 +28,7 @@ func init() {
 		mux.HandleFunc("PATCH /api/plan", s.handlePlanPatch)
 		mux.HandleFunc("GET /api/plan/range", s.handlePlanRange)
 		mux.HandleFunc("POST /api/plan/lock", s.handlePlanLock)
+		mux.HandleFunc("POST /api/plan/reschedule", s.handlePlanReschedule)
 	})
 }
 
@@ -281,8 +286,11 @@ func (s *Server) handlePlanRange(w http.ResponseWriter, r *http.Request) {
 // ── manual lock ─────────────────────────────────────────────────────────────
 
 const (
-	keyPlanLockBadLevel = "plan.lock.badLevel"
-	keyPlanLockNoBlock  = "plan.lock.noBlock"
+	keyPlanLockBadLevel  = "plan.lock.badLevel"
+	keyPlanLockNoBlock   = "plan.lock.noBlock"
+	keyRescheduleTitle   = "plan.reschedule.title"
+	keyRescheduleSummary = "plan.reschedule.summary"
+	keyRescheduleReason  = "plan.reschedule.reason"
 )
 
 func init() {
@@ -293,6 +301,22 @@ func init() {
 	i18n.Register(keyPlanLockNoBlock, i18n.Text{
 		"zh-CN": "这一天没有这个块",
 		"en-US": "no such block on that day",
+	})
+	i18n.Register(keyRescheduleTitle, i18n.Text{
+		"zh-CN": "重新安排：%s",
+		"en-US": "Reschedule: %s",
+	})
+	i18n.Register(keyRescheduleSummary, i18n.Text{
+		"zh-CN": "过去的保持原样，在明天放一个新的",
+		"en-US": "The past stays as it was; a new one goes on tomorrow",
+	})
+	i18n.Register(keyRescheduleReason, i18n.Text{
+		"zh-CN": "过去的记录不改写——原来那件留着，新的放到明天同一时段。",
+		"en-US": "The past is not rewritten — the original stays, a new one lands at the same time tomorrow.",
+	})
+	i18n.Register("err.planReschedule.badRequest", i18n.Text{
+		"zh-CN": "需要一个块 id",
+		"en-US": "A block id is required",
 	})
 }
 
@@ -374,6 +398,82 @@ func (s *Server) handlePlanLock(w http.ResponseWriter, r *http.Request) {
 	updated.Blocks = schedule.Visible(updated.Blocks)
 	localizeLockReasons(updated.Blocks, locale)
 	s.writeJSON(w, http.StatusOK, updated)
+}
+
+// POST /api/plan/reschedule — turn "重新安排" into a proposal ghost, not an
+// immediate edit.
+//
+// "提案永远是虚影" is a hard rule: rescheduling a petrified block is a
+// suggestion the user nods to, never a write the server performs on its own.
+// The card is a timed ghost at tomorrow's same slot; accepting it runs plan_add
+// with rescheduled_from, which reuses the refish chain (guard + cap) that the
+// old direct refishBlock also went through.
+func (s *Server) handlePlanReschedule(w http.ResponseWriter, r *http.Request) {
+	sid, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	locale := s.requestLocale(r)
+	var body struct {
+		BlockID string `json:"blockId"`
+	}
+	if err := s.readJSON(r, &body); err != nil || body.BlockID == "" {
+		s.writeErrL(w, locale, http.StatusBadRequest, "bad_request", "err.planReschedule.badRequest")
+		return
+	}
+	b, err := s.findBlockAcrossDays(r.Context(), sid, body.BlockID)
+	if err != nil || b.ID == "" {
+		s.writeErr(w, http.StatusNotFound, "not_found", i18n.T(keyPlanLockNoBlock, locale))
+		return
+	}
+	loc := s.sessionLocation(r.Context(), sid)
+	tomorrow := time.Now().In(loc).AddDate(0, 0, 1).Format("2006-01-02")
+	start := "09:00"
+	if b.Time != nil {
+		start = *b.Time
+	}
+	dur := 60
+	if b.DurationMin != nil {
+		dur = *b.DurationMin
+	}
+	now := time.Now()
+	p := &domain.Proposal{
+		ID:        "pr_" + uuid.NewString(),
+		SessionID: sid,
+		State:     domain.ProposalPending,
+		Level:     domain.LevelL2,
+		Kind:      domain.KindTimed,
+		Origin:    domain.OriginDaemon,
+		Title:     i18n.Tf(keyRescheduleTitle, locale, b.Title),
+		Summary:   i18n.T(keyRescheduleSummary, locale),
+		Reason:    i18n.T(keyRescheduleReason, locale),
+		Date:      tomorrow,
+		Start:     start,
+		Dur:       &dur,
+		TTLPolicy: domain.TTLSilenceRejects,
+		Ops: []domain.ProposalOp{{
+			Tool: "plan_add",
+			Args: map[string]any{
+				"date":             tomorrow,
+				"time":             start,
+				"title":            b.Title,
+				"duration_min":     dur,
+				"type":             string(b.Type),
+				"rescheduled_from": b.ID,
+			},
+		}},
+		DeliveredAt: &now,
+		ExpiresAt:   now.Add(domain.DefaultCardTTL),
+	}
+	if err := s.store.Proposals().Create(r.Context(), p); err != nil {
+		s.writeErrL(w, locale, http.StatusInternalServerError, "internal", "err.proposalRespond.internal")
+		return
+	}
+	s.logOp(r.Context(), &domain.OperationLog{
+		SessionID: sid, Actor: domain.ActorUser, Action: "proposal_reschedule",
+		TargetID: p.ID, Summary: p.Title,
+	})
+	s.writeJSON(w, http.StatusOK, p)
 }
 
 // spillInsFor returns the previous day's blocks that are still running when

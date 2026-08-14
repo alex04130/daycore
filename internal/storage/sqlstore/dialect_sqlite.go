@@ -20,7 +20,7 @@ func (sqliteDialect) Migrations() []string {
 			user_id TEXT,
 			interaction_count INTEGER NOT NULL DEFAULT 0,
 			sign_in_prompted INTEGER NOT NULL DEFAULT 0,
-			assistant_name TEXT NOT NULL DEFAULT 'Leo',
+			assistant_name TEXT NOT NULL DEFAULT '',
 			current_theme TEXT NOT NULL DEFAULT 'sky',
 			language TEXT NOT NULL DEFAULT '',
 			import_token TEXT NOT NULL DEFAULT '',
@@ -495,6 +495,16 @@ func (sqliteDialect) Migrations() []string {
 				updated_at BIGINT NOT NULL
 			)`,
 		`CREATE INDEX IF NOT EXISTS wishes_session ON wishes(session_id)`,
+		`CREATE TABLE IF NOT EXISTS weekly_letters (
+				id TEXT PRIMARY KEY,
+				session_id TEXT NOT NULL,
+				week_start TEXT NOT NULL,
+				week_end TEXT NOT NULL,
+				body TEXT,
+				locale TEXT NOT NULL DEFAULT '',
+				created_at BIGINT NOT NULL
+			)`,
+		`CREATE INDEX IF NOT EXISTS weekly_letters_session ON weekly_letters(session_id)`,
 		`CREATE TABLE IF NOT EXISTS temp_contexts (
 				id TEXT PRIMARY KEY,
 				session_id TEXT NOT NULL,

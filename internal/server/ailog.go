@@ -17,6 +17,7 @@ const (
 	epCompanion     = "companion"
 	epAutoPlan      = "autoplan"
 	epBrief         = "brief"
+	epWeeklyLetter  = "weekly_letter"
 	epProtector     = "protector"
 	epMoodReply     = "mood_reply"
 	epAIPlan        = "ai_plan"
@@ -42,7 +43,7 @@ const (
 // starts with ai_plan makes that a scan.
 func aiEndpoints() []string {
 	return []string{
-		epCompanion, epBrief, epAutoPlan, epReplan, epProtector,
+		epCompanion, epBrief, epAutoPlan, epReplan, epProtector, epWeeklyLetter,
 		epMoodReply, epAIPlan, epThemeGen, epThemeBackfill, epTravel, epInboxClassify, epSummarise,
 	}
 }

@@ -1,23 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import * as api from './api.js';
+import { AlertTriangle, X } from './icons.jsx';
 
-// Shared pieces every section needs, so that eight screens agree about what a
-// loading state, an empty table and a refused write look like.
+// Shared pieces the eight screens use. Button/Input/Badge/Chip/Avatar/Seg/Sw
+// re-create the DaycoreUI primitives the design prototype uses, with the same
+// class names and (recreated) look; AdmConfirm/Drawer/ToastHost mirror
+// admin-shell.jsx.
 
-// useSection is the load-refetch-error cycle, written once.
-//
-// # Why the three failure kinds are distinguished here and not per screen
-//
-// A console has three completely different bad states and they need three
-// different answers:
-//
-//   Unauthorized  the credential expired → the whole shell goes back to login
-//   Degraded      storage is unavailable → THIS screen may still be useful
-//   anything else → show what the server said
-//
-// Collapsing them is how a console ends up showing an empty table when the
-// honest answer was "your session ended" — the failure mode that makes somebody
-// think their data is gone.
+// useSection is the load-refetch-error cycle, written once. The three failure
+// kinds are kept distinct: Unauthorized drops the shell back to the gate,
+// Degraded is a state THIS screen may still be useful in, and anything else
+// shows what the server said.
 export function useSection(fetcher, { onUnauthorized } = {}) {
   const [state, setState] = useState({ status: 'loading' });
 
@@ -38,153 +31,182 @@ export function useSection(fetcher, { onUnauthorized } = {}) {
   return { ...state, reload: load };
 }
 
-// Screen wraps a section: title, the three bad states, and the content.
-export function Screen({ title, sub, state, children, actions }) {
+// ── toast ────────────────────────────────────────────────────────────────────
+const ToastCtx = createContext(() => {});
+export function ToastHost({ children }) {
+  const [msg, setMsg] = useState(null);
+  const ref = useRef(null);
+  const show = (m) => {
+    setMsg(m);
+    clearTimeout(ref.current);
+    ref.current = setTimeout(() => setMsg(null), 2400);
+  };
   return (
-    <section className="screen">
-      <header className="screen-head">
-        <div>
-          <h1>{title}</h1>
-          {sub && <p className="sub">{sub}</p>}
-        </div>
-        {actions}
-      </header>
-      {state.status === 'loading' && <div className="placeholder">读取中…</div>}
-      {state.status === 'degraded' && (
-        <Notice kind="warn" title="存储不可用">
-          这个部署是降级启动的：管理面在服务，其它端点一律 503。这一屏需要数据库，所以现在读不到。
-          修好配置后重启进程即可 —— 降级是启动时决定的，不会自己恢复。
-        </Notice>
-      )}
-      {state.status === 'error' && (
-        <Notice kind="error" title="读取失败">
-          {state.error}
-        </Notice>
-      )}
-      {(state.status === 'ok' || state.status === 'refreshing') && children}
-    </section>
+    <ToastCtx.Provider value={show}>
+      {children}
+      {msg ? <div className="adm-toast">{msg}</div> : null}
+    </ToastCtx.Provider>
+  );
+}
+export const useToast = () => useContext(ToastCtx);
+
+// ── DaycoreUI primitives ─────────────────────────────────────────────────────
+export function Button({ variant = 'primary', size = 'md', fullWidth, disabled, onClick, className, children, type = 'button' }) {
+  return (
+    <button
+      type={type}
+      className={'dc-btn dc-btn--' + variant + ' dc-btn--' + size + (fullWidth ? ' w-full' : '') + (className ? ' ' + className : '')}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
-export function Notice({ kind = 'info', title, children }) {
+export function Input({ type = 'text', placeholder, value, onChange, onKeyDown, inputMode, disabled, autoFocus, spellCheck, className }) {
   return (
-    <div className={`notice ${kind}`}>
-      {title && <strong>{title}</strong>}
-      <div>{children}</div>
+    <input
+      type={type}
+      className={'dc-field dc-input' + (className ? ' ' + className : '')}
+      placeholder={placeholder}
+      value={value}
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      inputMode={inputMode}
+      disabled={disabled}
+      autoFocus={autoFocus}
+      spellCheck={spellCheck}
+    />
+  );
+}
+
+export function Badge({ tone = 'warning', children }) {
+  const cls = tone && tone !== 'warning' ? ' dc-badge--' + tone : '';
+  return <span className={'dc-badge' + cls}>{children}</span>;
+}
+
+export function Chip({ variant = 'default', selected, onClick, children }) {
+  const on = variant === 'selected' || selected;
+  return (
+    <button type="button" className={'dc-chip' + (on ? ' dc-chip--selected' : '')} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+export function Avatar({ name, size = 30 }) {
+  const initial = name ? name.trim().charAt(0).toUpperCase() : '?';
+  return (
+    <span className="dc-avatar" style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}>
+      {initial}
+    </span>
+  );
+}
+
+export function Seg({ value, onChange, options }) {
+  return (
+    <div className="adm-seg">
+      {options.map((o) => (
+        <button key={o.value} type="button" className={value === o.value ? 'is-on' : ''} onClick={() => onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
     </div>
+  );
+}
+
+export function Sw({ on, onClick, label }) {
+  return (
+    <button
+      type="button"
+      className={'dc-switch' + (on ? ' is-on' : '')}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={onClick}
+    />
+  );
+}
+
+// ── overlays ─────────────────────────────────────────────────────────────────
+export function AdmConfirm({ open, title, desc, confirmLabel, onConfirm, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="adm-modal-scrim" onClick={onClose}>
+      <div className="adm-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="adm-modal-ic">
+          <AlertTriangle size={22} />
+        </div>
+        <h3>{title}</h3>
+        {desc ? <p>{desc}</p> : null}
+        <div className="row">
+          <Button variant="outline" fullWidth onClick={onClose}>
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            fullWidth
+            className="adm-danger-btn"
+            onClick={() => {
+              onConfirm();
+              onClose();
+            }}
+          >
+            {confirmLabel || '确认'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function Drawer({ title, onClose, children }) {
+  return (
+    <>
+      <div className="adm-scrim" onClick={onClose} />
+      <div className="adm-drawer">
+        <div className="adm-drawer-head">
+          <h3>{title}</h3>
+          <button type="button" className="adm-x" onClick={onClose}>
+            <X size={17} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </>
   );
 }
 
 export function Empty({ children }) {
-  return <div className="placeholder empty">{children}</div>;
+  return <div className="adm-empty">{children}</div>;
 }
 
-// Field is one labelled value, with an optional explanation.
-//
-// `why` carries the reason a value is what it is — most usefully, why something
-// is read-only. A greyed-out control with no explanation reads as a bug, and
-// this console has a lot of deliberately read-only things.
-export function Field({ label, why, children }) {
+// Notice is a small inline block for the states the prototype expresses with a
+// note or a pill — load errors, "not available", "read-only" explanations.
+const NOTICE_TONES = {
+  info: { border: 'rgba(167,139,250,.35)', bg: 'rgba(167,139,250,.08)', color: 'var(--color-text-primary)' },
+  warn: { border: 'rgba(245,158,11,.4)', bg: 'rgba(245,158,11,.1)', color: 'var(--color-text-primary)' },
+  error: { border: 'rgba(239,68,68,.4)', bg: 'rgba(239,68,68,.1)', color: 'var(--color-text-primary)' },
+};
+export function Notice({ kind = 'info', title, children }) {
+  const t = NOTICE_TONES[kind] || NOTICE_TONES.info;
   return (
-    <div className="field">
-      <div className="field-label">
-        {label}
-        {why && (
-          <span className="why" title={why}>
-            ?
-          </span>
-        )}
-      </div>
-      <div className="field-value">{children}</div>
+    <div
+      className="adm-note"
+      style={{
+        border: '1px solid ' + t.border,
+        background: t.bg,
+        color: t.color,
+        padding: '10px 14px',
+        borderRadius: '12px',
+        margin: '12px 0',
+        fontSize: '12.5px',
+        lineHeight: 1.6,
+      }}
+    >
+      {title ? <strong style={{ display: 'block', marginBottom: 3 }}>{title}</strong> : null}
+      <div>{children}</div>
     </div>
-  );
-}
-
-// Secret renders the only two things ever said about a credential.
-//
-// There is no third state and no masked value. A masked secret still tells you
-// how long it is and whether it changed between two reads, and the console
-// needs neither to do its job — so the API never sends it and this component
-// could not render it if it wanted to.
-export function Secret({ set, env }) {
-  return (
-    <span className={`secret ${set ? 'on' : 'off'}`}>
-      {set ? '已配置' : '未配置'}
-      {env && <code className="env">{env}</code>}
-    </span>
-  );
-}
-
-// Confirm is a destructive action that requires typing the target's name.
-//
-// Not a second click: a second click is muscle memory, and the actions this
-// guards (deleting a user, dropping a row) have no undo. Typing the name is the
-// cheapest gate that requires reading what is about to happen.
-export function Confirm({ word, label, danger, onConfirm }) {
-  const [open, setOpen] = useState(false);
-  const [typed, setTyped] = useState('');
-  if (!open) {
-    return (
-      <button className="danger" onClick={() => setOpen(true)}>
-        {label}
-      </button>
-    );
-  }
-  return (
-    <div className="confirm">
-      <div>{danger}</div>
-      <label>
-        输入 <code>{word}</code> 确认
-        <input value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus />
-      </label>
-      <div className="confirm-actions">
-        <button
-          className="danger"
-          disabled={typed !== word}
-          onClick={() => {
-            setOpen(false);
-            setTyped('');
-            onConfirm();
-          }}
-        >
-          {label}
-        </button>
-        <button
-          className="linkish"
-          onClick={() => {
-            setOpen(false);
-            setTyped('');
-          }}
-        >
-          取消
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Copyable is a value whose whole purpose is to be pasted somewhere else — the
-// OAuth callback URL above all, where a mismatch is the most common setup
-// failure and the vendor's error message says nothing useful.
-export function Copyable({ value }) {
-  const [done, setDone] = useState(false);
-  return (
-    <span className="copyable">
-      <code>{value}</code>
-      <button
-        className="linkish"
-        onClick={() => {
-          navigator.clipboard?.writeText(value).then(
-            () => {
-              setDone(true);
-              setTimeout(() => setDone(false), 1200);
-            },
-            () => {},
-          );
-        }}
-      >
-        {done ? '已复制' : '复制'}
-      </button>
-    </span>
   );
 }

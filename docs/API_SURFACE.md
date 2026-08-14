@@ -10,7 +10,7 @@
 >
 > 三件事由测试兜住，不靠自觉（`internal/server/routes_test.go`）：本表与代码一致、**代码与 `api/openapi.yaml` 双向一致**（服务了没写进契约 / 写进契约没人服务都红）、pattern 不重复。REST 细节（请求/响应 schema）以 `api/openapi.yaml` 为准 —— 但**改的是 `api/spec/paths/<tag>.yaml` 然后 `make api-bundle`**，openapi.yaml 是生成物，手改会被覆盖。
 >
-> 当前 **146 条路由 / 36 个组**。
+> 当前 **152 条路由 / 40 个组**。
 
 <!-- BEGIN GENERATED ROUTES -->
 ## admin (config)（2 条）
@@ -146,6 +146,12 @@
 | `GET /api/v2/auth/providers` | handlers_auth_oauth.go |
 | `POST /api/v2/auth/register` | handlers_auth.go |
 | `GET /api/v2/me` | handlers_auth.go |
+
+## brief（1 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/v2/brief` | handlers_brief.go |
 
 ## canvas materials（4 条）
 
@@ -284,7 +290,7 @@
 | `GET /api/v2/ops` | handlers_ops.go |
 | `POST /api/v2/ops/{id}/revert` | handlers_ops.go |
 
-## plans（5 条）
+## plans（6 条）
 
 | 路由 | Handler 文件 |
 |---|---|
@@ -293,14 +299,7 @@
 | `PATCH /api/v2/plan` | handlers_plan.go |
 | `POST /api/v2/plan/lock` | handlers_plan.go |
 | `GET /api/v2/plan/range` | handlers_plan.go |
-
-⚠️ **`/plan/range` 返回的是完整的 `DayPlan[]`，没有摘要接口。** 一个月历翻页 = 31 天
-的全部块过一趟网络。这是有意的取舍（一个接口而不是两个），写在这里是因为看到日历的
-第一反应是去找一个 `/api/plan/summary` —— 它从来不存在。
-
-⚠️ **没有记录的那些天不在数组里**，不是以空计划的形式返回。照着响应画格子的日历会
-少几格；要固定宽度的网格，缺的天得自己补（`web/liuli-classic/src/days.ts` 的
-`foldRange` 就是干这个的）。
+| `POST /api/v2/plan/reschedule` | handlers_plan.go |
 
 ## proposals（3 条）
 
@@ -309,6 +308,19 @@
 | `POST /api/v2/plan/conflict` | proposals.go |
 | `GET /api/v2/proposals` | proposals.go |
 | `POST /api/v2/proposals/{id}/respond` | proposals.go |
+
+## rhythm（2 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/v2/rhythm` | handlers_rhythm.go |
+| `POST /api/v2/rhythm/pin` | handlers_rhythm.go |
+
+## river（1 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/v2/river` | handlers_river.go |
 
 ## schedule rules（5 条）
 
@@ -336,6 +348,12 @@
 |---|---|
 | `GET /api/v2/temp-context` | handlers_tempcontext.go |
 | `PUT /api/v2/temp-context` | handlers_tempcontext.go |
+
+## weekly（1 条）
+
+| 路由 | Handler 文件 |
+|---|---|
+| `GET /api/v2/weekly-letter` | handlers_weekly_letter.go |
 
 ## wishes（5 条）
 

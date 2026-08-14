@@ -52,7 +52,7 @@ func (s *Server) runChannelMessage(ctx context.Context, sid, text string) string
 	locale := s.localePair(ctx, sid).Resolve(sess.Language, "")
 	name := sess.AssistantName
 	if name == "" {
-		name = "Leo"
+		name = s.cfg.DefaultAssistantName
 	}
 	tz := s.sessionTimezone(ctx, sid)
 	sys, err := s.companionSystemPrompt(ctx, sid, locale, tz, name)

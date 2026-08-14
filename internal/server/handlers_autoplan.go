@@ -60,6 +60,9 @@ func (s *Server) handleAIAutoPlan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.requireAI(w, r) {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}

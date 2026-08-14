@@ -185,9 +185,11 @@ func (s *Store) Browser() domain.Browser { return browserRepo{s} }
 func (s *Store) ProviderOverrides() domain.ProviderOverrideRepository {
 	return providerOverrideRepo{s}
 }
-func (s *Store) Wishes() domain.WishRepository              { return wishRepo{s} }
-func (s *Store) Feedback() domain.FeedbackLogRepository     { return feedbackRepo{s} }
-func (s *Store) TempContexts() domain.TempContextRepository { return tempContextRepo{s} }
+func (s *Store) Wishes() domain.WishRepository                { return wishRepo{s} }
+func (s *Store) WeeklyLetters() domain.WeeklyLetterRepository { return weeklyLetterRepo{s} }
+func (s *Store) River() domain.RiverRepository                { return riverRepo{s} }
+func (s *Store) Feedback() domain.FeedbackLogRepository       { return feedbackRepo{s} }
+func (s *Store) TempContexts() domain.TempContextRepository   { return tempContextRepo{s} }
 
 // ─── low-level helpers (placeholder rebinding) ──────────────────────────────
 

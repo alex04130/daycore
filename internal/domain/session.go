@@ -2,6 +2,12 @@ package domain
 
 import "time"
 
+// DefaultAssistantName is the factory name a freshly minted session carries
+// before the user personalizes it. It is what issueAndLink's merge checks for to
+// decide whether the anonymous session's own name should be adopted — a session
+// still named "Leo" was never personalized.
+const DefaultAssistantName = "Leo"
+
 // Session is the anonymous-first unit every piece of user data hangs off of.
 type Session struct {
 	ID               string    `json:"id"`
@@ -10,9 +16,9 @@ type Session struct {
 	SignInPrompted   bool      `json:"signInPrompted"`
 	AssistantName    string    `json:"assistantName"`
 	CurrentTheme     string    `json:"currentTheme"`
-	Language         string    // BCP-47 locale, e.g. "zh-CN" | "en-US"
+	Language         string    `json:"language"` // BCP-47 locale, e.g. "zh-CN" | "en-US"
 	Preferences      string    `json:"preferences,omitempty"`
-	PersonaPrompt    string    `json:"-"`
+	PersonaPrompt    string    `json:"personaPrompt"`
 	ImportToken      string    `json:"-"` // secret for extension direct-push; never serialized
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`

@@ -53,7 +53,9 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 	if l.Domain == "" {
 		l.Domain = domain.OpDomainOf(l.Action)
 	}
-	l.CreatedAt = time.Now().UTC()
+	if l.CreatedAt.IsZero() {
+		l.CreatedAt = time.Now().UTC()
+	}
 	_, err := r.c("operation_logs").InsertOne(ctx, opLogDoc{
 		ID: l.ID, SessionID: l.SessionID, Actor: l.Actor, Action: l.Action,
 		Domain: l.Domain, TargetID: l.TargetID, Date: l.Date, Summary: l.Summary,

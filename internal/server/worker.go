@@ -152,6 +152,8 @@ func (w *Worker) scheduleUser(sid, tz string, force bool) {
 	// The gap-filler, at the learned quiet hour. ⚠️ jobs.PlanAt had no consumer
 	// at all until this line: it was derived, stored, documented and never read.
 	add("wishfill", cronScheduleAtHM(jobs.PlanAt, tz), func() { w.runWishFill(sid, tz) })
+	// The Sunday-evening prose letter (周信) — weekly, at 20:00 local.
+	add("weeklyletter", "0 20 * * 0", func() { w.runWeeklyLetter(sid, tz) })
 	// The Protector. Half-hourly because the predicate is a threshold on a
 	// continuously growing number: the interval only bounds how late the nudge
 	// can be, half an hour against a twenty-hour stretch.

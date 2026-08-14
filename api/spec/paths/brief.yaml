@@ -1,0 +1,17 @@
+/api/brief:
+  get:
+    operationId: getBrief
+    tags: [brief]
+    summary: The in-app morning导语, derived from today's plan (read-only, no AI).
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                empty: { type: boolean }
+                date: { type: string, example: "2026-08-15" }
+                title: { type: string }
+                lines: { type: array, items: { type: string } }

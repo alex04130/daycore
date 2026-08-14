@@ -1,240 +1,181 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as api from '../api.js';
-import { Confirm, Empty, Notice, Screen, useSection } from '../ui.jsx';
+import * as I from '../icons.jsx';
+import { AdmConfirm, Button, Notice, useSection, useToast } from '../ui.jsx';
 
-// The database browser.
-//
-// # Two classes of table, shown as two groups
-//
-// The catalogue splits every table into operational and user content, and the
-// console renders that split rather than hiding it. A person with only
-// db.operational still SEES the user-content group with its row counts — "how
-// big is chat_messages" is an operational fact — and the cards say plainly that
-// opening them needs another permission. Hiding their existence from somebody
-// who can see every other table just makes the console look broken.
-//
-// # The delete button is the most dangerous control in this console
-//
-// It bypasses every business rule and writes nothing to the undo ledger. So it
-// is behind Confirm, which requires typing the row's id rather than clicking a
-// second time: a second click is muscle memory, and this has no undo.
+// 数据库 browser. Grid of tables → paged row view, with the one real delete
+// (DELETE /db/table/{name}/{id}). The prototype's 备份/导入 hit endpoints the
+// backend refuses on purpose (501, naming the right engine tool), so those
+// buttons surface that honest message; 导出 works as a download link.
 export function DB({ onUnauthorized }) {
   const [open, setOpen] = useState(null);
-  const load = useCallback(() => api.getDBTables(), []);
-  const { reload, ...state } = useSection(load, { onUnauthorized });
+  const load = useCallback(function () { return api.getDBTables(); }, []);
+  const state = useSection(load, { onUnauthorized });
+  const toast = useToast();
+  const fileRef = useRef(null);
 
   if (open) {
-    return (
-      <TableView
-        card={open}
-        onBack={() => {
-          setOpen(null);
-          reload();
-        }}
-        onUnauthorized={onUnauthorized}
-      />
-    );
+    return <TableView card={open} onBack={function () { setOpen(null); state.reload(); }} onUnauthorized={onUnauthorized} />;
   }
 
-  const tables = state.data?.tables || [];
-  const groups = [
-    { class: 'operational', label: '运维数据', note: '会话、日志、任务、配置。不含任何人写下的内容。' },
-    {
-      class: 'user_content',
-      label: '用户写下的内容',
-      note: '对话、心情、记住的事、计划与愿望。这一组要单独的权限才能打开 —— 谁能看这些，是那个部署的负责人要做的决定。',
-    },
-  ];
+  async function doBackup() {
+    try { await api.backup(); toast('备份已开始下载'); }
+    catch (e) { toast('备份不可用：' + e.message); }
+  }
+
+  async function doImport(file) {
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = async function () {
+      try { await api.importDB(JSON.parse(rd.result)); toast('导入成功'); }
+      catch (e) { toast('导入不可用：' + e.message); }
+    };
+    rd.onerror = function () { toast('读取文件失败'); };
+    rd.readAsText(file);
+  }
+
+  const tables = (state.data && state.data.tables) || [];
 
   return (
-    <Screen
-      title="数据库"
-      sub="这个部署里有什么，各有多少。没有搜索也没有排序 —— 那都意味着把一个用户给的东西拼进查询里，而这一屏的整个设计就是不让那件事发生。"
-      state={state}
-      actions={
-        <a className="linkish" href={api.exportURL()}>
-          导出 JSON
-        </a>
-      }
-    >
+    <div data-screen-label="数据库">
+      <header className="adm-head">
+        <div>
+          <h1 className="adm-title">数据库</h1>
+          <p className="adm-sub mono">GET /api/admin/db/tables</p>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button variant="outline" onClick={doBackup}><I.Download size={15} /> 备份 .db</Button>
+          <a href={api.exportURL()} className="dc-btn dc-btn--outline dc-btn--md" style={{ textDecoration: 'none' }}><I.FileJson size={15} /> 导出 JSON</a>
+          <Button variant="outline" onClick={function () { return fileRef.current && fileRef.current.click(); }}><I.Upload size={15} /> 导入</Button>
+          <input ref={fileRef} type="file" accept="application/json" hidden onChange={function (e) { const f = e.target.files[0]; if (f) doImport(f); e.target.value = ''; }} />
+        </div>
+      </header>
+
+      {state.status === 'loading' && <div className="adm-empty">读取中…</div>}
+      {state.status === 'error' && <Notice kind="error">{state.error}</Notice>}
+
       {state.data && (
         <>
-          {groups.map((g) => {
-            const rows = tables.filter((t) => t.class === g.class);
-            if (rows.length === 0) return null;
-            return (
-              <div className="block" key={g.class}>
-                <div className="block-head">
-                  <h2>{g.label}</h2>
-                  <span className="muted">{rows.length} 张表</span>
-                </div>
-                <p className="sub">{g.note}</p>
-                <div className="table-grid">
-                  {rows.map((t) => (
-                    <button
-                      key={t.name}
-                      className={`table-card ${t.readable ? '' : 'locked'}`}
-                      disabled={!t.readable}
-                      onClick={() => setOpen(t)}
-                      title={t.readable ? '' : '需要「浏览用户内容」这一项权限'}
-                    >
-                      <span className="table-name">{t.name}</span>
-                      <span className="table-rows">
-                        {t.rows < 0 ? '数不出来' : `${t.rows.toLocaleString()} 行`}
-                      </span>
-                      {!t.readable && <span className="pill mute">看不了</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-          <Notice kind="info" title="导出和备份不是一回事">
-            导出的是 JSON 清单，而且<strong>不是一致快照</strong> —— 存储层没有事务，表是一张一张读的，
-            中间写进去的东西会出现在一张表里而不在另一张。真要备份，用引擎自己的工具
-            （<code>sqlite3 .backup</code> / <code>pg_dump</code> / <code>mysqldump</code> / <code>mongodump</code>）。
-            没有导入功能，原因同上：半个导入留下的库既不是旧数据也不是新数据。
-          </Notice>
+          <div className="adm-tbl-grid">
+            {tables.map(function (t) {
+              return (
+                <button key={t.name} type="button" className="adm-tbl-card" disabled={!t.readable} title={t.readable ? '' : '需要「浏览用户内容」这一项权限'} onClick={function () { return setOpen(t); }}>
+                  <I.Database size={19} />
+                  <span>
+                    <span className="nm" style={{ display: 'block' }}>{t.name}</span>
+                    <span className="ct" style={{ display: 'block' }}>
+                      {t.rows < 0 ? '数不出来' : t.rows.toLocaleString() + ' 行'}
+                      {!t.readable ? ' · 看不了' : ''}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="adm-note">导出是 JSON 清单，不是一致快照；真要备份用引擎自己的工具（sqlite3 .backup / pg_dump / mysqldump / mongodump）。</p>
         </>
       )}
-    </Screen>
+    </div>
   );
 }
 
 const PAGE = 50;
+const cut = function (v) {
+  if (v === null || v === undefined) return 'NULL';
+  const s = typeof v === 'string' ? v : JSON.stringify(v);
+  return s.length > 38 ? s.slice(0, 38) + '…' : s;
+};
 
 function TableView({ card, onBack, onUnauthorized }) {
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(true);
+  const [delRow, setDelRow] = useState(null);
+  const toast = useToast();
 
-  const fetch = useCallback(() => {
-    setBusy(true);
-    setErr('');
-    api
-      .getDBTable(card.name, PAGE, offset)
+  const fetch = useCallback(function () {
+    setBusy(true); setErr('');
+    api.getDBTable(card.name, PAGE, offset)
       .then(setData)
-      .catch((e) => {
-        if (e instanceof api.Unauthorized) onUnauthorized?.();
+      .catch(function (e) {
+        if (e instanceof api.Unauthorized) onUnauthorized && onUnauthorized();
         else setErr(e.message);
       })
-      .finally(() => setBusy(false));
+      .finally(function () { setBusy(false); });
   }, [card.name, offset, onUnauthorized]);
 
   useEffect(fetch, [fetch]);
 
   async function del(id) {
-    try {
-      await api.deleteDBRow(card.name, id);
-      fetch();
-    } catch (e) {
-      setErr(e.message);
-    }
+    try { await api.deleteDBRow(card.name, id); toast('已删除'); fetch(); }
+    catch (e) { toast(e.message); }
   }
 
-  const cols = data?.columns || [];
-  const idAt = cols.findIndex((c) => c === 'id' || c === '_id');
-  const redacted = new Set(data?.redacted || []);
-  const total = data?.total ?? 0;
+  const cols = (data && data.columns) || [];
+  const rows = (data && data.rows) || [];
+  const idAt = cols.findIndex(function (c) { return c === 'id' || c === '_id'; });
+  const redacted = new Set((data && data.redacted) || []);
+  const total = (data && data.total) || 0;
   const pages = Math.max(1, Math.ceil(total / PAGE));
   const page = Math.floor(offset / PAGE) + 1;
 
   return (
-    <section className="screen">
-      <header className="screen-head">
+    <div data-screen-label="数据表浏览">
+      <header className="adm-head">
         <div>
-          <button className="linkish" onClick={onBack}>
-            ← 数据表
-          </button>
-          <h1 className="mono">{card.name}</h1>
-          <p className="sub">
-            {total.toLocaleString()} 行 ·{' '}
-            {card.class === 'user_content' ? '用户写下的内容' : '运维数据'}
-            {data?.whyNot && ` · 不能从这里删行：${data.whyNot}`}
+          <button type="button" className="adm-back" onClick={onBack}><I.ChevronLeft size={16} /> 数据表</button>
+          <h1 className="adm-title mono" style={{ marginTop: 2 }}>{card.name}</h1>
+          <p className="adm-sub">
+            {total.toLocaleString()} 行 · {card.class === 'user_content' ? '用户写下的内容' : '运维数据'} · <span className="mono">GET /api/admin/db/table/{card.name}</span>
           </p>
         </div>
       </header>
 
       {err && <Notice kind="error">{err}</Notice>}
       {redacted.size > 0 && (
-        <Notice kind="info" title="有列不给看">
-          <code>{[...redacted].join(', ')}</code> 是凭据，任何情况下都不从这里发出去 ——
-          显示的是一个固定占位符，所以你仍然看得到这一列存在。
-        </Notice>
+        <Notice kind="info" title="有列不给看"><code>{Array.from(redacted).join(', ')}</code> 是凭据，任何情况下都不从这里发出去。</Notice>
+      )}
+      {data && data.whyNot && !data.deletable && (
+        <Notice kind="info" title="不能从这里删行">{data.whyNot}</Notice>
       )}
 
-      {busy && !data ? (
-        <div className="placeholder">读取中…</div>
-      ) : !data || data.rows.length === 0 ? (
-        <Empty>这一页没有行。</Empty>
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                {cols.map((c) => (
-                  <th key={c} className={redacted.has(c) ? 'redacted' : ''}>
-                    {c}
-                  </th>
-                ))}
-                {data.deletable && <th />}
-              </tr>
-            </thead>
+      <div className="adm-card">
+        <div className="adm-table-wrap">
+          <table className="adm-table">
+            <thead><tr>{cols.map(function (c) { return <th key={c}>{c}</th>; })}{data && data.deletable && <th></th>}</tr></thead>
             <tbody>
-              {data.rows.map((row, i) => (
-                <tr key={idAt >= 0 ? String(row[idAt]) : i}>
-                  {row.map((v, j) => (
-                    <td key={j} className="mono" title={cellFull(v)}>
-                      {cell(v)}
-                    </td>
-                  ))}
-                  {data.deletable && (
-                    <td>
-                      {idAt >= 0 && (
-                        <Confirm
-                          word={String(row[idAt])}
-                          label="删除"
-                          danger={`${card.name} 里的这一行会被永久删掉。不走撤销日志、不触发任何业务规则 —— 删了就没了。`}
-                          onConfirm={() => del(String(row[idAt]))}
-                        />
-                      )}
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {rows.map(function (r, i) {
+                return (
+                  <tr key={idAt >= 0 ? String(r[idAt]) : i}>
+                    {r.map(function (v, j) {
+                      return <td key={j} className="mono" title={redacted.has(cols[j]) ? '•••' : cut(v)}>{cut(v)}</td>;
+                    })}
+                    {data && data.deletable && idAt >= 0 && (
+                      <td><button type="button" className="adm-trash" title="删除行" onClick={function () { return setDelRow(r); }}><I.Trash size={15} /></button></td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          {!rows.length && !busy && <div className="adm-empty">没有可展示的行</div>}
         </div>
-      )}
-
-      <div className="pager">
-        <span className="muted">
-          第 {page} / {pages} 页
-        </span>
-        <button disabled={offset === 0 || busy} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-          上一页
-        </button>
-        <button disabled={offset + PAGE >= total || busy} onClick={() => setOffset(offset + PAGE)}>
-          下一页
-        </button>
+        <div className="adm-pager">
+          <span>第 {page} / {pages} 页</span>
+          <button type="button" className="adm-pgbtn" disabled={offset === 0 || busy} onClick={function () { return setOffset(Math.max(0, offset - PAGE)); }}><I.ChevronLeft size={16} /></button>
+          <button type="button" className="adm-pgbtn" disabled={offset + PAGE >= total || busy} onClick={function () { return setOffset(offset + PAGE); }}><I.ChevronRight size={16} /></button>
+        </div>
       </div>
-    </section>
+
+      <AdmConfirm
+        open={!!delRow}
+        onClose={function () { return setDelRow(null); }}
+        title="删除这一行"
+        desc={delRow ? card.name + ' · ' + (idAt >= 0 ? String(delRow[idAt]) : '') + ' 将被永久删除，不走撤销日志。' : ''}
+        confirmLabel="删除"
+        onConfirm={function () { if (delRow && idAt >= 0) del(String(delRow[idAt])); }}
+      />
+    </div>
   );
-}
-
-// Cells are truncated to keep the grid readable; the full value is in the title
-// attribute. A JSON blob column would otherwise make one row taller than the
-// screen and push every other row out of view.
-const MAX_CELL = 48;
-
-function cellFull(v) {
-  if (v === null || v === undefined) return 'NULL';
-  return typeof v === 'string' ? v : JSON.stringify(v);
-}
-
-function cell(v) {
-  if (v === null || v === undefined) return <span className="dim">NULL</span>;
-  const s = cellFull(v);
-  return s.length > MAX_CELL ? s.slice(0, MAX_CELL) + '…' : s;
 }

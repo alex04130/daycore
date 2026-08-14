@@ -10,6 +10,7 @@ type fakeChannel struct {
 }
 
 func (f *fakeChannel) Name() string                                   { return f.name }
+func (f *fakeChannel) Label() string                                  { return f.name }
 func (f *fakeChannel) Send(context.Context, string, Outbound) error   { return nil }
 func (f *fakeChannel) Features() Features                             { return Features{Markdown: true} }
 func (f *fakeChannel) Start(context.Context, chan<- InboundMsg) error { return nil }

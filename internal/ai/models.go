@@ -173,6 +173,19 @@ func (c *Catalog) Provider(id string) (AIProvider, bool) {
 // DefaultChat returns the default text-chat provider.
 func (c *Catalog) DefaultChat() AIProvider { return c.providers[c.defaultChatID] }
 
+// DefaultChatConfigured reports whether the default chat model's key resolved
+// at load. It is the check an AI endpoint runs before attempting a call that,
+// without a key, can only fail with an auth error — the difference the frontend
+// renders as "还没配 AI" rather than a generic failure. KeySet is captured at
+// load, not re-read from the environment, so it describes what IS running.
+func (c *Catalog) DefaultChatConfigured() bool {
+	d := c.details[c.defaultChatID]
+	// A model that names no key env (local / Ollama / test stub) needs no key,
+	// so it is "configured" the moment it exists in the catalog. KeySet alone
+	// would answer false for those, which is wrong for "can this be called".
+	return d.APIKeyEnv == "" || d.KeySet
+}
+
 // Planner returns the provider used for autonomous planning: the configured
 // DEFAULT_PLANNER_MODEL when it exists in the catalog, else the default chat model.
 func (c *Catalog) Planner() AIProvider {

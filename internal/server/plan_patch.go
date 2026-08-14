@@ -55,6 +55,11 @@ func (s *Server) applyPlanPatch(ctx context.Context, sid, date, locale string, a
 
 	// Strip routing keys from match so matchesAll never trips on them.
 	delete(action.Match, "date")
+	// `date` is a routing key, not a mutable field: plans are sharded by day,
+	// so an update that rewrote a block's date would leave the row under the
+	// OLD day — a silent no-op that only *looks* like a move. Strip it from
+	// changes too; a real cross-day move is remove+add (or a reschedule).
+	delete(action.Changes, "date")
 
 	// Snapshot the affected blocks for the audit log before mutation.
 	var affected []map[string]any

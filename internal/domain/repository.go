@@ -25,6 +25,8 @@ type Store interface {
 	Memory() MemoryRepository
 	Materials() MaterialRepository
 	Wishes() WishRepository
+	WeeklyLetters() WeeklyLetterRepository
+	River() RiverRepository
 	TempContexts() TempContextRepository
 
 	ChannelBindings() ChannelBindingRepository
@@ -81,6 +83,17 @@ type Store interface {
 	// the catalogue it is driven by and the rule that keeps a request-supplied
 	// name out of a query.
 	Browser() Browser
+
+	// PurgeSession deletes one session and every row that session owns across
+	// the schema — plans, rules, moods, logs, proposals, wishes, materials,
+	// memory, imports, themes, courses, assignments, chat, companion memory,
+	// rhythm, attachments, temp contexts, and the session row itself. It is the
+	// cascade behind DELETE /api/admin/users/{id}.
+	//
+	// Best-effort per entity: one failing table does not stop the rest, because
+	// a half-deleted session is recoverable and a silently-stopped one is not.
+	// It returns how many session rows it removed (0 or 1) and the first error.
+	PurgeSession(ctx context.Context, sessionID string) (int, error)
 
 	Migrate(ctx context.Context) error
 	Ping(ctx context.Context) error
@@ -201,6 +214,12 @@ type UserRepository interface {
 	// owner, showing how many people a role edit affects — assumes the set can
 	// be enumerated.
 	List(ctx context.Context, limit int) ([]User, error)
+	// Delete removes a user and every account-scoped row they own — their
+	// credential, OAuth identities, and role memberships. Those rows are not
+	// session data, so PurgeSession does not cover them; leaving them behind
+	// would let a re-sign-in collide on oauth_identities' unique provider key or
+	// silently restore a deleted permission via a stray membership row.
+	Delete(ctx context.Context, userID string) error
 }
 
 type AuthRepository interface {

@@ -73,3 +73,14 @@ internal/**/zzz_*_test.go
 internal/**/zzprobe_test.go
 web/console/node_modules/
 packages/*/node_modules/
+
+
+.npm-cache/
+.dsh-plugins/
+demo.db*
+
+# Scratch / demo artifacts — probes, smoke scripts, screenshots, prototype
+# copies. Not deliverables; a git add -A must never pick them up.
+.tmp-*
+Daycore前端 (1)/
+

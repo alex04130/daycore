@@ -113,6 +113,7 @@ var Settings = []Setting{
 	{Env: "COOKIE_SECRET", Field: "CookieSecret", Layer: LayerBoot, Secret: true},
 	{Env: "PASSWORD_PEPPER", Field: "Pepper", Layer: LayerBoot, Secret: true,
 		Why: "changing it invalidates every stored password hash"},
+	{Env: "DEFAULT_ASSISTANT_NAME", Field: "DefaultAssistantName", Layer: LayerBoot},
 	{Env: "ADMIN_TOKEN", Field: "AdminToken", Layer: LayerBoot, Secret: true,
 		Why: "the credential the console itself authenticates with; editable from the console means editable by whoever already got in"},
 	{Env: "JWT_TTL", Field: "JWTTTL", Layer: LayerBoot,

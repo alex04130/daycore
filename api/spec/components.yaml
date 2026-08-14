@@ -268,6 +268,7 @@ components:
         assistantName: { type: string }
         currentTheme: { type: string }
         language: { type: string, enum: [zh-CN, en-US] }
+        personaPrompt: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     Preferences:
@@ -695,3 +696,13 @@ components:
         tokenUsed: { type: integer }
         feedbackUseful: { type: integer }
         feedbackTotal: { type: integer }
+    WeeklyLetter:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        weekStart: { type: string }
+        weekEnd: { type: string }
+        body: { type: string }
+        locale: { type: string, enum: [zh-CN, en-US] }
+        createdAt: { type: string, format: date-time }

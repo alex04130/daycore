@@ -53,6 +53,12 @@ func (r moodRepo) Create(ctx context.Context, m *domain.MoodCheckin) (*domain.Mo
 		m.ID = uuid.NewString()
 	}
 	now := nowMillis()
+	if !m.CreatedAt.IsZero() {
+		// Preserve an explicit timestamp (e.g. session merge folding a past
+		// check-in into the canonical session). The past must not be rewritten
+		// into "now" just because it moved sessions.
+		now = toMillis(m.CreatedAt)
+	}
 	_, err := r.exec(ctx,
 		`INSERT INTO mood_checkins (id, session_id, mood, ai_response, exercise_offered, exercise_completed, theme, source, note, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

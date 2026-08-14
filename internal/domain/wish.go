@@ -11,8 +11,9 @@ import "time"
 // something now: a wish written as "Active" would be permanently invisible to
 // the thing that exists to surface it.
 const (
-	WishActive = "active"
-	WishDone   = "done"
+	WishActive  = "active"
+	WishDone    = "done"
+	WishDropped = "dropped" // the user set it aside; not surfaced by the gap-filler
 )
 
 type Wish struct {

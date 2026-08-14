@@ -1,0 +1,17 @@
+# External capability sources (weather / search / channels).
+# The built-in defaults are listed here so they are writable from the console
+# instead of being hardcoded fallbacks. Query-type sources use format: http;
+# channel-type (format: ws/http/exec) is the cordis extension surface.
+providers:
+  - id: open-meteo
+    type: weather
+    format: builtin
+    enabled: true
+  - id: wttr
+    type: weather
+    format: builtin
+    enabled: true
+  - id: ddg
+    type: search
+    format: builtin
+    enabled: true

@@ -226,7 +226,25 @@ func run(logger *slog.Logger) error {
 			"dir", cfg.ThemeKindsDir, "err", err)
 	}
 
+	// Build the channel registry before the server so the list endpoint can
+	// read it (a channel list must come from the registry, not a hardcoded
+	// slice). Empty OneBotWSURL leaves it nil; the list endpoint degrades.
+	var registry *channels.Registry
+	if cfg.OneBotWSURL != "" {
+		registry = channels.NewRegistry(logger)
+		registry.Register(onebot.New(onebot.Config{
+			WSURL: cfg.OneBotWSURL,
+			Token: cfg.OneBotToken,
+			Log:   logger,
+			ValidateBinding: func(ctx context.Context, externalID string) bool {
+				b, err := store.ChannelBindings().GetByChannelAndExternal(ctx, "onebot", externalID)
+				return err == nil && b != nil
+			},
+		}))
+	}
+
 	srv := server.New(server.Deps{
+		Channels:   registry,
 		ThemeKinds: themeKinds,
 		Config:     cfg,
 		Store:      store,
@@ -318,20 +336,6 @@ func run(logger *slog.Logger) error {
 	// Channels are optional. A channel registry is only built when one is
 	// configured; the Worker gets nil and sendToChannels then logs instead of
 	// sending (that branch already existed).
-	var registry *channels.Registry
-	if cfg.OneBotWSURL != "" {
-		registry = channels.NewRegistry(logger)
-		registry.Register(onebot.New(onebot.Config{
-			WSURL: cfg.OneBotWSURL,
-			Token: cfg.OneBotToken,
-			Log:   logger,
-			ValidateBinding: func(ctx context.Context, externalID string) bool {
-				b, err := store.ChannelBindings().GetByChannelAndExternal(ctx, "onebot", externalID)
-				return err == nil && b != nil
-			},
-		}))
-	}
-
 	// The proactive Worker starts unconditionally.
 	//
 	// It used to start only when ONEBOT_WS_URL was set, which meant a user who

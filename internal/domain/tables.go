@@ -181,6 +181,7 @@ var Tables = []Table{
 	{Name: "companion_memory", Class: TableUserContent, OrderBy: "updated_at", KeyColumn: "id"},
 	{Name: "materials", Class: TableUserContent, OrderBy: "created_at", KeyColumn: "id"},
 	{Name: "wishes", Class: TableUserContent, OrderBy: "created_at", KeyColumn: "id"},
+	{Name: "weekly_letters", Class: TableUserContent, OrderBy: "created_at", KeyColumn: "id"},
 }
 
 // TableByName returns the catalogue entry, and whether the name is one we serve.

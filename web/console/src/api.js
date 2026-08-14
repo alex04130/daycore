@@ -125,6 +125,10 @@ export const getOAuth = () => request('/oauth');
 
 export const getStats = () => request('/stats');
 
+// getHealth is the authenticated health view: degraded/dbReachable/uptimeSec/
+// build/channel/env, the rich picture /api/healthz must not expose unauthenticated.
+export const getHealth = () => request('/health');
+
 // getUsage is the spend rollup: a per-day series and a per-model fold.
 //
 // ⚠️ It stops at `throughDay` — today is never in it, because a day is folded
@@ -170,6 +174,12 @@ export const deleteDBRow = (name, id) =>
 // Content-Disposition, and routing it through fetch would mean holding the whole
 // database in memory to hand it back to a download the browser does natively.
 export const exportURL = () => BASE + '/db/export';
+
+// backup and importDB hit the real endpoints. Both are refused by the backend
+// on purpose (501, naming the correct engine tool), so these surface that
+// honest message rather than pretending the operation happened.
+export const backup = () => request('/db/backup');
+export const importDB = (json) => request('/db/import', { method: 'POST', body: json });
 
 export const getPairings = () => request('/pairings');
 
@@ -219,6 +229,8 @@ export const deleteThemeKind = (name) =>
 	request(`/theme-kinds/${encodeURIComponent(name)}`, { method: 'DELETE' });
 
 export const getUsers = () => request('/users');
+
+export const deleteUser = (id) => request(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
 export const getRoles = () => request('/roles');
 export const getPermissions = () => request('/permissions');
 

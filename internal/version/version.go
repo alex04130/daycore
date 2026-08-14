@@ -44,7 +44,7 @@ package version
 import "strconv"
 
 // Version is the semantic version of this build, and the only number to move.
-const Version = "2.3.0"
+const Version = "2.4.0"
 
 // Channel marks the release channel; "beta" while v2 is in test.
 const Channel = "beta"

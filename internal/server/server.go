@@ -14,6 +14,7 @@ import (
 	"daycore/internal/ai"
 	"daycore/internal/auth"
 	"daycore/internal/blob"
+	"daycore/internal/channels"
 	"daycore/internal/config"
 	"daycore/internal/domain"
 	"daycore/internal/i18n"
@@ -48,7 +49,10 @@ type Deps struct {
 	// ThemeKinds validates theme token values. nil is fine — the server builds
 	// the embedded floor.
 	ThemeKinds *theme.Registry
-	Logger     *slog.Logger
+	// Channels is the messaging-platform registry. nil is fine for a process
+	// with no channel bindings; the list endpoint degrades to "nothing bound".
+	Channels *channels.Registry
+	Logger   *slog.Logger
 }
 
 // Server holds the dependencies and exposes an http.Handler.
@@ -71,6 +75,7 @@ type Server struct {
 	searcher    domain.Searcher
 	decisions   *decisionRegistry
 	worker      *Worker // set by main.go after construction
+	channels    *channels.Registry
 	// awake throttles rhythm signal writes. See awake.go — it is why
 	// requireSession, and not a list of paths, decides what counts as awake.
 	awake *awakeTracker
@@ -238,6 +243,7 @@ func New(d Deps) *Server {
 		oauth: d.OAuth, log: d.Logger, limiter: newRateLimiter(d.Config.RateLimitPerMin),
 		authLimiter: newRateLimiter(d.Config.AuthRateLimitPerMin),
 		weather:     d.Weather, blobs: d.Blobs, search: d.WebSearch, searcher: d.Searcher,
+		channels:       d.Channels,
 		awake:          newAwakeTracker(),
 		decisions:      newDecisionRegistry(),
 		defaultLocales: d.Config.DefaultLocales,
@@ -307,6 +313,17 @@ func sessionIDFrom(ctx context.Context) string {
 	if v, _ := ctx.Value(ctxDataSessionID).(string); v != "" {
 		return v
 	}
+	v, _ := ctx.Value(ctxSessionID).(string)
+	return v
+}
+
+// anonSessionIDFrom returns the raw anonymous session carried on the request
+// (X-Session-Token header or dc_sid cookie), ignoring any canonical data
+// session. issueAndLink must use this — not sessionIDFrom — because a user who
+// is already authenticated (dc_auth cookie present) and presents a *different*
+// anonymous session on login has to merge that anonymous session, not silently
+// no-op against their own canonical session.
+func anonSessionIDFrom(ctx context.Context) string {
 	v, _ := ctx.Value(ctxSessionID).(string)
 	return v
 }

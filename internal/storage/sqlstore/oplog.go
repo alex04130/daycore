@@ -21,6 +21,12 @@ func (r opLogRepo) Add(ctx context.Context, l *domain.OperationLog) error {
 		l.Domain = domain.OpDomainOf(l.Action)
 	}
 	now := nowMillis()
+	if !l.CreatedAt.IsZero() {
+		// Preserve an explicit timestamp (session merge folding the anonymous
+		// ledger into the canonical session) — history must not be restamped
+		// to "now" just because it moved sessions.
+		now = toMillis(l.CreatedAt)
+	}
 	_, err := r.exec(ctx,
 		`INSERT INTO operation_logs (id, session_id, actor, action, domain, target_id, date, summary, detail, status, request_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,

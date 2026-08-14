@@ -119,6 +119,26 @@ func (r userRepo) SetDataSession(ctx context.Context, userID, sessionID string) 
 	return err
 }
 
+// Delete removes a user and their account-scoped rows (credential, OAuth
+// identities, role memberships). Mirrors the SQL implementation's ordering:
+// account rows first, the user document last.
+func (r userRepo) Delete(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	if _, err := r.c("credentials").DeleteOne(ctx, bson.M{"_id": userID}); err != nil {
+		return err
+	}
+	if _, err := r.c("oauth_identities").DeleteMany(ctx, bson.M{"user_id": userID}); err != nil {
+		return err
+	}
+	if _, err := r.c("role_members").DeleteMany(ctx, bson.M{"user_id": userID}); err != nil {
+		return err
+	}
+	_, err := r.c("users").DeleteOne(ctx, bson.M{"_id": userID})
+	return err
+}
+
 func (r userRepo) IncrementTokenVersion(ctx context.Context, userID string) error {
 	_, err := r.c("users").UpdateOne(ctx, bson.M{"_id": userID}, bson.M{
 		"$inc": bson.M{"token_version": 1},

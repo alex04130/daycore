@@ -42,9 +42,15 @@ func (s *Server) handleChannelList(w http.ResponseWriter, r *http.Request) {
 	if bindings == nil {
 		bindings = []domain.ChannelBinding{}
 	}
-	// For now, only onebot is available.
-	channels := []map[string]any{
-		{"name": "onebot", "label": "QQ (OneBot/NapCat)", "available": true},
+	// Built from the registry, not a hardcoded slice — a new platform arrives
+	// by registering itself, and this list follows.
+	channels := []map[string]any{}
+	if s.channels != nil {
+		for _, ch := range s.channels.List() {
+			channels = append(channels, map[string]any{
+				"name": ch.Name(), "label": ch.Label(), "available": true,
+			})
+		}
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"channels": channels,

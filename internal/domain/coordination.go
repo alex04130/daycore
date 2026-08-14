@@ -128,6 +128,10 @@ const (
 	// One occurrence per session per day — the key names the date, not the gap,
 	// so an edit that moves the opening does not buy a second card.
 	JobWishFill = "wish_fill"
+	// JobWeeklyLetter writes the Sunday-evening prose letter. One occurrence per
+	// session per week — the run key is the Sunday that closed the week, so the
+	// same letter is never written twice by the worker.
+	JobWeeklyLetter = "weekly_letter"
 	// JobThemeBackfill fills the tokens a theme is missing after its family's
 	// token space widened. One occurrence per theme per version of that space.
 	//

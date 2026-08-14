@@ -7,7 +7,7 @@
 openapi: 3.1.0
 info:
   title: Daycore v2 API
-  version: "2.2.0"
+  version: "2.4.0"
   description: >
     Daycore v2 backend (Go). Autonomous AI day-planning + mood companion.
     Anonymous-first: POST /api/session/init issues an httpOnly, signed session
@@ -33,6 +33,10 @@ tags:
   - { name: plan }
   - { name: proposals }
   - { name: rules }
+  - { name: rhythm }
+  - { name: river }
+  - { name: brief }
+  - { name: weekly-letter }
   - { name: ai }
   - { name: chat }
   - { name: files }
@@ -147,6 +151,10 @@ paths:
       operationId: patchPlan
       tags: [plan]
       summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
+      description: >
+        `date` is a routing key, not a mutable block field: plans are sharded by
+        day, so `changes.date` is ignored. A cross-day move is remove+add (or a
+        reschedule), never an update of the block's date in place.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
@@ -184,6 +192,19 @@ paths:
       summary: Batch fetch [from,to] with rule occurrences merged per date.
       parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
       responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
+  /api/v2/plan/reschedule:
+    post:
+      operationId: proposeReschedule
+      tags: [plan]
+      summary: Turn "重新安排" into a proposal ghost, not an immediate edit.
+      description: >-
+        提案永远是虚影: rescheduling a petrified block is a suggestion the user
+        nods to, never a write the server performs on its own. Returns a pending
+        timed proposal at tomorrow's same slot; accepting it runs the refish chain.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [blockId], properties: { blockId: { type: string } } } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+        '404': { description: no such block }
 
   # ─── proposals ────────────────────────────────────────────────────────────
   /api/v2/proposals:
@@ -261,6 +282,114 @@ paths:
       tags: [rules]
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } }
+
+  # ─── rhythm ───────────────────────────────────────────────────────────────
+  /api/v2/rhythm:
+    get:
+      operationId: getRhythm
+      tags: [rhythm]
+      summary: The session's rhythm (learned | pinned | default).
+      description: >
+        wake/sleep are local wall-clock "HH:MM" (sleep may be past midnight).
+        source says which of the three produced them; days is how many rhythm
+        days of evidence stand behind a learned profile (0 for default/pinned).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wake: { type: string, example: "07:30" }
+                  sleep: { type: string, example: "23:40" }
+                  source: { type: string, enum: [default, learned, pinned] }
+                  days: { type: integer, example: 5 }
+  /api/v2/rhythm/pin:
+    post:
+      operationId: pinRhythm
+      tags: [rhythm]
+      summary: Fix a rhythm by hand ("我就是夜猫子"). A pinned profile is never overwritten by learning.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [wake, sleep], properties: { wake: { type: string, example: "09:00" }, sleep: { type: string, example: "01:30" } } } } } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  wake: { type: string }
+                  sleep: { type: string }
+                  source: { type: string, enum: [default, learned, pinned] }
+                  days: { type: integer }
+
+  # ─── river ────────────────────────────────────────────────────────────────
+  /api/v2/river:
+    get:
+      operationId: getRiver
+      tags: [river]
+      summary: The activity river — one row per day, oldest first.
+      description: >
+        The last `days` days inclusive of today, folded into one row per day.
+        `count` is how many operation_logs rows were created that UTC day;
+        `mood` is the emoji of the day's newest resolvable mood check-in
+        (empty when there is none). Days with no activity still appear — the
+        band is continuous, and an empty day is a fact rather than a hole.
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: integer, default: 15, minimum: 1, maximum: 90 }
+          description: How many days back to return (inclusive of today).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    date: { type: string, example: "2026-08-14" }
+                    count: { type: integer, example: 7 }
+                    mood: { type: string, example: "😌" }
+
+  # ─── brief ────────────────────────────────────────────────────────────────
+  /api/v2/brief:
+    get:
+      operationId: getBrief
+      tags: [brief]
+      summary: The in-app morning导语, derived from today's plan (read-only, no AI).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  empty: { type: boolean }
+                  date: { type: string, example: "2026-08-15" }
+                  title: { type: string }
+                  lines: { type: array, items: { type: string } }
+
+  # ─── weekly-letter ────────────────────────────────────────────────────────
+  /api/v2/weekly-letter:
+    get:
+      operationId: getWeeklyLetter
+      tags: [weekly-letter]
+      summary: The latest Sunday-evening prose letter (周信), or null when none is written yet.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  letter: { oneOf: [ { $ref: '#/components/schemas/WeeklyLetter' }, { type: 'null' } ] }
 
   # ─── ai ───────────────────────────────────────────────────────────────────
   /api/v2/ai/companion:
@@ -2741,6 +2870,7 @@ components:
         assistantName: { type: string }
         currentTheme: { type: string }
         language: { type: string, enum: [zh-CN, en-US] }
+        personaPrompt: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     Preferences:
@@ -3168,3 +3298,13 @@ components:
         tokenUsed: { type: integer }
         feedbackUseful: { type: integer }
         feedbackTotal: { type: integer }
+    WeeklyLetter:
+      type: object
+      properties:
+        id: { type: string }
+        sessionId: { type: string }
+        weekStart: { type: string }
+        weekEnd: { type: string }
+        body: { type: string }
+        locale: { type: string, enum: [zh-CN, en-US] }
+        createdAt: { type: string, format: date-time }

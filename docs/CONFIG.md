@@ -55,6 +55,7 @@
 | `JWT_SECRET` | `JWTSecret` | 🔑 | — |
 | `COOKIE_SECRET` | `CookieSecret` | 🔑 | — |
 | `PASSWORD_PEPPER` | `Pepper` | 🔑 | changing it invalidates every stored password hash |
+| `DEFAULT_ASSISTANT_NAME` | `DefaultAssistantName` |  | — |
 | `ADMIN_TOKEN` | `AdminToken` | 🔑 | the credential the console itself authenticates with; editable from the console means editable by whoever already got in |
 | `JWT_TTL` | `JWTTTL` |  | security-shaped; a console that can set it to a year is a console that can mint a permanent token |
 | `SECURE_COOKIES` | `SecureCookies` |  | a security boundary; turning it off from the web is how it gets turned off |

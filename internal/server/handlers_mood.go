@@ -72,7 +72,8 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 	// Rejecting here rather than accepting and hoping: a value the registry cannot
 	// resolve has no valence, and a check-in with no valence is not a weaker
 	// signal, it is no signal.
-	if _, known := domain.MoodKindByID(body.Mood); !known {
+	kind, known := domain.MoodKindByID(body.Mood)
+	if !known {
 		s.writeErrL(w, s.requestLocale(r), http.StatusBadRequest, "unknown_mood",
 			"err.moodCreate.unknown_mood")
 		return
@@ -99,7 +100,7 @@ func (s *Server) handleMoodCreate(w http.ResponseWriter, r *http.Request) {
 	// is the person pressing a button.
 	s.logOp(ctx, &domain.OperationLog{
 		SessionID: sid, Action: "mood_record", TargetID: checkin.ID,
-		Summary: checkin.Mood,
+		Summary: kind.MoodName(s.requestLocale(r)),
 		Detail:  marshalCompact(map[string]any{"before": nil, "after": checkin}),
 	})
 	s.writeJSON(w, http.StatusOK, checkin)

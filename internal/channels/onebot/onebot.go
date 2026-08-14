@@ -45,7 +45,8 @@ func New(cfg Config) *Adapter {
 	}
 }
 
-func (a *Adapter) Name() string { return "onebot" }
+func (a *Adapter) Name() string  { return "onebot" }
+func (a *Adapter) Label() string { return "QQ (OneBot/NapCat)" }
 
 func (a *Adapter) Start(ctx context.Context, inbound chan<- channels.InboundMsg) error {
 	a.inbound = inbound

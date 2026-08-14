@@ -28,7 +28,9 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 
 	// session get-or-create + update + increment
 	sess, err := s.Sessions().GetOrCreate(ctx, "sid1")
-	if err != nil || sess.AssistantName != "Leo" {
+	if err != nil || sess.AssistantName != "" {
+		// The storage no longer hardcodes a name; the factory default is the
+		// config layer's DEFAULT_ASSISTANT_NAME, applied at the server edge.
 		t.Fatalf("session: %+v err=%v", sess, err)
 	}
 	if err := s.Sessions().IncrementInteraction(ctx, "sid1"); err != nil {

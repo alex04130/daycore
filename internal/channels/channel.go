@@ -10,6 +10,7 @@ package channels
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"sync"
 )
 
@@ -85,6 +86,11 @@ type Features struct {
 // Channel is implemented by every messaging platform adapter.
 type Channel interface {
 	Name() string // e.g. "onebot"
+	// Label is the human-readable name the console and settings screens show,
+	// e.g. "QQ (OneBot/NapCat)". It is the adapter's own copy — a channel list
+	// built from the registry is how a new platform arrives without touching
+	// the list endpoint's code.
+	Label() string
 	Send(ctx context.Context, externalID string, msg Outbound) error
 	// Features reports what this platform accepts. An adapter that cannot answer
 	// should report text-only rather than guess upward: sending an image that
@@ -162,4 +168,20 @@ func (r *Registry) Channel(name string) Channel {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.channels[name]
+}
+
+// List returns a snapshot of every registered channel, in a stable order.
+func (r *Registry) List() []Channel {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.channels))
+	for name := range r.channels {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]Channel, 0, len(names))
+	for _, name := range names {
+		out = append(out, r.channels[name])
+	}
+	return out
 }

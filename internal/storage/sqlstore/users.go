@@ -74,6 +74,27 @@ func (r userRepo) List(ctx context.Context, limit int) ([]domain.User, error) {
 	return out, rows.Err()
 }
 
+// Delete removes a user and their account-scoped rows (credential, OAuth
+// identities, role memberships). The account rows go first so a re-sign-in
+// cannot collide on oauth_identities' unique provider key, and the user row last
+// so a failure halfway leaves an account that still resolves.
+func (r userRepo) Delete(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	for _, q := range []string{
+		`DELETE FROM credentials WHERE user_id = ?`,
+		`DELETE FROM oauth_identities WHERE user_id = ?`,
+		`DELETE FROM role_members WHERE user_id = ?`,
+	} {
+		if _, err := r.exec(ctx, q, userID); err != nil {
+			return err
+		}
+	}
+	_, err := r.exec(ctx, `DELETE FROM users WHERE id = ?`, userID)
+	return err
+}
+
 func (r userRepo) IncrementTokenVersion(ctx context.Context, userID string) error {
 	_, err := r.exec(ctx, `UPDATE users SET token_version = token_version + 1, updated_at = ? WHERE id = ?`, nowMillis(), userID)
 	return err

@@ -157,7 +157,7 @@ func (s *Server) issueAndLink(w http.ResponseWriter, r *http.Request, user *doma
 		return "", err
 	}
 	s.setAuthCookie(w, token)
-	sid := sessionIDFrom(r.Context())
+	sid := anonSessionIDFrom(r.Context())
 	ctx := r.Context()
 	if sid == "" {
 		// Bearer-only clients (native apps) carry no anonymous session. A user
@@ -193,6 +193,15 @@ func (s *Server) issueAndLink(w http.ResponseWriter, r *http.Request, user *doma
 
 	// Conflict: user already has a canonical data session from another
 	// device. Merge the current anonymous session's data in.
+	//
+	// Idempotency guard: if THIS anonymous session was already claimed by THIS
+	// user on an earlier login, its data is already folded in — merging again
+	// would duplicate every appended entity (day_plans append blocks, proposals
+	// re-copy, moods re-add, …). A sign-out + sign-in on the same device must
+	// not double the user's data.
+	if anonSess, err := s.store.Sessions().Get(ctx, sid); err == nil && anonSess != nil && anonSess.UserID != nil && *anonSess.UserID == user.ID {
+		return token, nil
+	}
 	_ = s.mergeSessionData(ctx, sid, user.DataSessionID)
 	_, _ = s.store.Sessions().Update(ctx, sid, domain.SessionUpdate{UserID: &user.ID})
 	return token, nil
@@ -207,6 +216,7 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 	for _, ap := range anonPlans {
 		canonPlan, err := s.store.DayPlans().Get(ctx, canonSID, ap.Date)
 		if errors.Is(err, domain.ErrNotFound) {
+			ap.ID = ""
 			ap.SessionID = canonSID
 			_, _ = s.store.DayPlans().Upsert(ctx, &ap)
 			continue
@@ -232,6 +242,7 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 	}
 	for _, r := range anonRules {
 		if !seen[ruleMergeKey(r)] {
+			r.ID = ""
 			r.SessionID = canonSID
 			if _, err := s.store.Rules().Create(ctx, &r); err != nil {
 				s.log.Warn("merge rule", "err", err)
@@ -255,11 +266,13 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 	// moods / imports: simple append.
 	anonMoods, _ := s.store.Moods().List(ctx, anonSID, 200)
 	for _, m := range anonMoods {
+		m.ID = ""
 		m.SessionID = canonSID
 		_, _ = s.store.Moods().Create(ctx, &m)
 	}
 	anonImports, _ := s.store.Memory().ListImports(ctx, anonSID, 200)
 	for _, imp := range anonImports {
+		imp.ID = ""
 		imp.SessionID = canonSID
 		_, _ = s.store.Memory().AddImport(ctx, &imp)
 	}
@@ -306,6 +319,31 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 		_, _ = s.store.Assignments().UpsertByCanvasID(ctx, &a)
 	}
 
+	// proposals: a pending card is a decision the user is still owed — signing in
+	// must not drop it. Fresh ids (the id is the PK); TTL/expiry carry over so
+	// the card keeps its own clock.
+	anonProposals, _ := s.store.Proposals().List(ctx, domain.ProposalFilter{SessionID: anonSID, State: domain.ProposalPending})
+	for i := range anonProposals {
+		p := anonProposals[i]
+		p.ID = ""
+		p.SessionID = canonSID
+		_ = s.store.Proposals().Create(ctx, &p)
+	}
+
+	// ops: the append-only ledger is the user's "足迹". Fold the anonymous
+	// entries in so the canonical session keeps the trail, and preserve their
+	// original CreatedAt (history is not restamped to "now"). ⚠️ TargetID/Detail
+	// may still point at anonymous-session entity ids that were re-keyed above,
+	// so a per-row revert of one of those can no longer reconstruct the target —
+	// the history stays readable; only cross-session undo of a single row is lost.
+	anonOps, _ := s.store.OpLogs().List(ctx, anonSID, 0)
+	for i := range anonOps {
+		o := anonOps[i]
+		o.ID = ""
+		o.SessionID = canonSID
+		_ = s.store.OpLogs().Add(ctx, &o)
+	}
+
 	// chat threads + their messages: recreate under the canonical session.
 	anonThreads, _ := s.store.Chats().ListThreads(ctx, anonSID)
 	for i := range anonThreads {
@@ -343,6 +381,14 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 		if canonSess, err := s.store.Sessions().Get(ctx, canonSID); err == nil && canonSess != nil {
 			var upd domain.SessionUpdate
 			changed := false
+			// Adopt the anonymous session's name unless the canonical session was
+			// already personalized. A minted session carries the factory default
+			// ("Leo"), not the user's own choice — so "still Leo or empty" means
+			// "not yet personalized".
+			if anonSess.AssistantName != "" && (canonSess.AssistantName == "" || canonSess.AssistantName == s.cfg.DefaultAssistantName) {
+				upd.AssistantName = &anonSess.AssistantName
+				changed = true
+			}
 			if canonSess.PersonaPrompt == "" && anonSess.PersonaPrompt != "" {
 				upd.PersonaPrompt = &anonSess.PersonaPrompt
 				changed = true
@@ -353,6 +399,40 @@ func (s *Server) mergeSessionData(ctx context.Context, anonSID, canonSID string)
 			}
 			if changed {
 				_, _ = s.store.Sessions().Update(ctx, canonSID, upd)
+			}
+
+			// prefs: carry the anonymous session's personalization into the
+			// canonical session where the latter is still unset. timezone, the
+			// per-family theme choices, and the locale pair are what make the demo
+			// read as "the same user" after sign-in instead of falling back to
+			// deployment defaults (a minted session has none of them).
+			anonPrefs := s.sessionPrefs(ctx, anonSID)
+			canonPrefs := s.sessionPrefs(ctx, canonSID)
+			changedPrefs := false
+			if anonPrefs.Timezone != "" && canonPrefs.Timezone == "" {
+				canonPrefs.Timezone = anonPrefs.Timezone
+				canonPrefs.TimezoneSource = anonPrefs.TimezoneSource
+				changedPrefs = true
+			}
+			if len(anonPrefs.ThemeByFamily) > 0 {
+				if canonPrefs.ThemeByFamily == nil {
+					canonPrefs.ThemeByFamily = map[string]string{}
+				}
+				for fam, th := range anonPrefs.ThemeByFamily {
+					if _, ok := canonPrefs.ThemeByFamily[fam]; !ok {
+						canonPrefs.ThemeByFamily[fam] = th
+					}
+				}
+				changedPrefs = true
+			}
+			if anonPrefs.PrimaryLocale != "" && canonPrefs.PrimaryLocale == "" {
+				canonPrefs.PrimaryLocale = anonPrefs.PrimaryLocale
+				canonPrefs.SecondaryLocale = anonPrefs.SecondaryLocale
+				changedPrefs = true
+			}
+			if changedPrefs {
+				str := marshalCompact(canonPrefs)
+				_, _ = s.store.Sessions().Update(ctx, canonSID, domain.SessionUpdate{Preferences: &str})
 			}
 		}
 	}

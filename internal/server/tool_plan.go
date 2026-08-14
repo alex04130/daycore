@@ -13,11 +13,12 @@ import (
 
 func (s *Server) toolPlanAdd(ctx context.Context, sid, locale, tz, rawArgs string) toolResult {
 	var args struct {
-		Date        string `json:"date"`
-		Title       string `json:"title"`
-		Time        string `json:"time"`
-		Type        string `json:"type"`
-		DurationMin int    `json:"duration_min"`
+		Date            string `json:"date"`
+		Title           string `json:"title"`
+		Time            string `json:"time"`
+		Type            string `json:"type"`
+		DurationMin     int    `json:"duration_min"`
+		RescheduledFrom string `json:"rescheduled_from"`
 	}
 	if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
 		return toolFail("invalid arguments: %v", err)
@@ -40,6 +41,9 @@ func (s *Server) toolPlanAdd(ctx context.Context, sid, locale, tz, rawArgs strin
 	}
 	if args.DurationMin > 0 {
 		block["duration_min"] = args.DurationMin
+	}
+	if args.RescheduledFrom != "" {
+		block["rescheduled_from"] = args.RescheduledFrom
 	}
 	updated, opID, _, err := s.applyPlanPatch(ctx, sid, args.Date, locale, planAction{Action: "add", Block: block}, domain.ActorAgent)
 	if err != nil {

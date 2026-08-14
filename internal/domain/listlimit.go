@@ -45,10 +45,11 @@ const (
 	// Internal lists. These already had ceilings on SQL; the numbers are kept
 	// as they were so this change alters no SQL behaviour beyond the two that
 	// were wrong.
-	ProposalListDefault, ProposalListMax = 100, 1000
-	RhythmDaysDefault, RhythmDaysMax     = 30, 400
-	JobRunListDefault, JobRunListMax     = 50, 500
-	ImportListDefault, ImportListMax     = 20, 500
+	ProposalListDefault, ProposalListMax         = 100, 1000
+	RhythmDaysDefault, RhythmDaysMax             = 30, 400
+	JobRunListDefault, JobRunListMax             = 50, 500
+	ImportListDefault, ImportListMax             = 20, 500
+	WeeklyLetterListDefault, WeeklyLetterListMax = 20, 500
 )
 
 // ListLimit resolves a caller-supplied row limit: zero or negative means "give

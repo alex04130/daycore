@@ -22,7 +22,7 @@ func (mysqlDialect) Migrations() []string {
 			user_id VARCHAR(191),
 			interaction_count INT NOT NULL DEFAULT 0,
 			sign_in_prompted TINYINT(1) NOT NULL DEFAULT 0,
-			assistant_name VARCHAR(191) NOT NULL DEFAULT 'Leo',
+			assistant_name VARCHAR(191) NOT NULL DEFAULT '',
 			current_theme VARCHAR(64) NOT NULL DEFAULT 'sky',
 			language VARCHAR(64) NOT NULL DEFAULT '',
 			import_token VARCHAR(64) NOT NULL DEFAULT '',
@@ -496,6 +496,16 @@ func (mysqlDialect) Migrations() []string {
 				created_at BIGINT NOT NULL,
 				updated_at BIGINT NOT NULL,
 				KEY wishes_session (session_id)
+			)`,
+		`CREATE TABLE IF NOT EXISTS weekly_letters (
+				id VARCHAR(191) PRIMARY KEY,
+				session_id VARCHAR(191) NOT NULL,
+				week_start VARCHAR(191) NOT NULL,
+				week_end VARCHAR(191) NOT NULL,
+				body TEXT,
+				locale VARCHAR(191) NOT NULL DEFAULT '',
+				created_at BIGINT NOT NULL,
+				KEY weekly_letters_session (session_id)
 			)`,
 		`CREATE TABLE IF NOT EXISTS temp_contexts (
 				id VARCHAR(191) PRIMARY KEY,

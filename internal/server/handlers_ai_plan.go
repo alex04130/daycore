@@ -32,6 +32,9 @@ func (s *Server) handleAIPlanText(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
+	if !s.requireAI(w, r) {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
@@ -116,6 +119,9 @@ func (s *Server) handleAIPlanImage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
+	if !s.requireAI(w, r) {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
@@ -195,6 +201,9 @@ func (s *Server) handleAIExtractScheduleImage(w http.ResponseWriter, r *http.Req
 	// Safe to add: `sid` appears nowhere in this file — none of the three ever
 	// touched the session, so nothing depended on anonymous access.
 	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if !s.requireAI(w, r) {
 		return
 	}
 	if !s.rateLimit(w, r) {

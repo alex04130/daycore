@@ -35,6 +35,9 @@ type planBlocked struct {
 	// LockLevel and LockReason are empty for a petrify refusal.
 	LockLevel  domain.LockLevel
 	LockReason string
+	// LockSource distinguishes a DERIVED reason (a rendering of the level,
+	// localize on the way out) from somebody's own words (pass through).
+	LockSource string
 	// Confirmable says the caller has a way through: re-send with confirm.
 	// True only for soft locks. A hard lock and a petrified block have no way
 	// through today, and saying otherwise would be an offer nothing honours.
@@ -94,8 +97,14 @@ func (s *Server) writePlanBlocked(w http.ResponseWriter, locale string, e *planB
 	if e.LockLevel != "" {
 		body["lockLevel"] = string(e.LockLevel)
 	}
-	if e.LockReason != "" {
-		body["lockReason"] = e.LockReason
+	// A derived reason is a rendering of the level, so it follows the reader's
+	// locale (same rule as localizeLockReasons). User/agent words pass through.
+	reason := e.LockReason
+	if e.LockLevel != "" && (e.LockSource == domain.LockSourceDerived || reason == "") {
+		reason = domain.DefaultLockReason(e.LockLevel, locale)
+	}
+	if reason != "" {
+		body["lockReason"] = reason
 	}
 	s.writeJSON(w, http.StatusConflict, body)
 }
@@ -199,7 +208,7 @@ func (s *Server) guardPlanWrite(blocks []map[string]any, planDate string, action
 		if action.Action == "update" && retimes(action.Changes) && !b.Movable(actor, action.Confirm) {
 			return &planBlocked{
 				Code: "locked", BlockID: b.ID,
-				LockLevel: b.LockLevel, LockReason: b.LockReason,
+				LockLevel: b.LockLevel, LockReason: b.LockReason, LockSource: b.LockSource,
 				Confirmable: b.LockLevel == domain.LockSoft,
 			}
 		}

@@ -36,6 +36,10 @@ const (
 	PromptPersona = "persona"
 	PromptBrief   = "brief"
 	PromptReplan  = "replan"
+	// PromptWeeklyLetter writes the Sunday-evening prose letter (周信): a
+	// reading of the week's river, moods and regrets — deliberately prose, not a
+	// chart (design-ui/liuli/app/cj-drawers.jsx).
+	PromptWeeklyLetter = "weekly_letter"
 )
 
 // promptKeys is the canonical ordered list, used by List().
@@ -44,7 +48,7 @@ var promptKeys = []string{
 	PromptCompanionAgent, PromptCompanionContext,
 	PromptAutoPlan, PromptScheduleExtractImage, PromptThemeGen, PromptThemeBackfill,
 	PromptInboxClassify, PromptFoodRecognize, PromptTravelSuggest,
-	PromptPersona, PromptBrief, PromptReplan,
+	PromptPersona, PromptBrief, PromptReplan, PromptWeeklyLetter,
 }
 
 // PromptService renders prompt templates per locale. Defaults are embedded from

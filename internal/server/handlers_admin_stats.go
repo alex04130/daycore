@@ -333,13 +333,25 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.adminDeleteUser.internal")
 		return
 	}
-	// Cascade-delete their data session.
+	// Cascade: purge the data session and everything it owns first, then the
+	// user's account-scoped rows (credential, OAuth identities, role
+	// memberships), then the user row. The order matters — the user's
+	// DataSessionID names the session to purge, so it must be gone before the
+	// user row is deleted or the id dangles.
+	purged := 0
 	if u.DataSessionID != "" {
-		_, _ = s.store.Sessions().Get(r.Context(), u.DataSessionID) // verify existence
-		// TODO: delete session + all associated data cascade.
-		// For now, just delete the user row.
+		n, err := s.store.PurgeSession(r.Context(), u.DataSessionID)
+		if err != nil {
+			s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.adminDeleteUser.internal")
+			return
+		}
+		purged = n
 	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"deleted": id, "note": "full cascade delete coming soon"})
+	if err := s.store.Users().Delete(r.Context(), id); err != nil {
+		s.writeErrL(w, s.requestLocale(r), http.StatusInternalServerError, "internal", "err.adminDeleteUser.internal")
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"deleted": id, "sessionsPurged": purged})
 }
 
 // GET /api/admin/usage?from=&to= — spend history: per day and per model.

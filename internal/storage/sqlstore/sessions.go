@@ -20,7 +20,7 @@ func (r sessionRepo) GetOrCreate(ctx context.Context, id string) (*domain.Sessio
 	now := nowMillis()
 	_, err := r.exec(ctx,
 		`INSERT INTO sessions (id, interaction_count, sign_in_prompted, assistant_name, current_theme, created_at, updated_at)
-		 VALUES (?, 0, 0, 'Leo', 'sky', ?, ?)`, id, now, now)
+		 VALUES (?, 0, 0, '', 'sky', ?, ?)`, id, now, now)
 	if err != nil {
 		if s, e := r.Get(ctx, id); e == nil {
 			return s, nil

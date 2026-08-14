@@ -32,6 +32,9 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
+	if !s.requireAI(w, r) {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}
@@ -72,7 +75,7 @@ func (s *Server) handleAICompanion(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	locale := s.requestLocale(r)
-	name := orDefault(body.AssistantName, "Leo")
+	name := orDefault(body.AssistantName, s.cfg.DefaultAssistantName)
 	var messages []ai.Message
 	// When threadId is set, load history from the server-side chat thread;
 	// otherwise fall back to client-uploaded conversationHistory (anonymous).

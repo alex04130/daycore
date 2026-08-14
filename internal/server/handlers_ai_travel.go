@@ -30,6 +30,9 @@ func (s *Server) handleAITravel(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
+	if !s.requireAI(w, r) {
+		return
+	}
 	if !s.rateLimit(w, r) {
 		return
 	}

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Daycore v2 API
-  version: "2.2.0"
+  version: "2.4.0"
   description: >
     Daycore v2 backend (Go). Autonomous AI day-planning + mood companion.
     Anonymous-first: POST /api/session/init issues an httpOnly, signed session
@@ -27,6 +27,10 @@ tags:
   - { name: plan }
   - { name: proposals }
   - { name: rules }
+  - { name: rhythm }
+  - { name: river }
+  - { name: brief }
+  - { name: weekly-letter }
   - { name: ai }
   - { name: chat }
   - { name: files }

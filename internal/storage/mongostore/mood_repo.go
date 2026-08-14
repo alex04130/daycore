@@ -53,7 +53,9 @@ func (r moodRepo) Create(ctx context.Context, m *domain.MoodCheckin) (*domain.Mo
 	if m.ID == "" {
 		m.ID = uuid.NewString()
 	}
-	m.CreatedAt = time.Now().UTC()
+	if m.CreatedAt.IsZero() {
+		m.CreatedAt = time.Now().UTC()
+	}
 	_, err := r.c("mood_checkins").InsertOne(ctx, moodDoc{
 		ID: m.ID, SessionID: m.SessionID, Mood: m.Mood, AIResponse: m.AIResponse,
 		ExerciseOffered: m.ExerciseOffered, ExerciseCompleted: m.ExerciseCompleted,

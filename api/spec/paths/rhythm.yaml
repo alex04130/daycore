@@ -1,0 +1,40 @@
+/api/rhythm:
+  get:
+    operationId: getRhythm
+    tags: [rhythm]
+    summary: The session's rhythm (learned | pinned | default).
+    description: >
+      wake/sleep are local wall-clock "HH:MM" (sleep may be past midnight).
+      source says which of the three produced them; days is how many rhythm
+      days of evidence stand behind a learned profile (0 for default/pinned).
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wake: { type: string, example: "07:30" }
+                sleep: { type: string, example: "23:40" }
+                source: { type: string, enum: [default, learned, pinned] }
+                days: { type: integer, example: 5 }
+/api/rhythm/pin:
+  post:
+    operationId: pinRhythm
+    tags: [rhythm]
+    summary: Fix a rhythm by hand ("我就是夜猫子"). A pinned profile is never overwritten by learning.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [wake, sleep], properties: { wake: { type: string, example: "09:00" }, sleep: { type: string, example: "01:30" } } } } } }
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wake: { type: string }
+                sleep: { type: string }
+                source: { type: string, enum: [default, learned, pinned] }
+                days: { type: integer }
+

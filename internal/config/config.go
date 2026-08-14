@@ -99,6 +99,12 @@ type Config struct {
 	// Empty in development = open; required to be non-empty effect in production.
 	AdminToken string
 
+	// DefaultAssistantName is the name a freshly minted session carries before
+	// the user renames the assistant. It used to be hardcoded "Leo" in the SQL
+	// DDL and several fallback sites; a product that lets the user rename the
+	// assistant must also let the operator choose the factory default.
+	DefaultAssistantName string
+
 	// Channels — OneBot (QQ). Empty OneBotWSURL disables the channel only: the
 	// Worker runs unconditionally since 2026-07-29, because rhythm learning,
 	// auto-plan and the care window are not things a QQ binding should gate.
@@ -202,6 +208,7 @@ func Load() (*Config, error) {
 		AutoPlanMaxDays:         getInt("AUTO_PLAN_MAX_DAYS", 7),
 		AssignmentLookaheadDays: getInt("ASSIGNMENT_LOOKAHEAD_DAYS", 14),
 		AdminToken:              getEnv("ADMIN_TOKEN", ""),
+		DefaultAssistantName:    getEnv("DEFAULT_ASSISTANT_NAME", "Leo"),
 		OneBotWSURL:             getEnv("ONEBOT_WS_URL", ""),
 		OneBotToken:             getEnv("ONEBOT_TOKEN", ""),
 		WorkerDefaultTZ:         getEnv("WORKER_DEFAULT_TZ", "Asia/Shanghai"),

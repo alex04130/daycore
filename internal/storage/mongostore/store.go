@@ -100,6 +100,8 @@ func (s *Store) ChannelBindings() domain.ChannelBindingRepository { return chann
 func (s *Store) Feedback() domain.FeedbackLogRepository           { return feedbackRepo{s} }
 func (s *Store) TempContexts() domain.TempContextRepository       { return tempContextRepo{s} }
 func (s *Store) Wishes() domain.WishRepository                    { return wishRepo{s} }
+func (s *Store) WeeklyLetters() domain.WeeklyLetterRepository     { return weeklyLetterRepo{s} }
+func (s *Store) River() domain.RiverRepository                    { return riverRepo{s} }
 
 // Batch C — multi-instance coordination and cached derivations.
 func (s *Store) Proposals() domain.ProposalRepository { return proposalRepo{s} }

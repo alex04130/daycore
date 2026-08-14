@@ -15,6 +15,10 @@
     operationId: patchPlan
     tags: [plan]
     summary: One incremental block action (add/update/remove); materializes rule blocks + tombstones.
+    description: >
+      `date` is a routing key, not a mutable block field: plans are sharded by
+      day, so `changes.date` is ignored. A cross-day move is remove+add (or a
+      reschedule), never an update of the block's date in place.
     requestBody: { required: true, content: { application/json: { schema: { type: object, required: [date, action], properties: { date: { type: string }, action: { $ref: '#/components/schemas/PlanAction' } } } } } }
     responses:
       '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DayPlan' } } } }
@@ -52,3 +56,17 @@
     summary: Batch fetch [from,to] with rule occurrences merged per date.
     parameters: [{ name: from, in: query, required: true, schema: { type: string } }, { name: to, in: query, required: true, schema: { type: string } }]
     responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/DayPlan' } } } } } }
+/api/plan/reschedule:
+  post:
+    operationId: proposeReschedule
+    tags: [plan]
+    summary: Turn "重新安排" into a proposal ghost, not an immediate edit.
+    description: >-
+      提案永远是虚影: rescheduling a petrified block is a suggestion the user
+      nods to, never a write the server performs on its own. Returns a pending
+      timed proposal at tomorrow's same slot; accepting it runs the refish chain.
+    requestBody: { required: true, content: { application/json: { schema: { type: object, required: [blockId], properties: { blockId: { type: string } } } } } }
+    responses:
+      '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Proposal' } } } }
+      '404': { description: no such block }
+
